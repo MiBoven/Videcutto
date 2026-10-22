@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#131313">
+<meta name="description" content="Cut, join and shrink videos right in your browser — nothing is uploaded.">
+<meta property="og:title" content="Videcutto">
+<meta property="og:description" content="Videos go cut & play! Cut, join and shrink videos right in your browser — nothing is uploaded.">
+<meta property="og:image" content="https://videcutto.michels.world/icons/android-chrome-512x512.png">
+<meta property="og:url" content="https://videcutto.michels.world/">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Videcutto">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16x16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.json">
+<link rel="stylesheet" href="style.css">
+<title>Videcutto</title>
+</head>
+<body>
+
+<header>
+  <div class="brand" id="brand" role="button" tabindex="0" title="Home" aria-label="Videcutto — home">
+    <img src="/icons/logo.svg" alt="" class="brand-logo" width="40" height="40">
+    <div class="brand-text">
+      <h1>Videcutto</h1>
+      <p class="brand-sub">Videos go cut &amp; play!</p>
+    </div>
+  </div>
+  <div class="header-actions">
+    <button class="icon" id="fullscreenBtn" title="Fullscreen" aria-label="Toggle fullscreen">
+      <svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+    </button>
+    <div class="menu-wrap">
+      <button class="icon" id="menuBtn" title="Menu" aria-label="Menu" aria-haspopup="true">
+        <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
+      <div class="dropdown" id="menu" style="display:none" role="menu">
+        <button type="button" role="menuitem" id="themeItem"><span class="mi-icon">◐</span><span id="themeLabel">Light mode</span></button>
+        <button type="button" role="menuitem" id="settingsItem"><span class="mi-icon">⚙</span>Settings</button>
+        <button type="button" role="menuitem" id="aboutItem"><span class="mi-icon">ⓘ</span>About</button>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ===================== Start screen ===================== -->
+<main id="startScreen">
+  <p class="sub">Cut, join and shrink videos — entirely in your browser. Nothing is uploaded.</p>
+
+  <div class="notice warn" id="noSupport" hidden></div>
+
+  <div class="segment" id="sourceToggle">
+    <button type="button" class="seg-btn active" data-mode="videos">Videos</button>
+    <button type="button" class="seg-btn" data-mode="files">Files</button>
+  </div>
+  <p class="segment-hint" id="sourceHint">Video picker — fast, but original file names aren't preserved on Android.</p>
+
+  <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choose videos">
+    <svg class="drop-icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M10 9.5v5l4.5-2.5z"/></svg>
+    <p><strong>Tap to choose videos</strong><br>or drag and drop them here</p>
+    <p class="drop-formats">MP4 · MOV · M4V</p>
+  </div>
+  <input type="file" id="fileInput" accept="video/*" multiple hidden>
+
+  <button class="btn-secondary wide" id="backToEditor" hidden>Back to editor</button>
+
+  <div class="card info-card">
+    <div class="info-row"><span class="info-ico">✂</span><span>Cut, split, reorder and join several videos on one timeline</span></div>
+    <div class="info-row"><span class="info-ico">⇲</span><span>Shrink videos to a fraction of their size — like messengers do, but you choose the quality</span></div>
+    <div class="info-row"><span class="info-ico">🔒</span><span>Runs offline on your device — your videos never leave it</span></div>
+  </div>
+</main>
+
+<!-- ===================== Editor ===================== -->
+<main id="editorScreen" hidden>
+  <div class="preview-wrap">
+    <div class="preview" id="preview">
+      <canvas id="blurBg" width="24" height="24" hidden></canvas>
+      <video id="vidA" playsinline preload="auto" muted></video>
+      <video id="vidB" playsinline preload="auto" muted></video>
+      <div class="preview-empty" id="previewEmpty" hidden>Timeline is empty — add a video</div>
+    </div>
+  </div>
+
+  <div class="transport">
+    <button class="tbtn" id="frameBackBtn" title="Previous frame (←)" aria-label="Previous frame">
+      <svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/><path d="M7 6v12"/></svg>
+    </button>
+    <button class="tbtn play" id="playBtn" title="Play / pause (Space)" aria-label="Play">
+      <svg viewBox="0 0 24 24" id="playIcon"><path class="fill" d="M8 5.5v13l10.5-6.5z"/></svg>
+    </button>
+    <button class="tbtn" id="frameFwdBtn" title="Next frame (→)" aria-label="Next frame">
+      <svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/><path d="M17 6v12"/></svg>
+    </button>
+    <span class="timecode"><span id="curTime">0:00.00</span> / <span id="totalTime">0:00.00</span></span>
+    <button class="tbtn" id="muteAllBtn" title="Mute all audio" aria-label="Mute all audio" aria-pressed="false">
+      <svg viewBox="0 0 24 24" id="muteAllIcon"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path class="sound" d="M16 9a4 4 0 010 6M18.5 6.5a7.5 7.5 0 010 11"/><path class="cross" d="M16 9.5l5 5M21 9.5l-5 5"/></svg>
+    </button>
+  </div>
+  <p class="hint" id="stutterHint" hidden>The preview may stutter briefly where two clips meet — the browser has to switch videos there. The exported video plays smoothly.</p>
+
+  <div class="toolbar" id="toolbar">
+    <button class="tool" id="undoBtn" title="Undo (Ctrl+Z)"><svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 010 12h-3"/></svg><span>Undo</span></button>
+    <button class="tool" id="redoBtn" title="Redo (Ctrl+Y)"><svg viewBox="0 0 24 24"><path d="M15 14l5-5-5-5"/><path d="M20 9H10a6 6 0 000 12h3"/></svg><span>Redo</span></button>
+    <span class="tool-sep"></span>
+    <button class="tool" id="splitBtn" title="Split at playhead (S)"><svg viewBox="0 0 24 24"><path d="M12 3v18"/><path d="M5 8l-2 4 2 4M19 8l2 4-2 4"/></svg><span>Split</span></button>
+    <button class="tool" id="deleteBtn" title="Delete clip (Del)"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg><span>Delete</span></button>
+    <button class="tool" id="cutBtn" title="Cut clip (Ctrl+X)"><svg viewBox="0 0 24 24"><circle cx="6" cy="18" r="3"/><circle cx="18" cy="18" r="3"/><path d="M8.2 16L19 4M15.8 16L5 4"/></svg><span>Cut</span></button>
+    <button class="tool" id="copyBtn" title="Copy clip (Ctrl+C)"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 012-2h9"/></svg><span>Copy</span></button>
+    <button class="tool" id="pasteBtn" title="Paste at playhead (Ctrl+V)"><svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="16" rx="2"/><path d="M9 5V3h6v2"/><path d="M9 12h6M9 16h4"/></svg><span>Paste</span></button>
+    <button class="tool" id="muteClipBtn" title="Mute clip (M)"><svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg><span>Mute</span></button>
+    <span class="tool-sep"></span>
+    <button class="tool" id="addBtn" title="Add video"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>Add</span></button>
+  </div>
+
+  <div class="timeline-wrap">
+    <div class="timeline" id="timeline">
+      <div class="tl-inner" id="tlInner">
+        <div class="tl-ruler" id="tlRuler"></div>
+        <div class="tl-track" id="tlTrack"></div>
+      </div>
+    </div>
+    <div class="playhead" aria-hidden="true"></div>
+  </div>
+  <div class="below-timeline">
+    <p class="hint">Tap a clip to select it, then drag it to move it. Pinch or use the zoom buttons to zoom.</p>
+    <div class="zoom-ctl">
+      <button class="icon small" id="zoomOutBtn" title="Zoom out" aria-label="Zoom out"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M8.5 11h5M20 20l-4.5-4.5"/></svg></button>
+      <button class="icon small" id="zoomInBtn" title="Zoom in" aria-label="Zoom in"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M8.5 11h5M11 8.5v5M20 20l-4.5-4.5"/></svg></button>
+    </div>
+  </div>
+
+  <!-- Export -->
+  <section class="card export-card" id="exportCard">
+    <h2>Export</h2>
+    <div class="field">
+      <label for="presetSel">Quality</label>
+      <select id="presetSel">
+        <option value="hd">HD (720p)</option>
+        <option value="fullhd">Full HD (1080p)</option>
+        <option value="small">Small (480p)</option>
+        <option value="original">Original resolution</option>
+        <option value="target">Target size…</option>
+      </select>
+    </div>
+    <div class="field" id="targetField" hidden>
+      <label for="targetMB">Max. size</label>
+      <div class="input-unit"><input type="number" id="targetMB" min="1" max="4000" step="1" value="25" inputmode="decimal"><span>MB</span></div>
+    </div>
+    <div class="field">
+      <label for="aspectSel">Format</label>
+      <select id="aspectSel">
+        <option value="auto">Like first video</option>
+        <option value="16:9">16:9 landscape</option>
+        <option value="9:16">9:16 portrait</option>
+        <option value="1:1">1:1 square</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="fitSel">Empty space</label>
+      <select id="fitSel">
+        <option value="blur">Blurred background</option>
+        <option value="bars">Black bars</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="fpsSel">Frame rate</label>
+      <select id="fpsSel">
+        <option value="30">30 fps</option>
+        <option value="60">60 fps</option>
+        <option value="original">Like source (max. 60)</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="codecSel">Codec</label>
+      <select id="codecSel">
+        <option value="avc">H.264 · plays everywhere</option>
+        <option value="hevc" disabled>HEVC · not supported here</option>
+      </select>
+    </div>
+    <p class="estimate" id="estimate"></p>
+    <button class="btn-primary wide" id="exportBtn">Export video</button>
+
+    <div class="progress" id="progressBox" hidden>
+      <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+      <div class="progress-row"><span id="progressLabel">Preparing…</span><button class="link-btn" id="cancelExportBtn">Cancel</button></div>
+      <p class="hint">Keep this tab open and the screen on while exporting.</p>
+    </div>
+
+    <div class="result" id="resultBox" hidden>
+      <p class="result-sizes" id="resultSizes"></p>
+      <ul class="warnings" id="resultWarnings"></ul>
+      <div class="btn-row">
+        <a class="btn-primary" id="downloadLink" download="video.mp4" href="#">Save</a>
+        <button class="btn-secondary" id="shareBtn" hidden>Share</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>Videcutto · v<span id="versionFooter">0.1.0</span></footer>
+
+<!-- ===================== Pre-trim dialog ===================== -->
+<div class="modal-bg" id="trimModal" hidden>
+  <div class="modal trim-modal" role="dialog" aria-modal="true" aria-labelledby="trimTitle">
+    <h2 id="trimTitle">Trim before editing</h2>
+    <p class="modal-sub" id="trimInfo"></p>
+    <div class="trim-video-wrap">
+      <video id="trimVideo" playsinline preload="auto" muted></video>
+      <button class="tbtn play overlay-play" id="trimPlayBtn" aria-label="Play">
+        <svg viewBox="0 0 24 24"><path class="fill" d="M8 5.5v13l10.5-6.5z"/></svg>
+      </button>
+    </div>
+    <div class="range" id="trimRange">
+      <div class="range-track"></div>
+      <div class="range-sel" id="trimSel"></div>
+      <div class="range-pos" id="trimPos"></div>
+      <div class="range-handle" id="trimStartH" role="slider" tabindex="0" aria-label="Start"></div>
+      <div class="range-handle" id="trimEndH" role="slider" tabindex="0" aria-label="End"></div>
+    </div>
+    <div class="trim-times">
+      <button class="btn-chip" id="setStartBtn">⇤ Start here</button>
+      <span class="trim-len" id="trimLen"></span>
+      <button class="btn-chip" id="setEndBtn">End here ⇥</button>
+    </div>
+    <div class="btn-row">
+      <button class="btn-secondary" id="trimSkipBtn">Use whole video</button>
+      <button class="btn-primary" id="trimApplyBtn">Use selection</button>
+    </div>
+    <button class="link-btn danger center" id="trimCancelBtn">Don't add this video</button>
+  </div>
+</div>
+
+<!-- ===================== Settings ===================== -->
+<div class="modal-bg" id="settingsModal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+    <h2 id="settingsTitle">Settings</h2>
+    <div class="field">
+      <label for="trimModeSel">Offer pre-trimming</label>
+      <select id="trimModeSel">
+        <option value="auto">For large videos</option>
+        <option value="always">For every video</option>
+        <option value="never">Never</option>
+      </select>
+    </div>
+    <p class="hint" id="trimThresholdHint"></p>
+    <div class="field">
+      <label for="undoStepsInput">Undo steps</label>
+      <input type="number" id="undoStepsInput" min="1" max="100" value="10" inputmode="numeric">
+    </div>
+    <button class="btn-secondary wide" id="closeSettings">Close</button>
+  </div>
+</div>
+
+<!-- ===================== About ===================== -->
+<div class="modal-bg" id="aboutModal" hidden>
+  <div class="modal about" role="dialog" aria-modal="true" aria-labelledby="aboutTitle">
+    <img src="/icons/logo.svg" alt="" class="about-logo" width="72" height="72">
+    <h2 id="aboutTitle">Videcutto</h2>
+    <p class="about-sub">Videos go cut &amp; play!</p>
+    <p class="about-version">Version <span id="versionAbout">0.1.0</span></p>
+    <p>Cut, split, reorder and join videos on a timeline, and shrink them to a fraction of their size — all inside your browser using WebCodecs.</p>
+    <p class="about-privacy"><strong>Privacy:</strong> your videos are processed only on your device and never uploaded. No tracking, no cookies — only your theme and settings are stored locally in your browser.</p>
+    <button class="btn-secondary wide" id="closeAbout">Close</button>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="mp4.js"></script>
+<script src="render.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
