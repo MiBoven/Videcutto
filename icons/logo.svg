@@ -1,0 +1,44 @@
+<svg width="100" height="100" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+<defs>
+<clipPath id="photoClip">
+<rect x="28" y="28" width="44" height="44" rx="8"/>
+</clipPath>
+</defs>
+<rect width="100" height="100" rx="22" fill="#131313"/><rect x="6" y="6" width="88" height="88" rx="18" fill="none" stroke="#4f8cff" stroke-width="2" opacity="0.35"/>
+
+<!-- inward-pointing corner arrows (as in JPG75) -->
+<path d="M16 16L26 26M26 26H18M26 26V18" fill="none" stroke="#4f8cff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M84 16L74 26M74 26H82M74 26V18" fill="none" stroke="#4f8cff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M16 84L26 74M26 74H18M26 74V82" fill="none" stroke="#4f8cff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M84 84L74 74M74 74H82M74 74V82" fill="none" stroke="#4f8cff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+
+<!-- photo with film strips top and bottom, sun + mountains in between -->
+<g clip-path="url(#photoClip)">
+<rect x="28" y="28" width="44" height="9" fill="#4f8cff"/>
+<rect x="28" y="63" width="44" height="9" fill="#4f8cff"/>
+<g fill="#131313">
+<rect x="32" y="31" width="4" height="3" rx="0.8"/>
+<rect x="40" y="31" width="4" height="3" rx="0.8"/>
+<rect x="48" y="31" width="4" height="3" rx="0.8"/>
+<rect x="56" y="31" width="4" height="3" rx="0.8"/>
+<rect x="64" y="31" width="4" height="3" rx="0.8"/>
+<rect x="32" y="66" width="4" height="3" rx="0.8"/>
+<rect x="40" y="66" width="4" height="3" rx="0.8"/>
+<rect x="48" y="66" width="4" height="3" rx="0.8"/>
+<rect x="56" y="66" width="4" height="3" rx="0.8"/>
+<rect x="64" y="66" width="4" height="3" rx="0.8"/>
+</g>
+<circle cx="36" cy="44" r="3.5" fill="#4f8cff"/>
+<path d="M28 60L38 53L46 58L58 46L72 57V60Z" fill="#4f8cff" stroke="#4f8cff" stroke-width="1.5" stroke-linejoin="round"/>
+</g>
+<rect x="28" y="28" width="44" height="44" rx="8" fill="none" stroke="#4f8cff" stroke-width="4" stroke-linejoin="round"/>
+
+<!-- two vertical dashed cut lines (black, cutting through frame and film strips) -->
+<line x1="43" y1="24" x2="43" y2="76" stroke="#131313" stroke-width="3" stroke-dasharray="5 6" stroke-linecap="round"/>
+<line x1="57" y1="24" x2="57" y2="76" stroke="#131313" stroke-width="3" stroke-dasharray="5 6" stroke-linecap="round"/>
+
+<!-- badge: same circle as JPG75, with a play triangle + CUT inside -->
+<circle cx="70" cy="70" r="16" fill="#4f8cff" stroke="#131313" stroke-width="4"/>
+<polygon points="81,70 64.5,79.5 64.5,60.5" fill="#131313" stroke="#131313" stroke-width="3" stroke-linejoin="round"/>
+<text x="69.8" y="72.1" font-family="Arial, sans-serif" font-size="6" font-weight="800" fill="#4f8cff" text-anchor="middle">CUT</text>
+</svg>
