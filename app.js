@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.1.0';
+  const VERSION = '0.2.0';
   const $ = (id) => document.getElementById(id);
 
   // ---------------------------------------------------------------------------
@@ -29,6 +29,7 @@
 
   function fmtTime(t, cs = true) {
     t = Math.max(0, t || 0);
+    if (!cs) t = Math.round(t);
     const h = Math.floor(t / 3600);
     const m = Math.floor((t % 3600) / 60);
     const s = t % 60;
@@ -141,6 +142,8 @@
   let playing = false;
   let pps = 60; // timeline pixels per second
   let exporting = false;
+  let saveEnabled = false;     // false while a saved project waits to be resumed or discarded
+  let pendingProject = null;   // saved project from a previous visit, not opened yet
 
   const totalDuration = () => clips.reduce((s, c) => s + (c.out - c.in), 0);
   const clipStart = (idx) => { let s = 0; for (let i = 0; i < idx; i++) s += clips[i].out - clips[i].in; return s; };
@@ -156,8 +159,10 @@
     return { idx: -1, offset: 0, start: 0 };
   }
 
+  // The project is saved automatically; only warn if leaving would lose work.
   window.addEventListener('beforeunload', (e) => {
-    if (clips.length) { e.preventDefault(); e.returnValue = ''; }
+    const unsaved = exporting || [...sources.values()].some((s) => s.storage === 'none');
+    if (clips.length && unsaved) { e.preventDefault(); e.returnValue = ''; }
   });
 
   // ---------------------------------------------------------------------------
@@ -167,7 +172,7 @@
     pause();
     $('startScreen').hidden = false;
     $('editorScreen').hidden = true;
-    $('backToEditor').hidden = clips.length === 0;
+    updateResumeCard();
     document.body.classList.remove('editing');
   }
   function showEditor() {
@@ -179,7 +184,6 @@
   const brand = $('brand');
   brand.addEventListener('click', showStart);
   brand.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showStart(); } });
-  $('backToEditor').addEventListener('click', showEditor);
 
   if (!Render.hasWebCodecs()) {
     const n = $('noSupport');
@@ -207,80 +211,223 @@
     const btn = e.target.closest('.seg-btn');
     if (btn) setSourceMode(btn.dataset.mode);
   });
-  drop.addEventListener('click', () => fileInput.click());
-  drop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); } });
+  // Desktop Chrome/Edge: the file picker returns handles, so the original files
+  // can be reopened after a reload without copying them.
+  const useHandlePicker = () => !isCoarse && Project.canUseHandles();
+  const PICKER_TYPES = [{ description: 'Videos', accept: { 'video/*': ['.mp4', '.mov', '.m4v', '.3gp'] } }];
+
+  /** @returns {Promise<{file: File, handle?: FileSystemFileHandle}[]>} */
+  async function pickFiles(multiple) {
+    if (useHandlePicker()) {
+      try {
+        const hs = await window.showOpenFilePicker({ multiple, types: PICKER_TYPES });
+        return Promise.all(hs.map(async (h) => ({ file: await h.getFile(), handle: h })));
+      } catch (e) {
+        if (e && e.name === 'AbortError') return [];
+        // Other errors (e.g. blocked in an iframe): fall back to the input element.
+      }
+    }
+    return new Promise((resolve) => {
+      const inp = document.createElement('input');
+      inp.type = 'file';
+      inp.accept = fileInput.accept;
+      inp.multiple = multiple;
+      inp.addEventListener('change', () => resolve([...inp.files].map((file) => ({ file }))));
+      inp.addEventListener('cancel', () => resolve([]));
+      inp.click();
+    });
+  }
+
+  async function fromDataTransfer(dt) {
+    // Handles must be requested synchronously inside the drop event.
+    const items = [...(dt.items || [])].filter((it) => it.kind === 'file');
+    const handlePromises = items.map((it) => (it.getAsFileSystemHandle ? it.getAsFileSystemHandle().catch(() => null) : Promise.resolve(null)));
+    const files = [...dt.files];
+    const handles = await Promise.all(handlePromises);
+    return files.map((file, i) => ({ file, handle: handles[i] && handles[i].kind === 'file' ? handles[i] : null }));
+  }
+
+  const pickAndAdd = async () => { const list = await pickFiles(true); if (list.length) handleFiles(list); };
+  drop.addEventListener('click', pickAndAdd);
+  drop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pickAndAdd(); } });
   ['dragenter', 'dragover'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add('drag'); }));
   ['dragleave', 'drop'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove('drag'); }));
-  drop.addEventListener('drop', (e) => handleFiles(e.dataTransfer.files));
-  fileInput.addEventListener('change', () => { const f = [...fileInput.files]; fileInput.value = ''; handleFiles(f); });
-  $('addBtn').addEventListener('click', () => fileInput.click());
+  drop.addEventListener('drop', async (e) => { e.stopPropagation(); handleFiles(await fromDataTransfer(e.dataTransfer)); });
+  $('addBtn').addEventListener('click', pickAndAdd);
 
   // Dropping files anywhere in the editor adds them too
   document.addEventListener('dragover', (e) => { if (!$('editorScreen').hidden) e.preventDefault(); });
-  document.addEventListener('drop', (e) => {
+  document.addEventListener('drop', async (e) => {
     if ($('editorScreen').hidden || !e.dataTransfer.files.length) return;
     e.preventDefault();
-    handleFiles(e.dataTransfer.files);
+    handleFiles(await fromDataTransfer(e.dataTransfer));
   });
 
   const isVideoFile = (f) => f.type.startsWith('video/') || /\.(mp4|m4v|mov|3gp)$/i.test(f.name);
 
   let loadingQueue = Promise.resolve();
-  function handleFiles(fileList) {
-    const files = [...fileList];
-    const videos = files.filter(isVideoFile);
-    if (!videos.length) { toast('Please choose video files (MP4, MOV, M4V).'); return; }
-    if (videos.length < files.length) toast('Some files were skipped because they are not videos.');
+  function handleFiles(list) {
+    const entries = [...list].map((x) => (x instanceof File ? { file: x } : x));
+    const videos = entries.filter((x) => isVideoFile(x.file));
+    if (!videos.length) { if (entries.length) toast('Please choose video files (MP4, MOV, M4V).'); return; }
+    if (videos.length < entries.length) toast('Some files were skipped because they are not videos.');
+    if (pendingProject) {
+      if (!confirm('Start a new project? Your last project will be discarded.')) return;
+      loadingQueue = loadingQueue.then(() => newProject(true));
+    }
     loadingQueue = loadingQueue.then(async () => {
-      for (const f of videos) await addFile(f);
-    });
+      for (const v of videos) await addFile(v.file, v.handle);
+    }).catch((e) => { console.error(e); hideBusy(); });
   }
 
-  async function addFile(file) {
-    if (!Render.hasWebCodecs()) { toast('This browser can\'t process videos (no WebCodecs support).', 5000); return; }
+  const nextSrcId = () => 's' + (++uid);
+
+  /**
+   * Read a file's structure and check that this browser can work with it.
+   * Throws an Error with a user-facing message otherwise.
+   */
+  async function probe(file) {
     let demux;
     try {
       demux = await MP4.demux(file);
     } catch (e) {
+      if (e && e.name === 'NotReadableError') throw e;
       const msg = e.code === 'FRAGMENTED'
         ? `"${file.name}" is a fragmented MP4 (common for screen recordings), which isn't supported yet.`
         : /webm|mkv/i.test(file.name) || /Not an MP4/.test(e.message)
           ? `"${file.name}" isn't an MP4/MOV file. Videcutto currently supports MP4, MOV and M4V.`
           : `"${file.name}" couldn't be read: ${e.message}`;
-      toast(msg, 6000);
-      return;
+      throw new Error(msg);
     }
     const v = demux.video;
     if (!(await Render.canDecodeVideo(v))) {
-      const hevc = v.codec === 'hevc';
-      toast(hevc
+      throw new Error(v.codec === 'hevc'
         ? `"${file.name}" uses HEVC (H.265), which this browser can't decode. Try Chrome, Edge or Safari — or set your camera to "Most compatible" (H.264).`
-        : `"${file.name}" uses a video codec (${v.codecString || v.format}) this browser can't decode.`, 7000);
-      return;
+        : `"${file.name}" uses a video codec (${v.codecString || v.format}) this browser can't decode.`);
     }
-    const hasAudio = !!demux.audio;
-    const audioDecodable = hasAudio ? await Render.canDecodeAudio(demux.audio) : false;
-    const start = Math.max(0, v.start);
-    const src = {
-      id: 's' + (++uid),
+    const audioDecodable = demux.audio ? await Render.canDecodeAudio(demux.audio) : false;
+    return { demux, audioDecodable };
+  }
+
+  const trackBitrate = (t) => {
+    if (!t) return 0;
+    let bytes = 0;
+    for (let i = 0; i < t.samples.count; i++) bytes += t.samples.sizes[i];
+    return (bytes * 8) / Math.max(0.1, t.duration - t.start);
+  };
+
+  /**
+   * Build a source object. `meta` holds the media's identity and times in the
+   * ORIGINAL file's time base; `base` is the original time at which `file`
+   * starts (non-zero for trimmed working copies).
+   */
+  function makeSource(meta, file, probed, base) {
+    const { demux, audioDecodable } = probed;
+    const v = demux.video;
+    return {
+      id: meta.id,
+      kind: 'video',
+      name: meta.name,
+      origSize: meta.origSize,
+      origLastModified: meta.origLastModified,
       file,
-      name: file.name,
       url: URL.createObjectURL(file),
       demux,
+      base,
       width: v.width,
       height: v.height,
       rotation: v.rotation,
       frameRate: v.frameRate || 30,
-      duration: v.duration,
-      start,
-      hasAudio,
+      fileDuration: v.duration,
+      start: meta.start,
+      duration: meta.duration,
+      hasAudio: !!demux.audio,
       audioDecodable,
+      videoBitrate: trackBitrate(v),
+      audioBitrate: trackBitrate(demux.audio),
+      rangeIn: meta.rangeIn,
+      rangeOut: meta.rangeOut,
+      storage: meta.storage || 'none',
+      copyName: meta.copyName || null,
       thumbs: [],
       thumbStep: 1,
-      rangeIn: start,
-      rangeOut: v.duration,
+      missing: false,
     };
-    if (hasAudio && !audioDecodable) toast(`The sound of "${file.name}" (${demux.audio.codecString || demux.audio.format}) can't be decoded here — it will be silent in the export.`, 6000);
+  }
+
+  function mediaMeta(src) {
+    return {
+      id: src.id, kind: src.kind, name: src.name, origSize: src.origSize, origLastModified: src.origLastModified,
+      base: src.base, start: src.start, duration: src.duration, rangeIn: src.rangeIn, rangeOut: src.rangeOut,
+      width: src.width, height: src.height, rotation: src.rotation, storage: src.storage, copyName: src.copyName,
+    };
+  }
+
+  // Busy overlay with progress
+  function showBusy(title, text) {
+    $('busyTitle').textContent = title;
+    $('busyText').textContent = text || '';
+    $('busyFill').style.width = '0%';
+    $('busyModal').hidden = false;
+  }
+  const busyProgress = (f) => { $('busyFill').style.width = (clamp(f, 0, 1) * 100).toFixed(1) + '%'; };
+  const hideBusy = () => { $('busyModal').hidden = true; };
+
+  let copyCounter = 0;
+  /**
+   * Phones: store a working copy in the browser's private storage, so the
+   * video stays readable after Android revokes the picker's permission and
+   * after a reload. Only the pre-trimmed part is copied (losslessly).
+   * Replaces src.file/demux/base on success. Returns true if a copy was made.
+   */
+  async function makeWorkingCopy(src) {
+    if (!isCoarse || !Project.canCopy()) return false;
+    const full = src.rangeIn <= src.start + 0.05 && src.rangeOut >= src.duration - 0.05;
+    const estimate = full ? src.file.size : ((src.rangeOut - src.rangeIn) / Math.max(0.1, src.fileDuration)) * src.file.size;
+    if ((await Project.freeSpace()) < estimate * 1.2 + 50 * 1024 * 1024) {
+      toast('Not enough free storage for a working copy — you may have to select this video again after a reload.', 6000);
+      return false;
+    }
+    const name = `${src.id}-${Date.now().toString(36)}-${++copyCounter}.mp4`;
+    showBusy('Preparing video…', `Saving a working copy of "${src.name}" on this device, so it stays available.`);
+    try {
+      let base = src.base;
+      const copy = full
+        ? await Project.copyWhole(name, src.file, busyProgress)
+        : await Project.writeCopy(name, async (write) => {
+          const r = await MP4.remuxRange(src.demux, src.rangeIn - src.base, src.rangeOut - src.base, write, busyProgress);
+          base = src.base + r.base;
+        });
+      const probed = await probe(copy);
+      const prevUrl = src.url;
+      Object.assign(src, makeSource(mediaMeta(src), copy, probed, base), { thumbs: src.thumbs, thumbStep: src.thumbStep, thumbAspect: src.thumbAspect });
+      src.storage = 'opfs';
+      src.copyName = name;
+      URL.revokeObjectURL(prevUrl);
+      Project.requestPersist();
+      return true;
+    } catch (e) {
+      console.error(e);
+      await Project.removeCopy(name);
+      toast('Couldn\'t save a working copy — you may have to select this video again after a reload.', 6000);
+      return false;
+    } finally {
+      hideBusy();
+    }
+  }
+
+  async function addFile(file, handle) {
+    if (!Render.hasWebCodecs()) { toast('This browser can\'t process videos (no WebCodecs support).', 5000); return; }
+    let probed;
+    try { probed = await probe(file); } catch (e) { toast(e.message, 7000); return; }
+    const v = probed.demux.video;
+    const start = Math.max(0, v.start);
+    const meta = {
+      id: nextSrcId(), name: file.name, origSize: file.size, origLastModified: file.lastModified,
+      start, duration: v.duration, rangeIn: start, rangeOut: v.duration,
+    };
+    const src = makeSource(meta, file, probed, 0);
+    if (src.hasAudio && !src.audioDecodable) toast(`The sound of "${file.name}" (${probed.demux.audio.codecString || probed.demux.audio.format}) can't be decoded here — it will be silent in the export.`, 6000);
 
     const big = file.size > THRESH.bytes || v.duration > THRESH.secs;
     const offer = settings.trimMode === 'always' || (settings.trimMode === 'auto' && big);
@@ -290,7 +437,14 @@
       src.rangeIn = range.in;
       src.rangeOut = range.out;
     }
+
+    if (!(await makeWorkingCopy(src)) && handle) {
+      src.storage = 'handle';
+      await Project.saveHandle(src.id, handle);
+    }
+
     sources.set(src.id, src);
+    saveEnabled = true;
     const wasEmpty = clips.length === 0;
     commit(() => {
       clips.push({ id: newId(), srcId: src.id, in: src.rangeIn, out: src.rangeOut, muted: false });
@@ -321,8 +475,8 @@
     const ctx = canvas.getContext('2d');
     let lastRender = 0;
     for (let k = 0; k < count; k++) {
-      const t = src.rangeIn + (k + 0.5) * src.thumbStep;
-      v.currentTime = Math.min(t, src.duration - 0.05);
+      const t = src.rangeIn + (k + 0.5) * src.thumbStep - src.base;
+      v.currentTime = clamp(t, 0, src.fileDuration - 0.05);
       if (!(await once(v, 'seeked', 4000))) continue;
       const scale = Math.max(tw / v.videoWidth, th / v.videoHeight);
       ctx.drawImage(v, (tw - v.videoWidth * scale) / 2, (th - v.videoHeight * scale) / 2, v.videoWidth * scale, v.videoHeight * scale);
@@ -485,6 +639,7 @@
     renderTimeline();
     seek(playhead);
     updateEstimate();
+    scheduleSave();
   }
 
   // ---------------------------------------------------------------------------
@@ -560,6 +715,7 @@
     $('muteAllBtn').title = muteAll ? 'Unmute all audio' : 'Mute all audio';
     applyMute();
     updateEstimate();
+    scheduleSave();
   }
 
   $('undoBtn').addEventListener('click', undo);
@@ -849,15 +1005,18 @@
     if (el.readyState >= 1) el.currentTime = t;
     else el.addEventListener('loadedmetadata', () => { el.currentTime = t; }, { once: true });
   }
+  // t is in media time; the element plays the actual file (which may be a trimmed copy).
   function loadInto(el, clip, t) {
     const src = srcOf(clip);
-    if (!src) return;
-    if (el.dataset.src !== src.id) {
+    if (!src || src.missing) return;
+    if (el.dataset.src !== src.id || el.dataset.url !== src.url) {
       el.dataset.src = src.id;
+      el.dataset.url = src.url;
       el.src = src.url;
     }
-    setVideoTime(el, t);
+    setVideoTime(el, Math.max(0, t - src.base));
   }
+  const mediaTime = (el) => { const s = sources.get(el.dataset.src); return el.currentTime + (s ? s.base : 0); };
   function applyMute() {
     vids.forEach((el, i) => {
       const clip = i === active ? clips[activeIdx] : clips[activeIdx + 1];
@@ -868,7 +1027,7 @@
   function seek(t, fromScroll) {
     playhead = clamp(t, 0, totalDuration());
     if (!clips.length) {
-      vids.forEach((v) => { v.pause(); v.removeAttribute('src'); delete v.dataset.src; v.load(); });
+      vids.forEach((v) => { v.pause(); v.removeAttribute('src'); delete v.dataset.src; delete v.dataset.url; v.load(); });
       activeIdx = -1;
       updateTime();
       drawBlur();
@@ -933,7 +1092,7 @@
     const sb = vids[1 - active];
     cur.pause();
     // Make sure the standby element really holds the next clip.
-    if (sb.dataset.src !== next.srcId || Math.abs(sb.currentTime - next.in) > 0.25) loadInto(sb, next, next.in);
+    if (sb.dataset.src !== next.srcId || Math.abs(mediaTime(sb) - next.in) > 0.25) loadInto(sb, next, next.in);
     sb.classList.remove('standby');
     cur.classList.add('standby');
     active = 1 - active;
@@ -949,7 +1108,7 @@
     const el = vids[active];
     const clip = clips[activeIdx];
     if (!clip) { pause(); return; }
-    const t = el.currentTime;
+    const t = mediaTime(el);
     playhead = clipStart(activeIdx) + clamp(t - clip.in, 0, clip.out - clip.in);
     if (t >= clip.out - 0.02 || el.ended) {
       if (activeIdx + 1 >= clips.length) {
@@ -1014,8 +1173,11 @@
   vids.forEach((v) => {
     v.addEventListener('seeked', () => { if (v === vids[active]) drawBlur(); });
     v.addEventListener('loadeddata', () => { if (v === vids[active]) drawBlur(); });
-    v.addEventListener('error', () => {
-      if (v === vids[active] && v.getAttribute('src')) toast('This browser can\'t preview this video, but exporting may still work.', 5000);
+    v.addEventListener('error', async () => {
+      if (v !== vids[active] || !v.getAttribute('src')) return;
+      const src = sources.get(v.dataset.src);
+      if (src && !(await isReadable(src))) { lostAccess([src]); return; }
+      toast('This browser can\'t preview this video, but exporting may still work.', 5000);
     });
   });
 
@@ -1085,13 +1247,14 @@
     $('targetField').hidden = s.preset !== 'target';
     updatePreviewAspect();
     updateEstimate();
+    scheduleSave();
   }
   $('targetField').hidden = expEls.preset.value !== 'target';
 
   function sourceBytes() {
     return clips.reduce((sum, c) => {
       const s = srcOf(c);
-      return s ? sum + ((c.out - c.in) / Math.max(0.01, s.duration)) * s.file.size : sum;
+      return s && s.file ? sum + ((c.out - c.in) / Math.max(0.01, s.fileDuration)) * s.file.size : sum;
     }, 0);
   }
 
@@ -1103,8 +1266,10 @@
     const out = Render.computeOutput(s, srcOf(clips[0]), used, dur);
     const withAudio = !muteAll && clips.some((c) => !c.muted && srcOf(c) && srcOf(c).audioDecodable);
     const est = Render.estimateSize(out, dur, withAudio);
+    const srcBytes = sourceBytes();
     $('estimate').innerHTML = `${out.width}×${out.height} · ${out.fps} fps · ${fmtTime(dur, false)}<br>` +
-      `Estimated size: <strong>≈ ${fmtSize(est)}</strong> (source ≈ ${fmtSize(sourceBytes())})`;
+      `Estimated size: <strong>≈ ${fmtSize(est)}</strong> (source ≈ ${fmtSize(srcBytes)})` +
+      (est >= srcBytes * 0.9 ? '<span class="warn-line">This video is already strongly compressed — exporting won\'t make it noticeably smaller.</span>' : '');
   }
 
   let abortCtl = null;
@@ -1115,6 +1280,8 @@
   async function doExport() {
     if (!clips.length || exporting) return;
     pause();
+    const unreadable = await unreadableSources();
+    if (unreadable.length) { lostAccess(unreadable); return; }
     exporting = true;
     updateToolbar();
     $('resultBox').hidden = true;
@@ -1125,7 +1292,8 @@
     try { if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) { wakeLock = null; }
 
     const s = getExportSettings();
-    const expClips = clips.map((c) => ({ source: srcOf(c), in: c.in, out: c.out, muted: c.muted }));
+    // Clip times are in media time; the export reads the actual (possibly trimmed-copy) file.
+    const expClips = clips.map((c) => { const src = srcOf(c); return { source: src, in: c.in - src.base, out: c.out - src.base, muted: c.muted }; });
     const t0 = performance.now();
     try {
       const r = await Render.exportTimeline({
@@ -1143,6 +1311,7 @@
       showResult(r);
     } catch (e) {
       if (e && e.name === 'AbortError') toast('Export cancelled.');
+      else if (e && e.name === 'NotReadableError') { const u = await unreadableSources(); if (u.length) lostAccess(u); else toast('Export failed: a video couldn\'t be read.', 7000); }
       else { console.error(e); toast('Export failed: ' + (e && e.message ? e.message : e), 7000); }
     } finally {
       exporting = false;
@@ -1171,6 +1340,7 @@
     $('resultSizes').innerHTML = `Done! ${fmtSize(before)} → <strong>${fmtSize(after)}</strong>` +
       (saving > 0 ? ` <span class="saving">−${saving}%</span>` : '') +
       `<br><span class="hint">${r.out.width}×${r.out.height} · ${r.videoCodec === 'hevc' ? 'HEVC' : 'H.264'}${r.audioCodec ? ' · ' + (r.audioCodec === 'aac' ? 'AAC' : 'Opus') : ' · no sound'}</span>`;
+    if (after >= before * 0.95) r.warnings.push('The source was already strongly compressed, so the file didn\'t get noticeably smaller.');
     const ul = $('resultWarnings');
     ul.replaceChildren(...r.warnings.map((w) => { const li = document.createElement('li'); li.textContent = w; return li; }));
     $('shareBtn').hidden = !(navigator.canShare && navigator.canShare({ files: [resultFile] }));
@@ -1181,6 +1351,373 @@
     if (!resultFile) return;
     navigator.share({ files: [resultFile], title: resultFile.name }).catch(() => {});
   });
+
+  // ---------------------------------------------------------------------------
+  // Project persistence (autosave, restore, relink)
+  // ---------------------------------------------------------------------------
+  let saveTimer = 0;
+  function scheduleSave() {
+    if (!saveEnabled) return;
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveNow, 400);
+  }
+
+  function referencedIds() {
+    const ids = new Set();
+    const add = (list) => list.forEach((c) => ids.add(c.srcId));
+    add(clips);
+    undoStack.forEach(add);
+    redoStack.forEach(add);
+    if (clipboard) ids.add(clipboard.srcId);
+    return ids;
+  }
+
+  // Drop media that nothing (timeline, undo/redo, clipboard) refers to anymore.
+  function cleanupMedia() {
+    const used = referencedIds();
+    for (const src of [...sources.values()]) {
+      if (used.has(src.id)) continue;
+      if (src.storage === 'opfs' && src.copyName) Project.removeCopy(src.copyName);
+      if (src.storage === 'handle') Project.removeHandle(src.id);
+      if (src.url) URL.revokeObjectURL(src.url);
+      src.thumbs.forEach((u) => u && URL.revokeObjectURL(u));
+      sources.delete(src.id);
+    }
+  }
+
+  async function saveNow() {
+    if (!saveEnabled) return;
+    cleanupMedia();
+    const s = getExportSettings();
+    await Project.saveProject({
+      version: 1,
+      app: VERSION,
+      savedAt: Date.now(),
+      playhead,
+      muteAll,
+      export: { preset: s.preset, target: s.targetMB, aspect: s.aspect, fit: s.fit, fps: s.fps, codec: s.codec },
+      // Tracks are prepared for multiple timelines; 0.2.0 uses a single video track.
+      tracks: [{ id: 't1', kind: 'video', clips: clips.map((c) => ({ ...c })) }],
+      media: [...sources.values()].map(mediaMeta),
+    });
+  }
+  document.addEventListener('visibilitychange', () => { if (document.hidden && saveEnabled) { clearTimeout(saveTimer); saveNow(); } });
+
+  async function isReadable(src) {
+    if (!src || !src.file) return false;
+    try { await src.file.slice(0, 16).arrayBuffer(); return true; } catch (e) { return false; }
+  }
+  async function unreadableSources() {
+    const used = [...new Set(clips.map((c) => srcOf(c)).filter(Boolean))];
+    const out = [];
+    for (const s of used) if (s.missing || !(await isReadable(s))) out.push(s);
+    return out;
+  }
+
+  function projectSummary(p) {
+    const cl = (p.tracks && p.tracks[0] && p.tracks[0].clips) || [];
+    const dur = cl.reduce((s, c) => s + (c.out - c.in), 0);
+    return { count: cl.length, dur, media: (p.media || []).length };
+  }
+
+  function updateResumeCard() {
+    const card = $('resumeCard');
+    if (clips.length) {
+      $('resumeTitle').textContent = 'Current project';
+      $('resumeMeta').textContent = `${clips.length} clip${clips.length === 1 ? '' : 's'} · ${fmtTime(totalDuration(), false)}`;
+      card.hidden = false;
+    } else if (pendingProject) {
+      const sum = projectSummary(pendingProject);
+      const when = new Date(pendingProject.savedAt).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' });
+      $('resumeTitle').textContent = 'Last project';
+      $('resumeMeta').textContent = `${sum.count} clip${sum.count === 1 ? '' : 's'} · ${fmtTime(sum.dur, false)} · saved ${when}`;
+      card.hidden = false;
+    } else {
+      card.hidden = true;
+    }
+  }
+
+  async function newProject(skipConfirm) {
+    if (!skipConfirm && (clips.length || pendingProject) && !confirm('Start a new project? The current project and its saved videos will be deleted.')) return false;
+    pause();
+    clearTimeout(saveTimer);
+    clips = []; undoStack = []; redoStack = []; clipboard = null; selectedId = null; playhead = 0;
+    for (const src of sources.values()) { if (src.url) URL.revokeObjectURL(src.url); src.thumbs.forEach((u) => u && URL.revokeObjectURL(u)); }
+    sources.clear();
+    pendingProject = null;
+    await Project.clearAll();
+    saveEnabled = true;
+    seek(0);
+    updateResumeCard();
+    updateToolbar();
+    return true;
+  }
+
+  $('resumeBtn').addEventListener('click', () => { if (pendingProject && !clips.length) restoreProject(pendingProject); else showEditor(); });
+  $('newProjectBtn').addEventListener('click', async () => { if (await newProject(false)) showStart(); });
+
+  /** Try to get a readable file for a saved media entry without user interaction. */
+  async function locateMedia(m) {
+    if (m.storage === 'opfs' && m.copyName) {
+      const f = await Project.getCopy(m.copyName);
+      if (f) return { file: f, base: m.base, isCopy: true };
+    }
+    const handle = await Project.loadHandle(m.id);
+    if (handle) {
+      try {
+        const perm = await handle.queryPermission({ mode: 'read' });
+        if (perm === 'granted') return { file: await handle.getFile(), base: 0, handle };
+        return { needsPermission: true, handle };
+      } catch (e) { /* handle stale */ }
+    }
+    return {};
+  }
+
+  async function attach(m, file, base, extra = {}) {
+    const probed = await probe(file);
+    const src = makeSource(m, file, probed, base);
+    Object.assign(src, extra);
+    return src;
+  }
+
+  async function restoreProject(p) {
+    showBusy('Opening project…', '');
+    let maxId = 0;
+    const bump = (id) => { const n = parseInt(String(id).replace(/\D/g, ''), 10); if (n > maxId) maxId = n; };
+    const entries = [];
+    try {
+      for (const m of p.media || []) {
+        bump(m.id);
+        const loc = await locateMedia(m);
+        let src = null;
+        if (loc.file) {
+          try {
+            src = await attach(m, loc.file, loc.base, { storage: loc.isCopy ? 'opfs' : 'handle', copyName: loc.isCopy ? m.copyName : null });
+          } catch (e) { src = null; }
+        }
+        entries.push({ meta: m, src, handle: loc.handle || null, needsPermission: !!loc.needsPermission });
+      }
+    } finally {
+      hideBusy();
+    }
+    const cl = (p.tracks && p.tracks[0] && p.tracks[0].clips) || [];
+    cl.forEach((c) => bump(c.id));
+    uid = Math.max(uid, maxId);
+    clips = cl.map((c) => ({ ...c }));
+    undoStack = []; redoStack = []; clipboard = null; selectedId = null;
+    muteAll = !!p.muteAll;
+    $('muteAllBtn').setAttribute('aria-pressed', String(muteAll));
+    if (p.export) {
+      for (const [k, el] of Object.entries(expEls)) {
+        const val = k === 'target' ? p.export.target : p.export[k];
+        if (val !== undefined && (k !== 'codec' || !el.querySelector(`option[value="${val}"]`).disabled)) el.value = val;
+      }
+      $('targetField').hidden = expEls.preset.value !== 'target';
+    }
+    entries.forEach((e) => { if (e.src) sources.set(e.src.id, e.src); });
+    const missing = entries.filter((e) => !e.src);
+    const finish = () => {
+      pendingProject = null;
+      saveEnabled = true;
+      playhead = clamp(p.playhead || 0, 0, totalDuration());
+      showEditor();
+      updateEstimate();
+      sources.forEach((s) => { if (!s.thumbs.length) queueThumbs(s); });
+      scheduleSave();
+    };
+    if (!missing.length) { finish(); return; }
+    const ok = await openRelink(entries, 'restore');
+    if (ok) finish();
+    else {
+      // Back to the start screen; the saved project stays untouched.
+      clips = [];
+      sources.clear();
+      updateResumeCard();
+    }
+  }
+
+  /** Access to sources was lost during editing (e.g. Android revoked it). */
+  async function lostAccess(srcs) {
+    if (!$('relinkModal').hidden) return;
+    pause();
+    const entries = [...sources.values()].map((s) => ({ meta: mediaMeta(s), src: srcs.includes(s) ? null : s, handle: null, needsPermission: false, old: s }));
+    for (const e of entries) if (!e.src && e.meta.storage === 'handle') {
+      e.handle = await Project.loadHandle(e.meta.id);
+      e.needsPermission = !!e.handle;
+    }
+    srcs.forEach((s) => { s.missing = true; });
+    const ok = await openRelink(entries.filter((e) => clips.some((c) => c.srcId === e.meta.id) || !e.src), 'edit');
+    if (ok) { renderTimeline(); seek(playhead); updateEstimate(); scheduleSave(); }
+  }
+
+  /**
+   * Shows the list of media; missing ones can be granted access, selected
+   * again (matched by file size, then by duration), or their clips removed.
+   * Resolves true when every listed media is available again.
+   */
+  function openRelink(entries, mode) {
+    return new Promise((resolve) => {
+      const modal = $('relinkModal');
+      const list = $('relinkList');
+      const isRestore = mode === 'restore';
+      $('relinkTitle').textContent = isRestore ? 'Open last project' : 'Video no longer available';
+      $('relinkSub').textContent = isRestore
+        ? 'Some videos of this project need to be opened again. Select the same files — they are recognised automatically, even if Android renamed them.'
+        : 'The browser lost access to this video (Android does this after a while, or the file was changed). Select it again — your edits are kept.';
+      $('relinkDoneBtn').textContent = isRestore ? 'Open project' : 'Continue';
+      $('relinkCancelBtn').textContent = isRestore ? 'Back' : 'Close';
+
+      const resolved = (e) => !!e.src;
+      const render = () => {
+        list.replaceChildren(...entries.map((e, i) => {
+          const li = document.createElement('li');
+          const info = document.createElement('div');
+          info.className = 'm-info';
+          const name = document.createElement('div');
+          name.className = 'm-name';
+          name.textContent = e.meta.name;
+          const meta = document.createElement('div');
+          meta.className = 'm-meta';
+          meta.textContent = `${fmtTime(e.meta.duration - e.meta.start, false)} · ${fmtSize(e.meta.origSize)}`;
+          info.append(name, meta);
+          const st = document.createElement('span');
+          st.className = 'status ' + (resolved(e) ? 'ok' : e.needsPermission ? 'ask' : 'missing');
+          st.textContent = resolved(e) ? 'Ready' : e.needsPermission ? 'Needs access' : 'Missing';
+          li.append(info, st);
+          if (!resolved(e)) {
+            const b = document.createElement('button');
+            b.className = 'btn-chip';
+            b.textContent = 'Select';
+            b.addEventListener('click', () => pickFor(i));
+            li.append(b);
+          }
+          return li;
+        }));
+        const open = entries.filter((e) => !resolved(e));
+        $('relinkAllowBtn').hidden = !open.some((e) => e.needsPermission);
+        $('relinkPickBtn').hidden = !open.length;
+        $('relinkRemoveBtn').hidden = !open.length;
+        $('relinkDoneBtn').disabled = open.length > 0 || !clips.length;
+      };
+
+      const assign = async (e, file, handle) => {
+        showBusy('Opening video…', file.name);
+        try {
+          const m = e.meta;
+          const src = await attach(m, file, 0, { storage: handle ? 'handle' : 'none', copyName: null });
+          if (e.old) { src.thumbs = e.old.thumbs; src.thumbStep = e.old.thumbStep; src.thumbAspect = e.old.thumbAspect; if (e.old.url) URL.revokeObjectURL(e.old.url); }
+          if (src.fileDuration + 0.05 < m.rangeOut) toast(`"${file.name}" is shorter than the original — some cuts may be cut off.`, 6000);
+          hideBusy();
+          if (!(await makeWorkingCopy(src)) && handle) await Project.saveHandle(src.id, handle);
+          if (e.old && e.old.storage === 'opfs' && e.old.copyName && e.old.copyName !== src.copyName) Project.removeCopy(e.old.copyName);
+          e.src = src;
+          sources.set(src.id, src);
+          vids.forEach((v) => { if (v.dataset.src === src.id) delete v.dataset.url; });
+        } catch (err) {
+          toast(err.message || String(err), 6000);
+        } finally {
+          hideBusy();
+        }
+      };
+
+      const pickFor = async (i) => {
+        const [sel] = await pickFiles(false);
+        if (!sel) return;
+        const e = entries[i];
+        if (sel.file.size !== e.meta.origSize) toast('This file isn\'t identical to the original — cuts may not line up exactly.', 5000);
+        await assign(e, sel.file, sel.handle);
+        render();
+      };
+
+      const onPick = async () => {
+        const picked = await pickFiles(true);
+        const unmatched = [];
+        for (const { file, handle } of picked) {
+          let e = entries.find((x) => !resolved(x) && x.meta.origSize === file.size);
+          if (!e) {
+            // Fall back to duration (e.g. the file was re-saved by another app).
+            try {
+              const d = await MP4.demux(file);
+              e = entries.find((x) => !resolved(x) && Math.abs(x.meta.duration - d.video.duration) < 0.2 && x.meta.width === d.video.width && x.meta.height === d.video.height);
+            } catch (err) { /* not a video */ }
+          }
+          if (e) await assign(e, file, handle);
+          else if (!entries.some((x) => resolved(x) && x.meta.origSize === file.size)) unmatched.push(file.name);
+        }
+        if (unmatched.length) toast(`Not part of this project: ${unmatched.join(', ')}`, 5000);
+        render();
+      };
+
+      const onAllow = async () => {
+        for (const e of entries) {
+          if (resolved(e) || !e.needsPermission || !e.handle) continue;
+          try {
+            const perm = await e.handle.requestPermission({ mode: 'read' });
+            if (perm === 'granted') await assign(e, await e.handle.getFile(), e.handle);
+          } catch (err) { /* user declined or file gone */ }
+          if (!resolved(e)) e.needsPermission = false;
+        }
+        render();
+      };
+
+      const onRemove = () => {
+        const gone = new Set(entries.filter((e) => !resolved(e)).map((e) => e.meta.id));
+        const keep = (list) => list.filter((c) => !gone.has(c.srcId));
+        clips = keep(clips);
+        undoStack = undoStack.map(keep);
+        redoStack = redoStack.map(keep);
+        if (clipboard && gone.has(clipboard.srcId)) clipboard = null;
+        gone.forEach((id) => { const s = sources.get(id); if (s && s.storage === 'opfs' && s.copyName) Project.removeCopy(s.copyName); Project.removeHandle(id); sources.delete(id); });
+        entries = entries.filter((e) => resolved(e));
+        if (!clips.length) {
+          close(false, true);
+          newProject(true).then(() => { showStart(); toast('No clips were left — started a new project.'); });
+          return;
+        }
+        close(true);
+      };
+
+      const close = (ok, silent) => {
+        modal.hidden = true;
+        $('relinkPickBtn').onclick = $('relinkAllowBtn').onclick = $('relinkRemoveBtn').onclick = $('relinkDoneBtn').onclick = $('relinkCancelBtn').onclick = null;
+        if (!ok && !silent && !isRestore) toast('The missing video can\'t be played or exported until it is selected again.', 5000);
+        resolve(ok);
+      };
+
+      $('relinkPickBtn').onclick = onPick;
+      $('relinkAllowBtn').onclick = onAllow;
+      $('relinkRemoveBtn').onclick = () => {
+        if (!confirm('Remove all clips of the missing videos from the project?')) return;
+        onRemove();
+      };
+      $('relinkDoneBtn').onclick = () => close(true);
+      $('relinkCancelBtn').onclick = () => close(false);
+      render();
+      modal.hidden = false;
+    });
+  }
+
+  // Settings: storage info and project deletion
+  $('settingsItem').addEventListener('click', async () => {
+    const copies = await Project.listCopies();
+    const bytes = copies.reduce((s, c) => s + c.size, 0);
+    const linked = [...sources.values()].filter((s) => s.storage === 'handle').length;
+    let txt = 'Your project is saved automatically on this device.';
+    if (copies.length) txt += ` Working copies of ${copies.length} video${copies.length === 1 ? '' : 's'} use ${fmtSize(bytes)}.`;
+    if (linked) txt += ` ${linked} video${linked === 1 ? ' is' : 's are'} linked to the original file${linked === 1 ? '' : 's'} (no extra space).`;
+    $('storageInfo').textContent = txt;
+  });
+  $('deleteProjectBtn').addEventListener('click', async () => {
+    if (await newProject(false)) { closeModal('settingsModal'); showStart(); toast('Project deleted.'); }
+  });
+
+  // On start: look for a saved project.
+  (async () => {
+    const p = await Project.loadProject().catch(() => null);
+    if (p && projectSummary(p).count) pendingProject = p;
+    else saveEnabled = true;
+    updateResumeCard();
+  })();
 
   // ---------------------------------------------------------------------------
   // Service worker

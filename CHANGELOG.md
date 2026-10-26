@@ -1,5 +1,16 @@
 # Changelog
 
+### 0.2.0 — 2026-10-26 — Saved projects & no bigger files
+- The last project is saved automatically and can be continued after a reload ("Continue" / "New project" on the start screen)
+- Phones: working copy of each video in the browser's private storage (only the pre-trimmed part, copied losslessly) — fixes "The requested file could not be read" on Android
+- Desktop Chrome/Edge: original files are remembered via file handles; one click on "Allow access" reopens them
+- Relink dialog: missing videos can be selected again and are matched automatically by size (or length/resolution); clips of missing videos can be removed
+- Lost access during editing is detected (preview and export) and opens the relink dialog instead of failing
+- Settings: storage usage and "Delete project"
+- Export bitrate is capped to the source's, so already compressed videos (e.g. from Instagram) don't get bigger; warning in the estimate and result when a video won't get noticeably smaller
+- Project format prepared for multiple tracks
+- Shorter codec label so it fits on phones
+
 ### 0.1.0 — 2026-10-23 — Initial release
 - Load MP4/MOV/M4V videos via picker (Videos / Files toggle) or drag & drop; files are read on demand instead of being loaded into memory
 - Pre-trim dialog for large videos (> 150 MB / 3 min on phones, > 1 GB / 15 min on desktop), configurable in Settings

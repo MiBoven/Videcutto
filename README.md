@@ -44,6 +44,15 @@ A privacy-friendly video editor and compressor that runs entirely in your browse
   | `Ctrl` + `Z` / `Y` | Undo / redo |
   | `Home` / `End` | Jump to start / end |
 
+### Saving & restoring the project
+- The last project is **saved automatically** after every change (clips, order, mutes, export settings) and offered as **Continue** on the start screen next time; **New project** discards it
+- **Phones/tablets:** each video gets a **working copy** in the browser's private storage (OPFS) right after loading — after pre-trimming only the chosen part is copied, losslessly (no re-encoding). This keeps videos available after a reload and fixes Android revoking the picker's read permission after a while ("The requested file could not be read…")
+- **Desktop Chrome/Edge:** the app remembers the original files (File System Access API) instead of copying them; after a reload one click on *Allow access* reopens them
+- **Everywhere (fallback):** if a video is missing — no copy, storage cleared, or access lost while editing — a dialog lists it and you **select it again**. Files are matched automatically by size (and by length/resolution as a fallback), so renamed files are recognised; all cuts are kept. Clips of videos that can't be found can be removed instead
+- Working copies of videos no longer used anywhere (timeline, undo/redo, clipboard) are deleted automatically
+- **Settings → Project** shows how much space the project uses and lets you **delete** it
+- The saved format already supports several tracks, prepared for multiple timelines in a later version
+
 ### Export & compression
 - **Quality presets:** HD 720p (default, ~2.5 Mbit/s), Full HD 1080p (~5 Mbit/s), Small 480p (~1 Mbit/s), Original resolution (bitrate lowered to ~0.07 bits per pixel), or **Target size** (enter a maximum in MB — bitrate and resolution are calculated from the total length)
 - Phone recordings typically shrink by 80–95 %, similar to what messengers do, but you choose the quality
@@ -53,6 +62,7 @@ A privacy-friendly video editor and compressor that runs entirely in your browse
 - Audio: AAC at 48 kHz stereo; where a browser can't encode AAC (e.g. Chromium on Linux, Firefox), Opus is used automatically and a note is shown
 - Estimated output size is shown before exporting; progress with time remaining and a **Cancel** button during export
 - Never upscales beyond the largest source video
+- **Never uses a higher bitrate than the source:** the video bitrate is capped at ~75 % of the source's (scaled to the output resolution and frame rate), and the audio bitrate at the source's. Already strongly compressed videos (e.g. from Instagram or WhatsApp) no longer get bigger — the estimate and the result show a note when exporting won't make a video noticeably smaller
 - Keeps the screen awake while exporting (Wake Lock API, where supported)
 - **Save** the result, or **Share** it directly (e.g. to a messenger) on devices that support sharing files
 
@@ -75,6 +85,7 @@ Videcutto uses no third-party libraries — everything is vanilla HTML/CSS/JS, s
 
 - **`mp4.js`** — a small ISO-BMFF demuxer and muxer. The demuxer reads only the `moov` box and the exact byte ranges of the samples it needs (via `Blob.slice()` with an 8 MB read window), supporting H.264, HEVC, VP9 and AV1 video, AAC and Opus audio, rotation metadata and edit lists. The muxer writes a "fast start" MP4 (moov before mdat, interleaved in 0.5 s chunks, 64-bit offsets for files > 4 GB).
 - **`render.js`** — the export engine. Each clip is decoded with **WebCodecs** (`VideoDecoder` / `AudioDecoder`, hardware-accelerated where available) starting at the nearest keyframe, every frame is drawn onto a canvas (rotation applied, fitted with black bars or a blurred background), and encoded with `VideoEncoder` / `AudioEncoder`. Audio is resampled to 48 kHz stereo; muted clips and clips without sound are filled with silence so audio and video stay in sync.
+- **`project.js`** — persistence: the project in IndexedDB, working copies in the Origin Private File System, file handles of originals on desktop. `mp4.js` provides the lossless range copy (`remuxRange`) used for trimmed working copies: it copies the samples from the keyframe before the in-point, keeps the original sample descriptions and rotation, and streams straight to storage without holding the video in memory.
 - **`app.js`** — the UI: file loading, pre-trim dialog, timeline, preview playback (two `<video>` elements, the next clip is always preloaded), undo/redo and export.
 
 The preview uses the browser's native `<video>` playback; the export uses WebCodecs, so what plays in the preview and what can be exported is decided by each browser's codec support.
@@ -86,6 +97,7 @@ The preview uses the browser's native `<video>` playback; the export uses WebCod
 - `app.js` — UI logic
 - `mp4.js` — MP4/MOV demuxer and muxer
 - `render.js` — WebCodecs export engine
+- `project.js` — autosave, working copies and file handles
 - `sw.js` — service worker (offline, stale-while-revalidate)
 - `manifest.json` — PWA manifest
 - `netlify.toml` — security headers (no `Permissions-Policy` on purpose)
@@ -99,4 +111,4 @@ Requires WebCodecs: current **Chrome / Edge** (best support, incl. HEVC on most 
 
 ## Privacy
 
-Videos are processed only on your device and never leave it. No tracking, no cookies, no third-party requests. `localStorage` is used only for the theme, settings and the last export settings.
+Videos are processed only on your device and never leave it. No tracking, no cookies, no third-party requests. `localStorage` is used only for the theme, settings and the last export settings; the project and working copies of your videos are kept in the browser's private storage on your device (IndexedDB / Origin Private File System) until you delete the project.

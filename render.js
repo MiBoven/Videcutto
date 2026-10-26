@@ -79,7 +79,24 @@
     // Scale preset bitrates a little for 60 fps.
     if (settings.preset !== 'target' && settings.preset !== 'original' && fps > 30) bitrate = Math.round(bitrate * 1.4);
 
-    return { width: w, height: h, fps, bitrate, audioBitrate };
+    // Never spend more bits than the sources have: re-encoding an already
+    // compressed video (e.g. from Instagram or WhatsApp) at a higher bitrate
+    // only makes the file bigger without improving quality.
+    let capped = false;
+    const withRate = sources.filter((s) => s.videoBitrate > 0);
+    if (withRate.length) {
+      const cap = Math.max(...withRate.map((s) => {
+        const d = displaySize(s);
+        const px = Math.min(1, (w * h) / (d.w * d.h));
+        const fr = Math.min(1, fps / Math.max(1, s.frameRate || fps));
+        return s.videoBitrate * Math.pow(px, 0.75) * Math.pow(fr, 0.5) * 0.75;
+      }));
+      if (cap < bitrate) { bitrate = Math.max(250_000, Math.round(cap)); capped = true; }
+    }
+    const srcAudio = Math.max(0, ...sources.map((s) => s.audioBitrate || 0));
+    if (srcAudio > 0) audioBitrate = Math.min(audioBitrate, Math.max(64_000, Math.ceil(srcAudio / 32_000) * 32_000));
+
+    return { width: w, height: h, fps, bitrate, audioBitrate, capped };
   }
 
   function estimateSize(out, duration, withAudio) {

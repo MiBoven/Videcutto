@@ -184,7 +184,8 @@
     const entry = boxes(u8, b.data + 8, b.end).next().value;
     if (!entry) return null;
     const type = entry.type;
-    const info = { format: type };
+    // Raw sample entry, used to copy streams losslessly (any codec) when remuxing.
+    const info = { format: type, rawEntry: u8.slice(entry.start, entry.end) };
     if (handler === 'vide') {
       info.codedWidth = v.getUint16(entry.data + 24);
       info.codedHeight = v.getUint16(entry.data + 26);
@@ -548,6 +549,12 @@
   }
 
   const MATRIX = [0x10000, 0, 0, 0, 0x10000, 0, 0, 0, 0x40000000];
+  // Display matrix for a clockwise rotation (0/90/180/270), inverse of parseMatrixRotation.
+  function rotationMatrix(deg) {
+    const r = ((deg || 0) % 360 + 360) % 360;
+    const cos = Math.round(Math.cos(r * Math.PI / 180)), sin = Math.round(Math.sin(r * Math.PI / 180));
+    return [cos * 0x10000, sin * 0x10000, 0, -sin * 0x10000, cos * 0x10000, 0, 0, 0, 0x40000000].map((x) => x >>> 0);
+  }
 
   function descriptor(tag, payload) {
     const w = new Writer();
@@ -586,12 +593,16 @@
     addVideo(data, pts, dur, key, description) {
       const t = this.video;
       if (description && !t.cfg.description) t.cfg.description = new Uint8Array(description);
-      t.samples.push({ data, pts, dur, key });
+      t.samples.push({ data, size: data.length, pts, dur, key });
     }
     addAudio(data, pts, dur, description) {
       const t = this.audio;
       if (description && !t.cfg.description) t.cfg.description = new Uint8Array(description);
-      t.samples.push({ data, pts, dur, key: true });
+      t.samples.push({ data, size: data.length, pts, dur, key: true });
+    }
+    // Sample whose bytes are fetched later (see layout()); `ref` is passed back to the caller.
+    addLazy(kind, size, pts, dur, key, ref) {
+      this[kind].samples.push({ data: null, size, pts, dur, key, ref });
     }
 
     _prepare(t) {
@@ -618,6 +629,7 @@
 
     _sampleEntry(t) {
       const c = t.cfg;
+      if (c.rawEntry) return c.rawEntry; // lossless passthrough
       if (t.kind === 'video') {
         const w = new Writer();
         w.zeros(6); w.u16(1); // reserved + data_reference_index
@@ -666,7 +678,7 @@
       const tkhd = fullBox('tkhd', 0, 3, (w) => {
         w.u32(0); w.u32(0); w.u32(t.id); w.u32(0); w.u32(durMovie);
         w.zeros(8); w.u16(0); w.u16(0); w.u16(isV ? 0 : 0x0100); w.u16(0);
-        for (const m of MATRIX) w.u32(m);
+        for (const m of (isV ? rotationMatrix(t.cfg.rotation) : MATRIX)) w.u32(m);
         w.u32(isV ? t.cfg.width * 65536 : 0); w.u32(isV ? t.cfg.height * 65536 : 0);
       });
       // Edit list so the first presented sample starts at 0.
@@ -712,7 +724,7 @@
         if (!last || last[1] !== ch.count) stscRuns.push([i + 1, ch.count]);
       });
       parts.push(fullBox('stsc', 0, 0, (w) => { w.u32(stscRuns.length); for (const [f, c] of stscRuns) { w.u32(f); w.u32(c); w.u32(1); } }));
-      parts.push(fullBox('stsz', 0, 0, (w) => { w.u32(0); w.u32(t.samples.length); for (const s of t.samples) w.u32(s.data.length); }));
+      parts.push(fullBox('stsz', 0, 0, (w) => { w.u32(0); w.u32(t.samples.length); for (const s of t.samples) w.u32(s.size); }));
       parts.push(fullBox('co64', 0, 0, (w) => { w.u32(chunkOffsets.length); for (const o of chunkOffsets) w.u64(o); }));
       const stbl = box('stbl', ...parts);
       const minf = box('minf', mhd, dinf, stbl);
@@ -720,7 +732,9 @@
       return box('trak', tkhd, edts, mdia);
     }
 
-    finalize() {
+    // Computes the file layout. Returns the header bytes (ftyp + moov + mdat
+    // header) and the samples in the order their bytes must follow.
+    layout() {
       const tracks = this.tracks.filter((t) => t.samples.length);
       for (const t of tracks) this._prepare(t);
 
@@ -737,7 +751,7 @@
             chunkList.push(cur);
           }
           cur.count++;
-          cur.size += s.data.length;
+          cur.size += s.size;
         });
       }
       chunkList.sort((a, b) => a.time - b.time || a.track.id - b.track.id);
@@ -770,13 +784,72 @@
 
       const hw = new Writer();
       if (large) { hw.u32(1); hw.str('mdat'); hw.u64(mdatPayload + 16); } else { hw.u32(mdatPayload + 8); hw.str('mdat'); }
-      const blobParts = [ftyp, moov, hw.toU8()];
+      const header = new Uint8Array(ftyp.length + moov.length + hw.length);
+      header.set(ftyp, 0); header.set(moov, ftyp.length); header.set(hw.toU8(), ftyp.length + moov.length);
+      const order = [];
       for (const c of chunkList) {
-        for (let i = c.first; i < c.first + c.count; i++) blobParts.push(c.track.samples[i].data);
+        for (let i = c.first; i < c.first + c.count; i++) order.push(c.track.samples[i]);
       }
-      return new Blob(blobParts, { type: 'video/mp4' });
+      return { header, order };
+    }
+
+    finalize() {
+      const { header, order } = this.layout();
+      return new Blob([header, ...order.map((s) => s.data)], { type: 'video/mp4' });
     }
   }
 
-  global.MP4 = { demux, Muxer, BlobReader, keyframeBefore, presentationOrder, readSample };
+  /**
+   * Losslessly copy the part [tIn, tOut] of a demuxed file into a new MP4,
+   * streaming the bytes to `write(u8)` (nothing is held in memory). The cut
+   * starts at the keyframe before tIn, so the copy may begin slightly earlier.
+   * @returns {Promise<{ base: number, duration: number }>} base = source time of the copy's t=0
+   */
+  async function remuxRange(d, tIn, tOut, write, onProgress = () => {}) {
+    const v = d.video, a = d.audio;
+    const vs = v.samples;
+    const k0 = keyframeBefore(v, tIn);
+    let k1 = vs.count;
+    for (let i = k0 + 1; i < vs.count; i++) if (vs.sync[i] && vs.pts[i] >= tOut) { k1 = i; break; }
+    let base = Infinity, end = 0;
+    for (let i = k0; i < k1; i++) { base = Math.min(base, vs.pts[i]); end = Math.max(end, vs.pts[i] + vs.dur[i]); }
+
+    const mux = new Muxer({
+      video: { rawEntry: v.rawEntry, width: v.width, height: v.height, rotation: v.rotation },
+      // AAC/Opus entries are rebuilt (QuickTime v1/v2 sound entries aren't valid in MP4); others are copied.
+      audio: a ? (a.codec === 'aac' || a.codec === 'opus'
+        ? { codec: a.codec, sampleRate: a.sampleRate, channels: a.channels, description: a.description }
+        : { rawEntry: a.rawEntry, sampleRate: a.timescale, channels: a.channels }) : null,
+    });
+    for (let i = k0; i < k1; i++) mux.addLazy('video', vs.sizes[i], vs.pts[i] - base, vs.dur[i], !!vs.sync[i], { t: 'v', i });
+    if (a) {
+      const as = a.samples;
+      for (let i = 0; i < as.count; i++) {
+        const t = as.pts[i] - base;
+        if (t < -1e-6 || as.pts[i] >= end) continue;
+        mux.addLazy('audio', as.sizes[i], t, as.dur[i], true, { t: 'a', i });
+      }
+      if (!mux.audio.samples.length) mux.tracks = mux.tracks.filter((t) => t.kind !== 'audio');
+    }
+    const { header, order } = mux.layout();
+    const total = header.length + order.reduce((s, x) => s + x.size, 0);
+    const reader = new BlobReader(d.blob);
+    const BUF = 4 * 1024 * 1024;
+    let buf = new Uint8Array(BUF), fill = 0, written = 0;
+    const flush = async () => { if (fill) { await write(buf.slice(0, fill)); written += fill; fill = 0; onProgress(written / total); } };
+    const push = async (u8) => {
+      if (u8.length > BUF) { await flush(); await write(u8); written += u8.length; return; }
+      if (fill + u8.length > BUF) await flush();
+      buf.set(u8, fill); fill += u8.length;
+    };
+    await push(header);
+    for (const s of order) {
+      const tr = s.ref.t === 'v' ? v : a;
+      await push(await reader.read(tr.samples.offsets[s.ref.i], tr.samples.sizes[s.ref.i]));
+    }
+    await flush();
+    return { base, duration: end - base };
+  }
+
+  global.MP4 = { demux, Muxer, BlobReader, keyframeBefore, presentationOrder, readSample, remuxRange };
 })(typeof window !== 'undefined' ? window : globalThis);

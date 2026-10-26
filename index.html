@@ -54,6 +54,17 @@
 
   <div class="notice warn" id="noSupport" hidden></div>
 
+  <div class="card resume-card" id="resumeCard" hidden>
+    <div class="resume-info">
+      <strong id="resumeTitle">Last project</strong>
+      <span id="resumeMeta"></span>
+    </div>
+    <div class="btn-row">
+      <button class="btn-secondary" id="newProjectBtn">New project</button>
+      <button class="btn-primary" id="resumeBtn">Continue</button>
+    </div>
+  </div>
+
   <div class="segment" id="sourceToggle">
     <button type="button" class="seg-btn active" data-mode="videos">Videos</button>
     <button type="button" class="seg-btn" data-mode="files">Files</button>
@@ -67,7 +78,6 @@
   </div>
   <input type="file" id="fileInput" accept="video/*" multiple hidden>
 
-  <button class="btn-secondary wide" id="backToEditor" hidden>Back to editor</button>
 
   <div class="card info-card">
     <div class="info-row"><span class="info-ico">✂</span><span>Cut, split, reorder and join several videos on one timeline</span></div>
@@ -179,7 +189,7 @@
     <div class="field">
       <label for="codecSel">Codec</label>
       <select id="codecSel">
-        <option value="avc">H.264 · plays everywhere</option>
+        <option value="avc">H.264 · universal</option>
         <option value="hevc" disabled>HEVC · not supported here</option>
       </select>
     </div>
@@ -253,6 +263,9 @@
       <label for="undoStepsInput">Undo steps</label>
       <input type="number" id="undoStepsInput" min="1" max="100" value="10" inputmode="numeric">
     </div>
+    <h3 class="settings-h">Project</h3>
+    <p class="hint" id="storageInfo">Your project is saved automatically on this device.</p>
+    <button class="btn-secondary wide danger-text" id="deleteProjectBtn">Delete project</button>
     <button class="btn-secondary wide" id="closeSettings">Close</button>
   </div>
 </div>
@@ -270,10 +283,36 @@
   </div>
 </div>
 
+<!-- ===================== Relink / restore ===================== -->
+<div class="modal-bg" id="relinkModal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="relinkTitle">
+    <h2 id="relinkTitle">Videos needed</h2>
+    <p class="modal-sub" id="relinkSub"></p>
+    <ul class="media-list" id="relinkList"></ul>
+    <button class="btn-primary wide" id="relinkAllowBtn" hidden>Allow access</button>
+    <button class="btn-secondary wide" id="relinkPickBtn">Select videos…</button>
+    <div class="btn-row">
+      <button class="btn-secondary" id="relinkRemoveBtn">Remove missing clips</button>
+      <button class="btn-primary" id="relinkDoneBtn" disabled>Open project</button>
+    </div>
+    <button class="link-btn center" id="relinkCancelBtn">Back</button>
+  </div>
+</div>
+
+<!-- ===================== Busy ===================== -->
+<div class="modal-bg" id="busyModal" hidden>
+  <div class="modal busy" role="dialog" aria-modal="true" aria-labelledby="busyTitle">
+    <h2 id="busyTitle">Please wait…</h2>
+    <p class="modal-sub" id="busyText"></p>
+    <div class="progress-bar"><div class="progress-fill" id="busyFill"></div></div>
+  </div>
+</div>
+
 <div class="toast" id="toast" hidden></div>
 
 <script src="mp4.js"></script>
 <script src="render.js"></script>
+<script src="project.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
