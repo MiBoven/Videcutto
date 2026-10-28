@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.7.0';
+  const VERSION = '0.8.0';
   const $ = (id) => document.getElementById(id);
 
   // ---------------------------------------------------------------------------
@@ -114,11 +114,19 @@
   const settings = {
     trimMode: store.get('trimMode', 'auto'),
     undoSteps: store.get('undoSteps', 10),
+    rows: store.get('tlRows', isCoarse ? 3 : 5),
   };
   const THRESH = isCoarse ? { bytes: 150 * 1024 * 1024, secs: 180 } : { bytes: 1024 * 1024 * 1024, secs: 900 };
   $('trimModeSel').value = settings.trimMode;
   $('undoStepsInput').value = settings.undoSteps;
   $('trimThresholdHint').textContent = `On this device, "large" means bigger than ${fmtSize(THRESH.bytes)} or longer than ${THRESH.secs / 60} minutes.`;
+  $('tlRowsInput').value = settings.rows;
+  $('tlRowsInput').addEventListener('change', (e) => {
+    settings.rows = clamp(parseInt(e.target.value, 10) || 3, 1, 20);
+    e.target.value = settings.rows;
+    store.set('tlRows', settings.rows);
+    renderTimeline();
+  });
   $('trimModeSel').addEventListener('change', (e) => { settings.trimMode = e.target.value; store.set('trimMode', settings.trimMode); });
   $('undoStepsInput').addEventListener('change', (e) => {
     settings.undoSteps = clamp(parseInt(e.target.value, 10) || 10, 1, 100);
@@ -131,9 +139,14 @@
   // ---------------------------------------------------------------------------
   // State
   // ---------------------------------------------------------------------------
+  // Tracks are stored bottom first: tracks[0] is the main track (under all
+  // others). Every clip has a `start` on the timeline; on a magnetic track the
+  // starts follow from the order (no gaps).
   const sources = new Map(); // id -> source
-  let clips = [];            // { id, srcId, in, out, muted }
+  let tracks = [];
+  let clips = [];            // the main track's clips (alias of tracks[0].clips)
   let selectedId = null;
+  let selectedTrackId = null;
   let clipboard = null;
   let undoStack = [];
   let redoStack = [];
@@ -144,24 +157,54 @@
   let exporting = false;
   let saveEnabled = false;     // true while a project is open in this tab and may be saved
 
-  const totalDuration = () => clips.reduce((s, c) => s + (c.out - c.in), 0);
-  const clipStart = (idx) => { let s = 0; for (let i = 0; i < idx; i++) s += clips[i].out - clips[i].in; return s; };
+  const newTrack = (main) => ({ id: 't' + (++uid), main: !!main, magnetic: !!main, hidden: false, opacity: 1, muted: false, volume: 1, clips: [] });
+  const clipLen = (c) => c.out - c.in;
+  const clipEnd = (c) => c.start + clipLen(c);
+  const allClips = () => tracks.flatMap((t) => t.clips);
+  function layoutTrack(tr) {
+    if (tr.magnetic) {
+      let s = 0;
+      for (const c of tr.clips) { c.start = s; s += clipLen(c); }
+    } else {
+      for (const c of tr.clips) if (!(c.start >= 0)) c.start = 0;
+      tr.clips.sort((a, b) => a.start - b.start);
+    }
+  }
+  const relayout = () => tracks.forEach(layoutTrack);
+  function setTracks(t) {
+    tracks = t;
+    if (!tracks.length || !tracks[0].main) tracks.unshift(newTrack(true));
+    clips = tracks[0].clips;
+    relayout();
+  }
+  setTracks([newTrack(true)]);
+
+  const totalDuration = () => { let m = 0; for (const t of tracks) for (const c of t.clips) m = Math.max(m, clipEnd(c)); return m; };
   const srcOf = (clip) => (clip && clip.srcId ? sources.get(clip.srcId) : null);
 
-  function clipAt(t) {
-    let s = 0;
-    for (let i = 0; i < clips.length; i++) {
-      const len = clips[i].out - clips[i].in;
-      if (t < s + len - 1e-6 || i === clips.length - 1) return { idx: i, offset: clamp(t - s, 0, len), start: s };
-      s += len;
+  function clipAtTrack(tr, t) {
+    for (let i = 0; i < tr.clips.length; i++) {
+      const c = tr.clips[i];
+      if (t >= c.start - 1e-6 && t < clipEnd(c) - 1e-6) return { idx: i, offset: t - c.start, start: c.start, clip: c };
     }
-    return { idx: -1, offset: 0, start: 0 };
+    return { idx: -1, offset: 0, start: 0, clip: null };
   }
+  const clipAt = (t) => clipAtTrack(tracks[0], t);
+  function findClip(id) {
+    if (!id) return null;
+    for (let ti = 0; ti < tracks.length; ti++) {
+      const idx = tracks[ti].clips.findIndex((c) => c.id === id);
+      if (idx >= 0) return { tr: tracks[ti], ti, idx, clip: tracks[ti].clips[idx] };
+    }
+    return null;
+  }
+  const findTrack = (id) => tracks.find((t) => t.id === id) || null;
+  const selClip = () => { const f = findClip(selectedId); return f ? f.clip : null; };
 
   // The project is saved automatically; only warn if leaving would lose work.
   window.addEventListener('beforeunload', (e) => {
     const unsaved = exporting || [...sources.values()].some((s) => s.storage === 'none');
-    if (clips.length && unsaved) { e.preventDefault(); e.returnValue = ''; }
+    if (allClips().length && unsaved) { e.preventDefault(); e.returnValue = ''; }
   });
 
   // ---------------------------------------------------------------------------
@@ -256,11 +299,11 @@
     return files.map((file, i) => ({ file, handle: handles[i] && handles[i].kind === 'file' ? handles[i] : null }));
   }
 
-  const pickAndAdd = async () => { const list = await pickFiles(true); if (list.length) handleFiles(list); };
+  const pickAndAdd = async (overlay) => { const list = await pickFiles(true); if (list.length) handleFiles(list, { overlay: overlay === true }); };
   const addMenu = $('addMenu');
   const closeAddMenu = () => { addMenu.style.display = 'none'; };
   document.addEventListener('click', (e) => { if (!e.target.closest('.add-wrap')) closeAddMenu(); });
-  drop.addEventListener('click', pickAndAdd);
+  drop.addEventListener('click', () => pickAndAdd());
   drop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pickAndAdd(); } });
   ['dragenter', 'dragover'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add('drag'); }));
   ['dragleave', 'drop'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove('drag'); }));
@@ -268,6 +311,8 @@
   $('addBtn').addEventListener('click', () => { addMenu.style.display = addMenu.style.display === 'none' ? 'block' : 'none'; });
   $('addMediaItem').addEventListener('click', () => { closeAddMenu(); pickAndAdd(); });
   $('addColorItem').addEventListener('click', () => { closeAddMenu(); addColorClip(); });
+  $('addOverlayMediaItem').addEventListener('click', () => { closeAddMenu(); pickAndAdd(true); });
+  $('addOverlayColorItem').addEventListener('click', () => { closeAddMenu(); addColorClip(true); });
 
   // Dropping files anywhere in the editor adds them too
   document.addEventListener('dragover', (e) => { if (!$('editorScreen').hidden) e.preventDefault(); });
@@ -281,10 +326,10 @@
   const isImageFile = (f) => f.type.startsWith('image/') || /\.(jpe?g|png|webp|gif|bmp|avif|heic|heif)$/i.test(f.name);
 
   let loadingQueue = Promise.resolve();
-  function handleFiles(list) {
+  function handleFiles(list, opts = {}) {
     let entries = [...list].map((x) => (x instanceof File ? { file: x } : x));
     // Project files are imported as new projects.
-    const projFiles = entries.filter((x) => /\.videcutto$/i.test(x.file.name));
+    const projFiles = entries.filter((x) => isProjectFile(x.file.name));
     if (projFiles.length) {
       loadingQueue = loadingQueue.then(async () => { for (const pf of projFiles) await importProjectFile(pf.file); }).catch(() => {});
       entries = entries.filter((x) => !projFiles.includes(x));
@@ -298,8 +343,9 @@
     loadingQueue = loadingQueue.then(async () => {
       if (fresh) await createProject(baseName(media[0].file.name) || '');
       for (const m of media) {
-        if (isImageFile(m.file) && !isVideoFile(m.file)) await addImage(m.file, m.handle, m.pasted);
-        else await addFile(m.file, m.handle, m.pasted);
+        const overlay = !!opts.overlay && !fresh;
+        if (isImageFile(m.file) && !isVideoFile(m.file)) await addImage(m.file, m.handle, m.pasted, overlay);
+        else await addFile(m.file, m.handle, m.pasted, overlay);
       }
     }).catch((e) => { console.error(e); hideBusy(); });
   }
@@ -440,7 +486,7 @@
     }
   }
 
-  async function addFile(file, handle, pasted) {
+  async function addFile(file, handle, pasted, overlay) {
     if (!Render.hasWebCodecs()) { toast('This browser can\'t process videos (no WebCodecs support).', 5000); return; }
     let probed;
     try { probed = await probe(file); } catch (e) { toast(e.message, 7000); return; }
@@ -468,7 +514,7 @@
       await Project.saveHandle(src.id, handle);
     }
 
-    const wasEmpty = clips.length === 0;
+    const wasEmpty = allClips().length === 0;
     sources.set(src.id, src);
     saveEnabled = true;
     // A new project starting with a video takes that video's format.
@@ -479,7 +525,7 @@
       exportState.res = Math.min(d.w, d.h) >= 1080 ? '1080' : 'source';
     }
     commit(() => {
-      clips.push({ id: newId(), kind: 'video', srcId: src.id, in: src.rangeIn, out: src.rangeOut, muted: false });
+      addClipToTimeline({ id: newId(), kind: 'video', srcId: src.id, in: src.rangeIn, out: src.rangeOut, muted: false }, overlay);
     });
     if (wasEmpty) { playhead = 0; onCanvasChange(); }
     showEditor();
@@ -513,7 +559,7 @@
     };
   }
 
-  async function addImage(file, handle, pasted) {
+  async function addImage(file, handle, pasted, overlay) {
     let bmp;
     try { bmp = await decodeImage(file); } catch (e) { toast(`"${file.name}" couldn't be opened as an image in this browser.`, 6000); return; }
     const meta = { id: nextSrcId(), name: file.name || 'Pasted image', origSize: file.size, origLastModified: file.lastModified };
@@ -525,22 +571,21 @@
     }
     if (src.storage === 'none' && handle) { src.storage = 'handle'; await Project.saveHandle(src.id, handle); }
     if (pasted && src.storage === 'none') toast('This pasted image can\'t be stored here — it will be missing after a reload.', 5000);
-    const wasEmpty = clips.length === 0;
+    const wasEmpty = allClips().length === 0;
     sources.set(src.id, src);
     saveEnabled = true;
-    commit(() => { clips.push({ id: newId(), kind: 'image', srcId: src.id, in: 0, out: STILL_DURATION, muted: false }); });
+    commit(() => { addClipToTimeline({ id: newId(), kind: 'image', srcId: src.id, in: 0, out: STILL_DURATION, muted: false }, overlay); });
     if (wasEmpty) { playhead = 0; onCanvasChange(); }
     showEditor();
     queueThumbs(src);
   }
 
-  function addColorClip() {
-    const wasEmpty = clips.length === 0;
+  function addColorClip(overlay) {
+    const wasEmpty = allClips().length === 0;
     saveEnabled = true;
-    let insertAt = clips.length;
     commit(() => {
       const nc = { id: newId(), kind: 'color', srcId: null, in: 0, out: STILL_DURATION, muted: false, color: DEFAULT_COLOR, size: '1920x1080', w: 1920, h: 1080 };
-      clips.splice(insertAt, 0, nc);
+      addClipToTimeline(nc, overlay === true);
       selectedId = nc.id;
     });
     if (wasEmpty) playhead = 0;
@@ -552,7 +597,7 @@
     canvasState = defaultCanvas();
     exportState.res = '1080';
     saveEnabled = true;
-    commit(() => { clips.push({ id: newId(), kind: 'color', srcId: null, in: 0, out: STILL_DURATION, muted: false, color: DEFAULT_COLOR, size: '1920x1080', w: 1920, h: 1080 }); });
+    commit(() => { addClipToTimeline({ id: newId(), kind: 'color', srcId: null, in: 0, out: STILL_DURATION, muted: false, color: DEFAULT_COLOR, size: '1920x1080', w: 1920, h: 1080 }); });
     undoStack = [];
     playhead = 0;
     showEditor();
@@ -731,27 +776,30 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Undo / redo
+  // Undo / redo (snapshots of all tracks)
   // ---------------------------------------------------------------------------
-  const snapshot = () => clips.map((c) => ({ ...c }));
-  function commit(fn) {
-    const before = snapshot();
-    fn();
+  const snapshot = () => tracks.map((t) => ({ ...t, clips: t.clips.map((c) => ({ ...c })) }));
+  function pushUndo(before) {
     undoStack.push(before);
     while (undoStack.length > settings.undoSteps) undoStack.shift();
     redoStack = [];
+  }
+  function commit(fn) {
+    const before = snapshot();
+    fn();
+    pushUndo(before);
     afterEdit();
   }
   function undo() {
     if (!undoStack.length) return;
     redoStack.push(snapshot());
-    clips = undoStack.pop();
+    setTracks(undoStack.pop());
     afterEdit();
   }
   function redo() {
     if (!redoStack.length) return;
     undoStack.push(snapshot());
-    clips = redoStack.pop();
+    setTracks(redoStack.pop());
     afterEdit();
   }
   // The canvas follows the crop when its format is "Like a crop…".
@@ -763,8 +811,16 @@
     updateResolutionOptions();
     updatePreviewAspect();
   }
+  // Empty overlay tracks disappear automatically.
+  function pruneTracks() {
+    const keep = tracks.filter((t, i) => i === 0 || t.clips.length);
+    if (keep.length !== tracks.length) setTracks(keep);
+  }
   function afterEdit() {
-    if (selectedId && !clips.some((c) => c.id === selectedId)) selectedId = null;
+    relayout();
+    pruneTracks();
+    if (selectedId && !findClip(selectedId)) selectedId = null;
+    if (selectedTrackId && !findTrack(selectedTrackId)) selectedTrackId = null;
     syncCropCanvas();
     playhead = clamp(playhead, 0, totalDuration());
     renderTimeline();
@@ -777,75 +833,127 @@
   // Editing operations
   // ---------------------------------------------------------------------------
   const EDGE = 0.05;
-  function selectedIndex() { return clips.findIndex((c) => c.id === selectedId); }
+  const OVERLAY_TF = { fit: 'free', scale: 0.5 }; // new overlays: half size, centred
 
+  // Does [start, start+len) collide with a clip of the track (ignoring one id)?
+  function overlaps(tr, start, len, ignoreId) {
+    return tr.clips.some((c) => c.id !== ignoreId && start < clipEnd(c) - 1e-6 && start + len > c.start + 1e-6);
+  }
+
+  /** Put a clip on the lowest overlay track that has room at `start`, or on a new track on top. */
+  function placeOverlay(clip, start) {
+    clip.start = Math.max(0, start);
+    let tr = tracks.slice(1).find((t) => !t.magnetic && !overlaps(t, clip.start, clipLen(clip)));
+    if (!tr) { tr = newTrack(false); tracks.push(tr); }
+    tr.clips.push(clip);
+    layoutTrack(tr);
+    return tr;
+  }
+
+  /** Append to the main track (or put it as overlay at the playhead). */
+  function addClipToTimeline(clip, overlay) {
+    if (overlay && allClips().length) {
+      clip.tf = { ...Render.tfOf(clip.tf), ...OVERLAY_TF };
+      placeOverlay(clip, playhead);
+      selectedId = clip.id;
+      return;
+    } else {
+      const main = tracks[0];
+      clip.start = main.clips.length ? Math.max(...main.clips.map(clipEnd)) : 0;
+      main.clips.push(clip);
+    }
+  }
+
+  // Clip to split: the selected one if the playhead is inside it, else the
+  // main track's clip (or the topmost clip) under the playhead.
+  function splitTarget() {
+    const sel = findClip(selectedId);
+    if (sel && playhead > sel.clip.start + EDGE && playhead < clipEnd(sel.clip) - EDGE) return sel;
+    const order = [0, ...tracks.map((_, i) => i).slice(1).reverse()];
+    for (const ti of order) {
+      const a = clipAtTrack(tracks[ti], playhead);
+      if (a.idx >= 0) return { tr: tracks[ti], ti, idx: a.idx, clip: a.clip };
+    }
+    return null;
+  }
   function splitAtPlayhead() {
-    const { idx, offset } = clipAt(playhead);
-    if (idx < 0) return;
-    const c = clips[idx];
-    if (offset < EDGE || offset > c.out - c.in - EDGE) { toast('Move the playhead inside a clip to split it.'); return; }
+    const f = splitTarget();
+    if (!f) { toast('Move the playhead over a clip to cut it.'); return; }
+    const c = f.clip;
+    const offset = playhead - c.start;
+    if (offset < EDGE || offset > clipLen(c) - EDGE) { toast('Move the playhead inside a clip to cut it.'); return; }
     commit(() => {
       const left = { ...c, id: newId(), out: c.in + offset };
-      const right = { ...c, id: newId(), in: c.in + offset };
-      clips.splice(idx, 1, left, right);
+      const right = { ...c, id: newId(), in: c.in + offset, start: c.start + offset };
+      f.tr.clips.splice(f.idx, 1, left, right);
       selectedId = right.id;
       if (canvasState.cropClipId === c.id) canvasState.cropClipId = left.id;
     });
   }
   function deleteSelected() {
-    const i = selectedIndex();
-    if (i < 0) { toast('Select a clip first.'); return; }
-    commit(() => { clips.splice(i, 1); selectedId = null; });
+    const f = findClip(selectedId);
+    if (!f) { toast('Select a clip first.'); return; }
+    commit(() => { f.tr.clips.splice(f.idx, 1); selectedId = null; });
   }
   function copySelected(silent) {
-    const i = selectedIndex();
-    if (i < 0) { toast('Select a clip first.'); return false; }
-    const c = clips[i];
-    const { id, ...rest } = c;
-    clipboard = { ...rest };
+    const f = findClip(selectedId);
+    if (!f) { toast('Select a clip first.'); return false; }
+    const { id, ...rest } = f.clip;
+    clipboard = { ...rest, fromMain: f.ti === 0 };
     if (!silent) toast('Clip copied — move the playhead and paste.');
     updateToolbar();
     return true;
   }
   function paste() {
     if (!clipboard) return;
-    let insertAt = clips.length;
-    let insertTime = totalDuration();
+    const { fromMain, ...data } = clipboard;
+    const nc = { ...data, id: newId() };
+    let insertTime = playhead;
     commit(() => {
-      if (clips.length && playhead < totalDuration() - EDGE) {
-        const { idx, offset, start } = clipAt(playhead);
-        const c = clips[idx];
-        const len = c.out - c.in;
-        if (offset <= EDGE) { insertAt = idx; insertTime = start; } else if (offset >= len - EDGE) { insertAt = idx + 1; insertTime = start + len; } else {
-          const left = { ...c, id: newId(), out: c.in + offset };
-          const right = { ...c, id: newId(), in: c.in + offset };
-          clips.splice(idx, 1, left, right);
-          insertAt = idx + 1; insertTime = start + offset;
-        }
+      const main = tracks[0];
+      if (fromMain && main.magnetic) {
+        let insertAt = main.clips.length;
+        insertTime = totalMain();
+        const a = clipAt(playhead);
+        if (a.idx >= 0) {
+          const c = a.clip, len = clipLen(c);
+          if (a.offset <= EDGE) { insertAt = a.idx; insertTime = a.start; } else if (a.offset >= len - EDGE) { insertAt = a.idx + 1; insertTime = a.start + len; } else {
+            const left = { ...c, id: newId(), out: c.in + a.offset };
+            const right = { ...c, id: newId(), in: c.in + a.offset };
+            main.clips.splice(a.idx, 1, left, right);
+            insertAt = a.idx + 1; insertTime = a.start + a.offset;
+          }
+        } else if (playhead <= 0) { insertAt = 0; insertTime = 0; }
+        main.clips.splice(insertAt, 0, nc);
+      } else if (fromMain && !overlaps(main, playhead, clipLen(nc))) {
+        nc.start = playhead;
+        main.clips.push(nc);
+      } else {
+        placeOverlay(nc, playhead);
       }
-      const nc = { id: newId(), ...clipboard };
-      clips.splice(insertAt, 0, nc);
       selectedId = nc.id;
     });
     playhead = insertTime;
     seek(playhead);
   }
+  const totalMain = () => (tracks[0].clips.length ? Math.max(...tracks[0].clips.map(clipEnd)) : 0);
+
   function toggleMuteClip() {
-    let i = selectedIndex();
-    if (i < 0) i = clipAt(playhead).idx;
-    if (i < 0 || !isVideoClip(clips[i])) return;
-    commit(() => { clips[i] = { ...clips[i], muted: !clips[i].muted }; });
+    let f = findClip(selectedId);
+    if (!f) { const a = clipAt(playhead); if (a.idx >= 0) f = { tr: tracks[0], idx: a.idx, clip: a.clip }; }
+    if (!f || !isVideoClip(f.clip)) return;
+    commit(() => { f.tr.clips[f.idx] = { ...f.clip, muted: !f.clip.muted }; });
   }
   function updateSelected(patch) {
-    const i = selectedIndex();
-    if (i < 0) return;
-    commit(() => { clips[i] = { ...clips[i], ...patch }; });
+    const f = findClip(selectedId);
+    if (!f) return;
+    commit(() => { f.tr.clips[f.idx] = { ...f.clip, ...patch }; });
   }
   function toggleMuteAll() {
     muteAll = !muteAll;
     $('muteAllBtn').setAttribute('aria-pressed', String(muteAll));
     $('muteAllBtn').title = muteAll ? 'Unmute all audio' : 'Mute all audio';
-    applyMute();
+    syncPool();
     updateEstimate();
     scheduleSave();
   }
@@ -855,27 +963,30 @@
   $('splitBtn').addEventListener('click', splitAtPlayhead);
   $('deleteBtn').addEventListener('click', deleteSelected);
   $('copyBtn').addEventListener('click', () => copySelected(false));
-  $('cpClose').addEventListener('click', () => { selectedId = null; renderClips(); updateToolbar(); });
+  $('cpClose').addEventListener('click', () => { selectedId = null; renderClips(); updateToolbar(); renderPreview(); });
 
   // Clip panel fields
   $('cpDuration').addEventListener('change', (e) => {
-    const c = clips[selectedIndex()];
-    if (!c || c.kind === 'video') return;
-    const d = clamp(parseFloat(e.target.value) || STILL_DURATION, 0.1, 3600);
-    updateSelected({ out: c.in + d });
+    const f = findClip(selectedId);
+    if (!f || f.clip.kind === 'video') return;
+    let d = clamp(parseFloat(e.target.value) || STILL_DURATION, 0.1, 3600);
+    // On a free track a still can't grow into the next clip.
+    const next = f.tr.clips[f.idx + 1];
+    if (!f.tr.magnetic && next) d = Math.min(d, next.start - f.clip.start);
+    updateSelected({ out: f.clip.in + d });
   });
   $('cpColor').addEventListener('input', (e) => {
     // Live preview without creating an undo step for every colour tick.
-    const c = clips[selectedIndex()];
+    const c = selClip();
     if (c && c.kind === 'color') { c.color = e.target.value; renderPreview(); renderClips(); }
   });
   // The colour picker previews live; the undo step is recorded once on 'change'.
   let clipColorBefore = null;
-  const rememberColor = () => { const c = clips[selectedIndex()]; clipColorBefore = c ? c.color : null; };
+  const rememberColor = () => { const c = selClip(); clipColorBefore = c ? c.color : null; };
   $('cpColor').addEventListener('focus', rememberColor);
   $('cpColor').addEventListener('click', rememberColor);
   $('cpColor').addEventListener('change', (e) => {
-    const c = clips[selectedIndex()];
+    const c = selClip();
     if (!c || c.kind !== 'color') return;
     if (clipColorBefore) c.color = clipColorBefore; // so the undo snapshot holds the old colour
     clipColorBefore = null;
@@ -883,7 +994,7 @@
   });
   $('cpSize').addEventListener('change', (e) => {
     const v = e.target.value;
-    const c = clips[selectedIndex()];
+    const c = selClip();
     if (!c || c.kind !== 'color') return;
     if (v === 'canvas') updateSelected({ size: 'canvas' });
     else if (v === 'custom') updateSelected({ size: 'custom' });
@@ -896,10 +1007,9 @@
   }));
 
   function updateClipPanel() {
-    const i = selectedIndex();
+    const c = selClip();
     const panel = $('clipPanel');
-    if (i < 0) { panel.hidden = true; updateTransformingClass(); return; }
-    const c = clips[i];
+    if (!c) { panel.hidden = true; updateTransformingClass(); updateTrackPanel(); return; }
     const src = srcOf(c);
     panel.hidden = false;
     $('cpKind').textContent = c.kind === 'video' ? 'Video' : c.kind === 'image' ? 'Image' : 'Color clip';
@@ -922,6 +1032,7 @@
       $('cpW').value = c.w || 1920;
       $('cpH').value = c.h || 1080;
     }
+    updateTrackPanel();
   }
   $('pasteBtn').addEventListener('click', paste);
   $('muteClipBtn').addEventListener('click', toggleMuteClip);
@@ -931,24 +1042,101 @@
     // Undo/redo stay clickable; they just look dimmed when there's nothing to do.
     $('undoBtn').classList.toggle('idle', !undoStack.length);
     $('redoBtn').classList.toggle('idle', !redoStack.length);
-    $('splitBtn').disabled = !clips.length;
+    $('splitBtn').disabled = !allClips().length;
     $('pasteBtn').disabled = !clipboard;
-    const hasSel = selectedIndex() >= 0;
+    const hasSel = !!findClip(selectedId);
     $('copyBtn').disabled = !hasSel;
     $('deleteBtn').disabled = !hasSel;
+    // "Selected clip only" needs a selection.
+    const selBtn = $('scopeToggle').querySelector('[data-scope="selected"]');
+    selBtn.disabled = !hasSel;
+    if (!hasSel && exportState.scope === 'selected') { exportState.scope = 'all'; syncExportUI(); updateEstimate(); }
     $('exportBtn').disabled = !exportClips().length || exporting;
     if (exportState.scope === 'selected') updateEstimate();
     updateClipPanel();
   }
 
   // ---------------------------------------------------------------------------
-  // Timeline rendering
+  // Track panel (opacity, volume, magnetic, order, delete)
+  // ---------------------------------------------------------------------------
+  const trackLabel = (tr) => (tr.main ? 'Main track' : `Track ${tracks.indexOf(tr) + 1}`);
+  function updateTrackPanel() {
+    const tr = findTrack(selectedTrackId);
+    const panel = $('trackPanel');
+    if (!tr || findClip(selectedId)) { panel.hidden = true; return; }
+    panel.hidden = false;
+    const ti = tracks.indexOf(tr);
+    $('tpTitle').textContent = trackLabel(tr);
+    if (document.activeElement !== $('tpOpacity')) $('tpOpacity').value = Math.round(tr.opacity * 100);
+    $('tpOpacityVal').textContent = Math.round(tr.opacity * 100) + '%';
+    if (document.activeElement !== $('tpVolume')) $('tpVolume').value = Math.round(tr.volume * 100);
+    $('tpVolumeVal').textContent = Math.round(tr.volume * 100) + '%';
+    $('tpMagneticRow').hidden = !tr.main;
+    $('tpMagnetic').checked = !!tr.magnetic;
+    $('tpUp').disabled = tr.main || ti >= tracks.length - 1;
+    $('tpDown').disabled = tr.main || ti <= 1;
+    $('tpDelete').hidden = tr.main;
+  }
+  // Track edits from sliders are live; one undo step per slider move.
+  let trackLiveBefore = null;
+  function trackLive(prop, value) {
+    const tr = findTrack(selectedTrackId);
+    if (!tr) return;
+    if (!trackLiveBefore) trackLiveBefore = snapshot();
+    tr[prop] = value;
+    renderTrackHeads();
+    syncPool();
+    renderPreview();
+    updateTrackPanel();
+  }
+  function trackLiveCommit() {
+    if (!trackLiveBefore) return;
+    pushUndo(trackLiveBefore);
+    trackLiveBefore = null;
+    afterEdit();
+  }
+  $('tpOpacity').addEventListener('input', (e) => trackLive('opacity', e.target.value / 100));
+  $('tpOpacity').addEventListener('change', trackLiveCommit);
+  $('tpVolume').addEventListener('input', (e) => trackLive('volume', e.target.value / 100));
+  $('tpVolume').addEventListener('change', trackLiveCommit);
+  $('tpMagnetic').addEventListener('change', (e) => {
+    const tr = findTrack(selectedTrackId);
+    if (!tr) return;
+    commit(() => {
+      // Back to magnetic: keep the order of the clips, close the gaps.
+      if (e.target.checked) tr.clips.sort((a, b) => a.start - b.start);
+      tr.magnetic = e.target.checked;
+    });
+    toast(e.target.checked ? 'Main track is magnetic again — gaps are closed.' : 'Main track released — clips can be placed freely.');
+  });
+  function moveTrack(dir) {
+    const tr = findTrack(selectedTrackId);
+    if (!tr || tr.main) return;
+    const i = tracks.indexOf(tr), j = i + dir;
+    if (j < 1 || j >= tracks.length) return;
+    commit(() => { tracks.splice(i, 1); tracks.splice(j, 0, tr); });
+  }
+  $('tpUp').addEventListener('click', () => moveTrack(1));
+  $('tpDown').addEventListener('click', () => moveTrack(-1));
+  $('tpDelete').addEventListener('click', () => {
+    const tr = findTrack(selectedTrackId);
+    if (!tr || tr.main) return;
+    if (tr.clips.length && !confirm(`Delete ${trackLabel(tr)} with its ${tr.clips.length} clip${tr.clips.length === 1 ? '' : 's'}?`)) return;
+    commit(() => { tracks.splice(tracks.indexOf(tr), 1); selectedTrackId = null; });
+  });
+  $('tpClose').addEventListener('click', () => { selectedTrackId = null; renderTrackHeads(); updateClipPanel(); });
+
+  // ---------------------------------------------------------------------------
+  // Timeline rendering (one row per track, the top track first)
   // ---------------------------------------------------------------------------
   const timeline = $('timeline');
   const tlInner = $('tlInner');
   const tlRuler = $('tlRuler');
-  const tlTrack = $('tlTrack');
+  const tlRows = $('tlRows');
+  const trackHeads = $('trackHeads');
   const MAX_WIDTH = 80000;
+  const RULER_H = 24;
+  const rowH = (tr) => (tr.main ? 66 : isCoarse ? 46 : 50);
 
   const pad = () => timeline.clientWidth / 2;
   function clampPps(v) {
@@ -956,6 +1144,7 @@
     return clamp(v, Math.max(2, (timeline.clientWidth * 0.5) / total), Math.min(600, MAX_WIDTH / total));
   }
   let ppsUserSet = false;
+  let lastTrackCount = 0;
 
   function renderTimeline() {
     if ($('editorScreen').hidden) return;
@@ -964,6 +1153,13 @@
     pps = clampPps(pps);
     const p = pad();
     tlInner.style.width = (p * 2 + total * pps) + 'px';
+    // Playhead in the middle of the visible clip area (scrollbars change its width).
+    $('playheadLine').style.left = (timeline.offsetLeft + timeline.clientWidth / 2) + 'px';
+    // Height: show `settings.rows` tracks before scrolling vertically.
+    const shown = tracks.slice(0, settings.rows);
+    const maxH = RULER_H + shown.reduce((s, t) => s + rowH(t), 0) + 6;
+    timeline.style.maxHeight = maxH + 'px';
+    trackHeads.style.maxHeight = maxH + 'px';
 
     // Ruler
     const steps = [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800];
@@ -986,76 +1182,160 @@
     }
     tlRuler.replaceChildren(frag);
     renderClips();
+    renderTrackHeads();
+    // New tracks: keep the main track in view.
+    if (tracks.length !== lastTrackCount) { timeline.scrollTop = timeline.scrollHeight; lastTrackCount = tracks.length; }
     syncScroll();
     updateToolbar();
     updateTime();
     updatePreviewAspect();
-    $('stutterHint').hidden = clips.filter(isVideoClip).length < 2;
-    $('previewEmpty').hidden = clips.length > 0;
+    const vids2 = allClips().filter(isVideoClip);
+    $('stutterHint').hidden = vids2.length < 2;
+    $('perfHint').hidden = maxConcurrentVideos() < 3;
+    $('previewEmpty').hidden = allClips().length > 0;
+  }
+
+  // Most video clips playing at the same moment (for the performance hint).
+  function maxConcurrentVideos() {
+    const ev = [];
+    for (const tr of tracks) for (const c of tr.clips) if (isVideoClip(c)) { ev.push([c.start, 1]); ev.push([clipEnd(c), -1]); }
+    ev.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    let cur = 0, max = 0;
+    for (const [, d] of ev) { cur += d; max = Math.max(max, cur); }
+    return max;
   }
 
   const MUTE_SVG = '<svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg>';
+  const EYE_SVG = '<svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+  const EYE_OFF_SVG = '<svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7c2 0 3.7.6 5.1 1.5M22 12s-3.5 7-10 7c-2 0-3.7-.6-5.1-1.5"/><path d="M4 20L20 4"/></svg>';
+  const SOUND_SVG = '<svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M16 9a4 4 0 010 6"/></svg>';
+
+  function clipElement(c, tr, i) {
+    const len = clipLen(c);
+    const src = srcOf(c);
+    const p = pad();
+    const el = document.createElement('div');
+    el.className = 'clip' + (c.id === selectedId ? ' selected' : '') + (c.kind === 'color' ? ' color-clip' : '') + (tr.main ? '' : ' overlay');
+    if (c.kind === 'color') el.style.background = c.color || DEFAULT_COLOR;
+    el.dataset.id = c.id;
+    el.dataset.idx = i;
+    const w = Math.max(3, len * pps - 2);
+    const h = rowH(tr) - 4;
+    el.style.left = (p + c.start * pps + 1) + 'px';
+    el.style.width = w + 'px';
+    el.style.height = h + 'px';
+    if (src && src.thumbs.length) {
+      const tw = Math.round((h - 4) * (src.thumbAspect || 16 / 9));
+      const n = Math.min(400, Math.ceil(w / tw));
+      for (let k = 0; k < n; k++) {
+        const time = c.in + ((k + 0.5) * tw) / pps;
+        const ti = clamp(Math.floor((time - src.rangeIn) / src.thumbStep), 0, src.thumbs.length - 1);
+        const url = src.thumbs[ti] || src.thumbs.find(Boolean);
+        if (!url) break;
+        const img = document.createElement('img');
+        img.src = url;
+        img.alt = '';
+        img.style.width = tw + 'px';
+        el.appendChild(img);
+      }
+    }
+    if (w > 50) {
+      const label = document.createElement('span');
+      label.className = 'clip-label';
+      const nm = src ? src.name : c.kind === 'color' ? 'Color' : '';
+      label.textContent = `${fmtTime(len, false)}${w > 140 && nm ? ' · ' + nm : ''}`;
+      el.appendChild(label);
+    }
+    if (c.muted) {
+      const m = document.createElement('span');
+      m.className = 'clip-muted';
+      m.innerHTML = MUTE_SVG;
+      el.appendChild(m);
+    }
+    return el;
+  }
 
   function renderClips() {
     if ($('editorScreen').hidden) return;
-    const p = pad();
     const frag = document.createDocumentFragment();
-    let t = 0;
-    clips.forEach((c, i) => {
-      const len = c.out - c.in;
-      const src = srcOf(c);
-      const el = document.createElement('div');
-      el.className = 'clip' + (c.id === selectedId ? ' selected' : '') + (c.kind === 'color' ? ' color-clip' : '');
-      if (c.kind === 'color') el.style.background = c.color || DEFAULT_COLOR;
-      el.dataset.id = c.id;
-      el.dataset.idx = i;
-      const w = Math.max(3, len * pps - 2);
-      el.style.left = (p + t * pps + 1) + 'px';
-      el.style.width = w + 'px';
-      if (src && src.thumbs.length) {
-        const tw = Math.round(60 * (src.thumbAspect || 16 / 9));
-        const n = Math.min(400, Math.ceil(w / tw));
-        for (let k = 0; k < n; k++) {
-          const time = c.in + ((k + 0.5) * tw) / pps;
-          const ti = clamp(Math.floor((time - src.rangeIn) / src.thumbStep), 0, src.thumbs.length - 1);
-          const url = src.thumbs[ti] || src.thumbs.find(Boolean);
-          if (!url) break;
-          const img = document.createElement('img');
-          img.src = url;
-          img.alt = '';
-          img.style.width = tw + 'px';
-          el.appendChild(img);
-        }
-      }
-      if (w > 50) {
-        const label = document.createElement('span');
-        label.className = 'clip-label';
-        const nm = src ? src.name : c.kind === 'color' ? 'Color' : '';
-        label.textContent = `${fmtTime(len, false)}${w > 140 && nm ? ' · ' + nm : ''}`;
-        el.appendChild(label);
-      }
-      if (c.muted) {
-        const m = document.createElement('span');
-        m.className = 'clip-muted';
-        m.innerHTML = MUTE_SVG;
-        el.appendChild(m);
-      }
-      frag.appendChild(el);
-      t += len;
-    });
-    tlTrack.replaceChildren(frag);
+    for (let ti = tracks.length - 1; ti >= 0; ti--) {
+      const tr = tracks[ti];
+      const row = document.createElement('div');
+      row.className = 'tl-row' + (tr.main ? ' main' : '') + (tr.hidden ? ' is-hidden' : '') + (tr.id === selectedTrackId ? ' track-selected' : '');
+      row.dataset.track = tr.id;
+      row.style.height = rowH(tr) + 'px';
+      tr.clips.forEach((c, i) => row.appendChild(clipElement(c, tr, i)));
+      frag.appendChild(row);
+    }
+    tlRows.replaceChildren(frag);
   }
+
+  function renderTrackHeads() {
+    const frag = document.createDocumentFragment();
+    const spacer = document.createElement('div');
+    spacer.className = 'th-spacer';
+    spacer.style.height = RULER_H + 'px';
+    frag.appendChild(spacer);
+    for (let ti = tracks.length - 1; ti >= 0; ti--) {
+      const tr = tracks[ti];
+      const h = document.createElement('div');
+      h.className = 'track-head' + (tr.id === selectedTrackId ? ' selected' : '') + (tr.main ? ' main' : '');
+      h.style.height = rowH(tr) + 'px';
+      h.dataset.track = tr.id;
+      h.title = `${trackLabel(tr)} — tap for opacity, volume and more`;
+      const eye = document.createElement('button');
+      eye.type = 'button';
+      eye.className = 'th-btn' + (tr.hidden ? ' off' : '');
+      eye.dataset.act = 'eye';
+      eye.title = tr.hidden ? 'Show track' : 'Hide track';
+      eye.innerHTML = tr.hidden ? EYE_OFF_SVG : EYE_SVG;
+      const snd = document.createElement('button');
+      snd.type = 'button';
+      snd.className = 'th-btn' + (tr.muted ? ' off' : '');
+      snd.dataset.act = 'mute';
+      snd.title = tr.muted ? 'Unmute track' : 'Mute track';
+      snd.innerHTML = tr.muted ? MUTE_SVG : SOUND_SVG;
+      h.append(eye, snd);
+      frag.appendChild(h);
+    }
+    trackHeads.replaceChildren(frag);
+    trackHeads.scrollTop = timeline.scrollTop;
+  }
+
+  trackHeads.addEventListener('click', (e) => {
+    const head = e.target.closest('.track-head');
+    if (!head) return;
+    const tr = findTrack(head.dataset.track);
+    if (!tr) return;
+    const act = e.target.closest('.th-btn');
+    if (act) {
+      const prop = act.dataset.act === 'eye' ? 'hidden' : 'muted';
+      commit(() => { tr[prop] = !tr[prop]; });
+      return;
+    }
+    selectedTrackId = selectedTrackId === tr.id ? null : tr.id;
+    selectedId = null;
+    renderClips();
+    renderTrackHeads();
+    updateToolbar();
+    renderPreview();
+  });
 
   // Keep scroll position and playhead in sync (playhead fixed at the centre).
   let expectedScroll = -1;
+  let lastScrollLeft = 0;
   function syncScroll() {
     const target = Math.round(playhead * pps);
     expectedScroll = target;
     timeline.scrollLeft = target;
+    lastScrollLeft = timeline.scrollLeft;
   }
   let scrollRaf = 0;
   timeline.addEventListener('scroll', () => {
+    trackHeads.scrollTop = timeline.scrollTop;
     if (drag) return;
+    if (timeline.scrollLeft === lastScrollLeft) return; // vertical scrolling only
+    lastScrollLeft = timeline.scrollLeft;
     if (Math.abs(timeline.scrollLeft - expectedScroll) <= 1) return;
     expectedScroll = -1;
     if (scrollRaf) return;
@@ -1098,67 +1378,101 @@
   window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(renderTimeline, 120); });
 
   // ---------------------------------------------------------------------------
-  // Clip selection and drag & drop reordering
+  // Clip selection and dragging (only the selected clip can be dragged):
+  // sideways = reorder (magnetic main track) or move in time (free tracks),
+  // up/down = move to another track; above the top track = new track.
   // ---------------------------------------------------------------------------
   let drag = null;
   let suppressClick = false;
 
-  tlTrack.addEventListener('click', (e) => {
+  tlRows.addEventListener('click', (e) => {
     if (suppressClick) { suppressClick = false; return; }
     const el = e.target.closest('.clip');
     selectedId = el ? (selectedId === el.dataset.id ? null : el.dataset.id) : null;
+    if (selectedId) selectedTrackId = null;
     renderClips();
+    renderTrackHeads();
     updateToolbar();
     if (selectedId && cpTab !== 'clip') ensureVisible();
     renderPreview();
   });
 
-  tlTrack.addEventListener('pointerdown', (e) => {
+  tlRows.addEventListener('pointerdown', (e) => {
     const el = e.target.closest('.clip');
-    if (!el || e.button > 0) return;
-    // Touch: only the selected clip can be dragged (others scroll the timeline).
-    if (e.pointerType !== 'mouse' && el.dataset.id !== selectedId) return;
-    drag = { el, id: el.dataset.id, startX: e.clientX, pointerId: e.pointerId, active: false, dropIdx: -1, marker: null, raf: 0, lastX: e.clientX };
+    if (!el || e.button > 0 || el.dataset.id !== selectedId) return;
+    drag = { el, id: el.dataset.id, startX: e.clientX, startY: e.clientY, pointerId: e.pointerId, active: false, marker: null, raf: 0, lastX: e.clientX, lastY: e.clientY, target: null };
   });
 
   window.addEventListener('pointermove', (e) => {
     if (!drag || e.pointerId !== drag.pointerId) return;
-    const dx = e.clientX - drag.startX;
+    const dx = e.clientX - drag.startX, dy = e.clientY - drag.startY;
     if (!drag.active) {
-      if (Math.abs(dx) < 6) return;
+      if (Math.hypot(dx, dy) < 6) return;
       drag.active = true;
-      if (selectedId !== drag.id) { selectedId = drag.id; renderClips(); drag.el = tlTrack.querySelector(`.clip[data-id="${drag.id}"]`); }
       drag.el.classList.add('dragging');
       try { drag.el.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
       drag.origLeft = parseFloat(drag.el.style.left);
       drag.scroll0 = timeline.scrollLeft;
       drag.marker = document.createElement('div');
       drag.marker.className = 'drop-marker';
-      tlTrack.appendChild(drag.marker);
+      drag.marker.hidden = true;
+      tlRows.appendChild(drag.marker);
       autoScroll();
     }
     drag.lastX = e.clientX;
+    drag.lastY = e.clientY;
     positionDrag();
   });
 
+  // Track row under a screen y (null above the top row = new track).
+  function rowAtY(y) {
+    const rows = [...tlRows.querySelectorAll('.tl-row')];
+    for (const r of rows) { const b = r.getBoundingClientRect(); if (y >= b.top && y < b.bottom) return r; }
+    if (rows.length && y < rows[0].getBoundingClientRect().top) return null;
+    return rows[rows.length - 1] || null;
+  }
+
   function positionDrag() {
+    const f = findClip(drag.id);
+    if (!f) return;
     const dx = drag.lastX - drag.startX + (timeline.scrollLeft - drag.scroll0);
     drag.el.style.left = (drag.origLeft + dx) + 'px';
-    // Determine the drop slot from the pointer's timeline time.
+    drag.el.style.transform = `translateY(${drag.lastY - drag.startY}px)`;
+    const row = rowAtY(drag.lastY);
+    const tr = row ? findTrack(row.dataset.track) : null;
+    drag.target = tr ? tr.id : 'new';
     const rect = timeline.getBoundingClientRect();
-    const x = drag.lastX - rect.left + timeline.scrollLeft - pad();
-    const time = x / pps;
-    const others = clips.filter((c) => c.id !== drag.id);
-    let t = 0, idx = 0;
-    for (const c of others) {
-      const len = c.out - c.in;
-      if (time > t + len / 2) idx++;
-      t += len;
+    const time = (drag.lastX - rect.left + timeline.scrollLeft - pad()) / pps;
+    drag.time = Math.max(0, f.clip.start + dx / pps);
+    if (tr && tr.magnetic) {
+      // Insert position between the other clips of the magnetic track.
+      const others = tr.clips.filter((c) => c.id !== drag.id);
+      let idx = 0;
+      for (const c of others) if (time > c.start + clipLen(c) / 2) idx++;
+      drag.dropIdx = idx;
+      let boundary = 0;
+      for (let i = 0; i < idx; i++) boundary += clipLen(others[i]);
+      const rb = row.getBoundingClientRect(), pb = tlRows.getBoundingClientRect();
+      drag.marker.hidden = false;
+      drag.marker.style.left = (pad() + boundary * pps - 1) + 'px';
+      drag.marker.style.top = (rb.top - pb.top) + 'px';
+      drag.marker.style.height = rb.height + 'px';
+    } else {
+      drag.marker.hidden = true;
+      // Snap the start to the playhead and to edges of other clips (8 px).
+      const thr = 8 / pps;
+      let best = null;
+      const len = clipLen(f.clip);
+      const cands = [playhead, 0];
+      for (const c of allClips()) if (c.id !== drag.id) cands.push(c.start, clipEnd(c));
+      for (const cnd of cands) {
+        for (const [edge, off] of [[drag.time, 0], [drag.time + len, len]]) {
+          const d = Math.abs(edge - cnd);
+          if (d < thr && (!best || d < best.d)) best = { d, t: cnd - off };
+        }
+      }
+      if (best) drag.time = Math.max(0, best.t);
     }
-    drag.dropIdx = idx;
-    let boundary = 0;
-    for (let i = 0; i < idx; i++) boundary += others[i].out - others[i].in;
-    drag.marker.style.left = (pad() + boundary * pps - 1) + 'px';
   }
 
   function autoScroll() {
@@ -1180,30 +1494,56 @@
     cancelAnimationFrame(d.raf);
     suppressClick = true;
     setTimeout(() => { suppressClick = false; }, 50);
-    const from = clips.findIndex((c) => c.id === d.id);
-    if (from >= 0 && d.dropIdx >= 0 && d.dropIdx !== from) {
-      commit(() => {
-        const [c] = clips.splice(from, 1);
-        clips.splice(d.dropIdx, 0, c);
-      });
-    } else {
-      renderTimeline();
-    }
+    const f = findClip(d.id);
+    if (!f) { renderTimeline(); return; }
+    const sameTrack = d.target === f.tr.id;
+    if (sameTrack && f.tr.magnetic && d.dropIdx === f.idx) { renderTimeline(); return; }
+    if (sameTrack && !f.tr.magnetic && Math.abs(d.time - f.clip.start) < 1e-3) { renderTimeline(); return; }
+    commit(() => {
+      const c = f.clip;
+      f.tr.clips.splice(f.idx, 1);
+      let tr = d.target === 'new' ? null : findTrack(d.target);
+      if (!tr) { tr = newTrack(false); tracks.push(tr); }
+      if (tr.magnetic) {
+        tr.clips.splice(clamp(d.dropIdx, 0, tr.clips.length), 0, c);
+      } else {
+        c.start = d.time;
+        if (overlaps(tr, c.start, clipLen(c), c.id)) {
+          // No room here: put it on a new track right above.
+          const nt = newTrack(false);
+          tracks.splice(tracks.indexOf(tr) + 1, 0, nt);
+          tr = nt;
+        }
+        tr.clips.push(c);
+      }
+      selectedId = c.id;
+    });
   }
   window.addEventListener('pointerup', endDrag);
   window.addEventListener('pointercancel', endDrag);
 
   // ---------------------------------------------------------------------------
-  // Preview (a canvas draws the composition exactly like the export; two
-  // <video> elements underneath supply frames and sound, the next video clip
-  // is always preloaded in the element that isn't showing)
+  // Preview (a canvas draws the composition exactly like the export). A pool
+  // of <video> elements supplies frames and sound: one per video clip playing
+  // right now, plus the clips starting soon (preloaded). A wall clock drives
+  // the playhead; it waits while a playing video is still buffering.
   // ---------------------------------------------------------------------------
   const vids = [$('vidA'), $('vidB')];
+  const POOL_MAX = 8;
+  const PRELOAD = 1.5; // seconds ahead
+  function poolElement() {
+    if (vids.length >= POOL_MAX) return null;
+    const v = vids[0].cloneNode(false);
+    v.removeAttribute('id');
+    v.removeAttribute('src');
+    vids[0].parentNode.insertBefore(v, vids[vids.length - 1].nextSibling);
+    vids.push(v);
+    hookVideo(v);
+    return v;
+  }
   const pv = $('pvCanvas');
   const pvCtx = pv.getContext('2d', { alpha: false });
-  let showing = null;   // <video> element currently providing frames (null for stills)
-  let activeIdx = -1;
-  let clock = null;     // stills: { t0, ph0 } — wall clock instead of a video's time
+  let clock = { t0: 0, ph0: 0 };
   const unlocked = new WeakSet();
 
   const isVideoClip = (c) => !!c && c.kind === 'video';
@@ -1226,24 +1566,67 @@
     setVideoTime(el, Math.max(0, t - src.base));
   }
   const mediaTime = (el) => { const s = sources.get(el.dataset.src); return el.currentTime + (s ? s.base : 0); };
+  const elOf = (clipId) => vids.find((v) => v.dataset.clip === clipId) || null;
 
-  // Element for a video clip: prefer one that already holds the same source.
-  function elementFor(clip, avoid) {
-    const src = srcOf(clip);
-    const cand = vids.filter((v) => v !== avoid);
-    return cand.find((v) => v.dataset.clip === clip.id) || cand.find((v) => v.dataset.src === src.id) || cand[0];
+  // The time shown: at the very end the last frame stays visible.
+  const viewTime = () => { const tot = totalDuration(); return playhead >= tot - 1e-6 ? Math.max(0, tot - 1e-3) : playhead; };
+
+  // Video clips playing at time t (with their track), bottom track first.
+  function activeVideos(t) {
+    const out = [];
+    for (const tr of tracks) {
+      const a = clipAtTrack(tr, t);
+      if (a.idx >= 0 && playableVideo(a.clip)) out.push({ tr, clip: a.clip });
+    }
+    return out;
   }
 
-  function applyMute() {
-    vids.forEach((el) => {
-      const clip = clips.find((c) => c.id === el.dataset.clip);
-      el.muted = muteAll || !clip || clip.muted || el !== showing;
-    });
-  }
-
-  function prepareNext() {
-    const next = clips[activeIdx + 1];
-    if (playableVideo(next)) loadInto(elementFor(next, showing), next, next.in);
+  /**
+   * Give every playing and upcoming video clip an element, keep the playing
+   * ones in sync with the playhead and set their sound.
+   * forceTime: re-position the playing elements (after a seek).
+   */
+  function syncPool(forceTime) {
+    const t = viewTime();
+    const active = activeVideos(t);
+    const upcoming = [];
+    if (playing) {
+      for (const tr of tracks) for (const c of tr.clips) {
+        if (playableVideo(c) && c.start > t + 1e-6 && c.start <= t + PRELOAD) upcoming.push({ tr, clip: c });
+      }
+      upcoming.sort((a, b) => a.clip.start - b.clip.start);
+    }
+    const wanted = [...active, ...upcoming];
+    const ids = new Set(wanted.map((w) => w.clip.id));
+    const used = new Set();
+    for (const w of wanted) { const el = elOf(w.clip.id); if (el) { used.add(el); w.el = el; } }
+    for (const w of wanted) {
+      if (w.el) continue;
+      const free = vids.filter((v) => !used.has(v) && !ids.has(v.dataset.clip));
+      const src = srcOf(w.clip);
+      let el = free.find((v) => v.dataset.src === src.id) || free.find((v) => !v.dataset.clip) || free[0] || poolElement();
+      if (!el) continue; // more videos at once than elements: this one isn't shown
+      used.add(el);
+      w.el = el;
+      w.fresh = true;
+    }
+    // Elements nobody needs right now pause.
+    vids.forEach((v) => { if (!used.has(v)) { if (!v.paused) v.pause(); v.muted = true; } });
+    const activeIds = new Set(active.map((a) => a.clip.id));
+    for (const w of wanted) {
+      const { el, clip, tr } = w;
+      if (!el) continue;
+      const isActive = activeIds.has(clip.id);
+      const target = isActive ? clip.in + (t - clip.start) : clip.in;
+      if (w.fresh) loadInto(el, clip, target);
+      else if (isActive && (forceTime || Math.abs(mediaTime(el) - target) > (playing ? 0.25 : 0.01))) setVideoTime(el, Math.max(0, target - srcOf(clip).base));
+      el.muted = !isActive || muteAll || !!clip.muted || tr.muted || tr.volume <= 0;
+      el.volume = clamp(tr.volume, 0, 1);
+      if (isActive && playing) {
+        if (el.paused) el.play().catch((err) => { if (err && err.name === 'NotAllowedError') { el.muted = true; el.play().catch(() => {}); } });
+      } else if (!el.paused) el.pause();
+    }
+    return active.map((a) => ({ ...a, el: elOf(a.clip.id) }));
   }
 
   function resetVideos() {
@@ -1252,30 +1635,9 @@
 
   function seek(t, fromScroll) {
     playhead = clamp(t, 0, totalDuration());
-    if (!clips.length) {
-      resetVideos();
-      showing = null;
-      activeIdx = -1;
-      updateTime();
-      renderPreview();
-      return;
-    }
-    const { idx, offset } = clipAt(playhead);
-    const clip = clips[idx];
-    activeIdx = idx;
-    if (playableVideo(clip)) {
-      const el = elementFor(clip, null);
-      if (showing && showing !== el) showing.pause();
-      showing = el;
-      loadInto(el, clip, clip.in + offset);
-      if (playing) el.play().catch(() => {});
-    } else {
-      if (showing) showing.pause();
-      showing = null;
-      clock = { t0: performance.now(), ph0: playhead };
-    }
-    prepareNext();
-    applyMute();
+    clock = { t0: performance.now(), ph0: playhead };
+    if (!allClips().length) resetVideos();
+    else syncPool(true);
     if (!fromScroll) syncScroll();
     updateTime();
     updateToolbar();
@@ -1293,26 +1655,26 @@
     // iOS only lets a <video> play with sound if play() was first called in a user gesture.
     if (unlocked.has(el) || !el.getAttribute('src')) return;
     unlocked.add(el);
+    if (!el.paused) return; // already playing in this gesture
     const t = el.currentTime;
     el.muted = true;
-    el.play().then(() => { if (el !== showing) { el.pause(); el.currentTime = t; } applyMute(); }).catch(() => {});
+    el.play().then(() => {
+      const active = playing && activeVideos(viewTime()).some((a) => a.clip.id === el.dataset.clip);
+      if (!active) { el.pause(); el.currentTime = t; }
+      syncPool();
+    }).catch(() => {});
   }
 
   function play() {
-    if (!clips.length) return;
+    if (!allClips().length) return;
     if (playhead >= totalDuration() - 0.03) seek(0);
+    // Make sure a few elements exist so they can be unlocked in this gesture.
+    while (vids.length < 4 && poolElement());
     playing = true;
     setPlayIcon();
-    vids.forEach((v) => { if (v !== showing) unlock(v); });
-    if (showing) {
-      unlocked.add(showing);
-      applyMute();
-      showing.play().catch((err) => {
-        if (err && err.name === 'NotAllowedError') { showing.muted = true; showing.play().catch(() => {}); toast('Sound was blocked by the browser — tap play again for sound.'); }
-      });
-    } else {
-      clock = { t0: performance.now(), ph0: playhead };
-    }
+    clock = { t0: performance.now(), ph0: playhead };
+    syncPool(true);
+    vids.forEach(unlock);
     requestAnimationFrame(tick);
   }
   function pause() {
@@ -1320,55 +1682,28 @@
     playing = false;
     vids.forEach((v) => v.pause());
     setPlayIcon();
+    syncPool();
   }
   $('playBtn').addEventListener('click', () => (playing ? pause() : play()));
 
-  // Move on to the next clip while playing. Returns false at the end.
-  function advance() {
-    const nextIdx = activeIdx + 1;
-    if (nextIdx >= clips.length) {
-      playhead = totalDuration();
+  function tick() {
+    if (!playing) return;
+    const now = performance.now();
+    const total = totalDuration();
+    // Wait while a playing video is still loading, so pictures and sound stay together.
+    const act = activeVideos(viewTime());
+    const waiting = act.some((a) => { const el = elOf(a.clip.id); return el && (el.seeking || el.readyState < 3); });
+    if (waiting) clock = { t0: now, ph0: playhead };
+    else playhead = Math.min(total, clock.ph0 + (now - clock.t0) / 1000);
+    if (playhead >= total - 1e-4) {
+      playhead = total;
       pause();
       syncScroll();
       updateTime();
-      return false;
+      renderPreview();
+      return;
     }
-    const next = clips[nextIdx];
-    const prev = showing;
-    activeIdx = nextIdx;
-    if (playableVideo(next)) {
-      const el = elementFor(next, prev);
-      if (el.dataset.clip !== next.id || Math.abs(mediaTime(el) - next.in) > 0.25) loadInto(el, next, next.in);
-      if (prev) prev.pause();
-      showing = el;
-      applyMute();
-      el.play().catch(() => { el.muted = true; el.play().catch(() => {}); });
-    } else {
-      if (prev) prev.pause();
-      showing = null;
-      clock = { t0: performance.now(), ph0: clipStart(nextIdx) };
-      applyMute();
-    }
-    prepareNext();
-    return true;
-  }
-
-  function tick() {
-    if (!playing) return;
-    const clip = clips[activeIdx];
-    if (!clip) { pause(); return; }
-    const start = clipStart(activeIdx);
-    const len = clip.out - clip.in;
-    let done;
-    if (showing && isVideoClip(clip)) {
-      const t = mediaTime(showing);
-      playhead = start + clamp(t - clip.in, 0, len);
-      done = t >= clip.out - 0.02 || showing.ended;
-    } else {
-      playhead = Math.min(start + len, clock.ph0 + (performance.now() - clock.t0) / 1000);
-      done = playhead >= start + len - 1e-3;
-    }
-    if (done && !advance()) { renderPreview(); return; }
+    syncPool();
     syncScroll();
     updateTime();
     renderPreview();
@@ -1376,10 +1711,11 @@
   }
 
   function frameStep(dir) {
-    if (!clips.length) return;
+    if (!allClips().length) return;
     pause();
-    const src = srcOf(clips[clipAt(playhead).idx]);
-    seek(playhead + dir / (src && src.kind === 'video' ? src.frameRate : 30));
+    const v = activeVideos(viewTime())[0];
+    const src = v ? srcOf(v.clip) : null;
+    seek(playhead + dir / (src ? src.frameRate : 30));
   }
   $('frameBackBtn').addEventListener('click', () => frameStep(-1));
   $('frameFwdBtn').addEventListener('click', () => frameStep(1));
@@ -1406,7 +1742,7 @@
   // is split or an edit is undone, so fall back to a clip of the same media.
   function cropClip() {
     if (canvasState.aspect !== 'crop') return null;
-    const cands = clips.filter((c) => c.kind !== 'color');
+    const cands = allClips().filter((c) => c.kind !== 'color');
     return cands.find((c) => c.id === canvasState.cropClipId) || cands.find((c) => c.srcId === canvasState.cropSrcId) || cands[0] || null;
   }
   // Pixel size of a clip's crop (display space; 90° rotations swap width and height).
@@ -1438,11 +1774,12 @@
     $('aspectCropField').hidden = canvasState.aspect !== 'crop';
     const cc = cropClip();
     const csel = $('aspectCropSel');
-    const cands = clips.map((c, i) => ({ c, i })).filter((x) => x.c.kind !== 'color');
-    csel.replaceChildren(...(cands.length ? cands.map(({ c, i }) => {
+    const cands = [];
+    tracks.forEach((tr, ti) => tr.clips.forEach((c, i) => { if (c.kind !== 'color') cands.push({ c, label: tracks.length > 1 ? `${ti === 0 ? 'Main' : 'Track ' + (ti + 1)} · clip ${i + 1}` : `Clip ${i + 1}` }); }));
+    csel.replaceChildren(...(cands.length ? cands.map(({ c, label }) => {
       const p = cropPixels(c);
       const s = srcOf(c);
-      return Object.assign(document.createElement('option'), { value: c.id, textContent: `Clip ${i + 1} · ${s ? s.name : ''} · ${even(p.w)}×${even(p.h)}` });
+      return Object.assign(document.createElement('option'), { value: c.id, textContent: `${label} · ${s ? s.name : ''} · ${even(p.w)}×${even(p.h)}` });
     }) : [Object.assign(document.createElement('option'), { value: '', textContent: 'No video or image — using 16:9' })]));
     if (cc) csel.value = cc.id;
     $('ratioW').value = canvasState.ratioW;
@@ -1486,7 +1823,7 @@
     canvasState.cropSrcId = c ? c.srcId : null;
   }
   $('aspectCropSel').addEventListener('change', (e) => {
-    setCropCanvas(clips.find((c) => c.id === e.target.value));
+    setCropCanvas(allClips().find((c) => c.id === e.target.value));
     exportState.res = 'crop';
     onCanvasChange();
   });
@@ -1560,66 +1897,82 @@
     const W = Math.round(cw * dpr), H = Math.round(ch * dpr);
     if (pv.width !== W || pv.height !== H) { pv.width = W; pv.height = H; }
     const bg = canvasState.bgColor;
-    const fit = canvasState.bg === 'blur' ? 'blur' : 'bars';
-    const clip = clips[activeIdx];
     const mode = editMode();
     pv.classList.toggle('editing', mode === 'move');
     pv.classList.toggle('cropping', mode === 'crop');
-    if (!clip) { pvCtx.fillStyle = bg; pvCtx.fillRect(0, 0, W, H); return; }
     const out = outputDims();
-    const d = currentDrawable(clip, out.w, out.h);
-    if (!d) {
-      if (isVideoClip(clip) && playableVideo(clip)) return; // keep the last frame while seeking
-      pvCtx.fillStyle = bg; pvCtx.fillRect(0, 0, W, H);
+    const t = viewTime();
+    const sel = selClip();
+    if (mode === 'crop') {
+      const d = currentDrawable(sel, out.w, out.h);
+      if (d) drawCropMode(sel, d, W, H);
       return;
     }
-    if (mode === 'crop') { drawCropMode(clip, d, W, H); return; }
-    Render.drawClip(pvCtx, d.drawable, d.w, d.h, 0, W, H, clip.tf, d.isColor ? 'bars' : fit, bg);
-    if (mode === 'move') drawMoveOverlay(clip, d, W, H, dpr);
+    const layers = [];
+    let selLayer = null;
+    for (let ti = 0; ti < tracks.length; ti++) {
+      const tr = tracks[ti];
+      if (tr.hidden || tr.opacity <= 0) continue;
+      const a = clipAtTrack(tr, t);
+      if (a.idx < 0) continue;
+      const d = currentDrawable(a.clip, out.w, out.h);
+      if (!d) {
+        if (playableVideo(a.clip) && elOf(a.clip.id)) return; // keep the last frame while seeking
+        continue;
+      }
+      const l = { drawable: d.drawable, w: d.w, h: d.h, rot: 0, tf: a.clip.tf, opacity: tr.opacity, isMain: ti === 0, isColor: d.isColor };
+      if (sel && a.clip.id === sel.id) selLayer = { clip: a.clip, d };
+      layers.push(l);
+    }
+    Render.composite(pvCtx, W, H, layers, canvasState.bg === 'blur' ? 'blur' : 'bars', bg);
+    if (mode === 'move' && selLayer) drawMoveOverlay(selLayer.clip, selLayer.d, W, H, dpr);
   }
 
   // Preview <video> elements are already rotated by the browser, so rotation 0 here.
   function currentDrawable(clip, outW, outH) {
+    if (!clip) return null;
     if (isVideoClip(clip)) {
-      const el = showing;
+      const el = elOf(clip.id);
       if (!el || el.readyState < 2 || !el.videoWidth) return null;
       return { drawable: el, w: el.videoWidth, h: el.videoHeight, isColor: false };
     }
     return stillFor(clip, outW, outH);
   }
 
-  vids.forEach((v) => {
-    v.addEventListener('seeked', () => { if (v === showing) renderPreview(); });
-    v.addEventListener('loadeddata', () => { if (v === showing) renderPreview(); });
+  function hookVideo(v) {
+    v.addEventListener('seeked', () => { if (!playing) renderPreview(); });
+    v.addEventListener('loadeddata', () => { if (!playing) renderPreview(); });
     v.addEventListener('error', async () => {
-      if (v !== showing || !v.getAttribute('src')) return;
+      if (!v.getAttribute('src') || !v.dataset.clip) return;
       const src = sources.get(v.dataset.src);
       if (src && !(await isReadable(src))) { lostAccess([src]); return; }
       toast('This browser can\'t preview this video, but exporting may still work.', 5000);
     });
-  });
+  }
+  vids.forEach(hookVideo);
 
   // ---------------------------------------------------------------------------
   // Clip transform: crop, position & size, rotation (clip panel tabs + preview gestures)
   // ---------------------------------------------------------------------------
   let cpTab = 'clip';
   const ACCENT = '#4f8cff';
-  const selClip = () => clips[selectedIndex()] || null;
 
   // The preview is interactive only while a transform tab is open and the selected clip is the visible one.
   function editMode() {
-    const c = selClip();
-    const vis = clips[activeIdx];
-    if (!c || cpTab === 'clip' || !vis || vis.id !== c.id || playing) return null;
+    const f = findClip(selectedId);
+    if (!f || cpTab === 'clip' || playing || f.tr.hidden) return null;
+    const c = f.clip;
+    const t = viewTime();
+    if (t < c.start - 1e-6 || t >= clipEnd(c) - 1e-6) return null;
     if (cpTab === 'crop') return c.kind === 'color' ? null : 'crop';
     return 'move';
   }
 
   // Move the playhead into the selected clip so it can be edited in the preview.
   function ensureVisible() {
-    const i = selectedIndex();
-    if (i < 0) return;
-    const st = clipStart(i), len = clips[i].out - clips[i].in;
+    const c = selClip();
+    if (!c) return;
+    const st = c.start, len = clipLen(c);
     if (playhead < st || playhead >= st + len - 1e-3) { pause(); seek(st + Math.min(0.05, len / 2)); }
   }
 
@@ -1645,19 +1998,17 @@
   // Live edits (drags, sliders) change the clip directly; one undo step is recorded at the end.
   let liveBefore = null;
   function liveEdit(patch) {
-    const i = selectedIndex();
-    if (i < 0) return;
+    const f = findClip(selectedId);
+    if (!f) return;
     if (!liveBefore) liveBefore = snapshot();
-    const c = clips[i];
-    clips[i] = { ...c, tf: { ...Render.tfOf(c.tf), ...patch } };
+    const c = f.clip;
+    f.tr.clips[f.idx] = { ...c, tf: { ...Render.tfOf(c.tf), ...patch } };
     renderPreview();
     syncTransformUI();
   }
   function liveCommit() {
     if (!liveBefore) return;
-    undoStack.push(liveBefore);
-    while (undoStack.length > settings.undoSteps) undoStack.shift();
-    redoStack = [];
+    pushUndo(liveBefore);
     liveBefore = null;
     syncCropCanvas();
     updateEstimate();
@@ -2200,9 +2551,17 @@
 
   // Clips that go into the export: the whole timeline or only the selected clip.
   function exportClips() {
-    if (exportState.scope !== 'selected') return clips;
-    const c = clips[selectedIndex()];
+    if (exportState.scope !== 'selected') return allClips();
+    const c = selClip();
     return c ? [c] : [];
+  }
+  const exportDuration = () => (exportState.scope === 'selected' ? (selClip() ? clipLen(selClip()) : 0) : totalDuration());
+  // Is a clip's sound part of the export?
+  function audibleClip(c) {
+    if (muteAll || !isVideoClip(c) || c.muted || !srcOf(c) || !srcOf(c).audioDecodable) return false;
+    if (exportState.scope === 'selected') return true;
+    const f = findClip(c.id);
+    return !f || (!f.tr.muted && f.tr.volume > 0);
   }
   const usedSources = () => [...new Set(exportClips().map((c) => srcOf(c)).filter(Boolean))];
 
@@ -2215,13 +2574,13 @@
 
   function updateEstimate() {
     if (exportState.scope === 'selected' && !exportClips().length) { $('estimate').textContent = 'Select a clip on the timeline to export only that clip.'; return; }
-    if (!clips.length) { $('estimate').textContent = ''; return; }
+    if (!allClips().length) { $('estimate').textContent = ''; return; }
     const s = getExportSettings();
     const used = usedSources();
     const list = exportClips();
-    const dur = list.reduce((sum, c) => sum + (c.out - c.in), 0);
+    const dur = exportDuration();
     const out = Render.computeOutput(s, used, dur);
-    const withAudio = !muteAll && list.some((c) => isVideoClip(c) && !c.muted && srcOf(c) && srcOf(c).audioDecodable);
+    const withAudio = list.some(audibleClip);
     const est = Render.estimateSize(out, dur, withAudio);
     const srcBytes = sourceBytes();
     const onlyVideos = used.length && used.every((x) => x.kind === 'video');
@@ -2255,14 +2614,20 @@
     const s = getExportSettings();
     // Clip times are in media time; the export reads the actual (possibly trimmed-copy) file.
     const scopeSelected = exportState.scope === 'selected';
-    const expClips = exportClips().map((c) => {
-      if (isVideoClip(c)) { const src = srcOf(c); return { kind: 'video', source: src, in: c.in - src.base, out: c.out - src.base, muted: c.muted, tf: c.tf }; }
-      return { kind: c.kind, source: srcOf(c) || null, in: c.in, out: c.out, muted: true, still: stillFor(c, s.width, s.height), tf: c.tf };
-    });
+    const expClip = (c, start) => {
+      if (isVideoClip(c)) { const src = srcOf(c); return { kind: 'video', source: src, start, in: c.in - src.base, out: c.out - src.base, muted: c.muted, tf: c.tf }; }
+      return { kind: c.kind, source: srcOf(c) || null, start, in: c.in, out: c.out, muted: true, still: stillFor(c, s.width, s.height), tf: c.tf };
+    };
+    const sel = selClip();
+    const expTracks = scopeSelected && sel
+      ? [{ hidden: false, opacity: 1, muted: false, volume: 1, clips: [expClip(sel, 0)] }]
+      : tracks.map((tr) => ({ hidden: tr.hidden, opacity: tr.opacity, muted: tr.muted, volume: tr.volume, clips: tr.clips.map((c) => expClip(c, c.start)) }));
+    const duration = exportDuration();
     const t0 = performance.now();
     try {
       const r = await Render.exportTimeline({
-        clips: expClips,
+        tracks: expTracks,
+        duration,
         settings: s,
         signal: abortCtl.signal,
         onProgress: (f, stage) => {
@@ -2291,7 +2656,7 @@
 
   function showResult(r, onlyClip) {
     if (resultUrl) URL.revokeObjectURL(resultUrl);
-    const first = exportClips().map((c) => srcOf(c)).find(Boolean) || clips.map((c) => srcOf(c)).find(Boolean);
+    const first = exportClips().map((c) => srcOf(c)).find(Boolean) || allClips().map((c) => srcOf(c)).find(Boolean);
     const base = (first ? first.name : 'videcutto').replace(/\.[^.]+$/, '');
     const name = `${base}${onlyClip ? '_clip' : ''}_videcutto.mp4`;
     resultFile = new File([r.blob], name, { type: 'video/mp4' });
@@ -2330,8 +2695,8 @@
 
   function referencedIds() {
     const ids = new Set();
-    const add = (list) => list.forEach((c) => { if (c.srcId) ids.add(c.srcId); });
-    add(clips);
+    const add = (list) => list.forEach((tr) => tr.clips.forEach((c) => { if (c.srcId) ids.add(c.srcId); }));
+    add(tracks);
     undoStack.forEach(add);
     redoStack.forEach(add);
     if (clipboard && clipboard.srcId) ids.add(clipboard.srcId);
@@ -2360,7 +2725,7 @@
   // Small cover image for the project list (first clip).
   let thumbCache = { key: '', data: '' };
   async function projectThumb() {
-    const c = clips[0];
+    const c = tracks[0].clips[0] || allClips()[0];
     if (!c) return '';
     const src = srcOf(c);
     const key = `${c.id}|${c.color || ''}|${src && src.thumbs[0] ? src.thumbs[0] : ''}`;
@@ -2389,22 +2754,22 @@
   let projectSaved = false; // a document exists for the open project
   async function saveNow() {
     if (!saveEnabled || !projectId) return;
-    if (!clips.length && !projectSaved) return; // don't create empty projects
+    if (!allClips().length && !projectSaved) return; // don't create empty projects
     cleanupMedia();
     const id = projectId;
     const doc = {
       id,
       name: projectName,
       createdAt: projectCreated,
-      version: 2,
+      version: 3,
       app: VERSION,
       savedAt: Date.now(),
       playhead,
       muteAll,
       canvas: { ...canvasState },
       export: { ...exportState },
-      // Tracks are prepared for multiple timelines; for now there is one main track.
-      tracks: [{ id: 't1', kind: 'main', clips: clips.map((c) => ({ ...c })) }],
+      // Bottom track first; tracks[0] is the main track.
+      tracks: tracks.map((t) => ({ ...t, kind: t.main ? 'main' : 'video', clips: t.clips.map((c) => ({ ...c })) })),
       media: [...sources.values()].map(mediaMeta),
       thumb: await projectThumb().catch(() => ''),
     };
@@ -2421,16 +2786,25 @@
   }
   async function unreadableSources() {
     // Images are decoded into memory when loaded, only videos are read during export.
-    const used = [...new Set(clips.filter(isVideoClip).map((c) => srcOf(c)).filter(Boolean))];
+    const used = [...new Set(exportClips().filter(isVideoClip).map((c) => srcOf(c)).filter(Boolean))];
     const out = [];
     for (const s of used) if (s.missing || !(await isReadable(s))) out.push(s);
     return out;
   }
 
   function projectSummary(p) {
-    const cl = (p.tracks && p.tracks[0] && p.tracks[0].clips) || [];
-    const dur = cl.reduce((s, c) => s + (c.out - c.in), 0);
-    return { count: cl.length, dur, media: (p.media || []).length };
+    let count = 0, dur = 0;
+    (p.tracks || []).forEach((t, i) => {
+      let s = 0;
+      for (const c of t.clips || []) {
+        const len = c.out - c.in;
+        const st = (t.magnetic !== undefined ? t.magnetic : i === 0) ? s : (c.start || 0);
+        s = st + len;
+        dur = Math.max(dur, st + len);
+        count++;
+      }
+    });
+    return { count, dur, media: (p.media || []).length };
   }
 
   // ---------------------------------------------------------------------------
@@ -2502,7 +2876,8 @@
   }
 
   function resetState() {
-    clips = []; undoStack = []; redoStack = []; clipboard = null; selectedId = null; playhead = 0;
+    setTracks([newTrack(true)]);
+    undoStack = []; redoStack = []; clipboard = null; selectedId = null; selectedTrackId = null; playhead = 0;
     for (const src of sources.values()) disposeSource(src);
     sources.clear();
     canvasState = defaultCanvas();
@@ -2612,11 +2987,21 @@
     } finally {
       hideBusy();
     }
-    const cl = (p.tracks && p.tracks[0] && p.tracks[0].clips) || [];
-    cl.forEach((c) => bump(c.id));
+    const tl = (p.tracks && p.tracks.length ? p.tracks : [{ clips: [] }]);
+    tl.forEach((t) => { if (t.id) bump(t.id); (t.clips || []).forEach((c) => bump(c.id)); });
     uid = Math.max(uid, maxId);
-    clips = cl.map((c) => ({ ...c, kind: c.kind || 'video' }));
-    undoStack = []; redoStack = []; clipboard = null; selectedId = null;
+    // Projects before 0.8 have one track without track settings.
+    setTracks(tl.map((t, i) => ({
+      ...newTrack(i === 0),
+      ...(t.id ? { id: t.id } : {}),
+      magnetic: t.magnetic !== undefined ? !!t.magnetic : i === 0,
+      hidden: !!t.hidden,
+      opacity: t.opacity != null ? clamp(+t.opacity, 0, 1) : 1,
+      muted: !!t.muted,
+      volume: t.volume != null ? clamp(+t.volume, 0, 1) : 1,
+      clips: (t.clips || []).map((c) => ({ ...c, kind: c.kind || 'video' })),
+    })).filter((t, i) => i === 0 || t.clips.length));
+    undoStack = []; redoStack = []; clipboard = null; selectedId = null; selectedTrackId = null;
     muteAll = !!p.muteAll;
     $('muteAllBtn').setAttribute('aria-pressed', String(muteAll));
     if (p.version >= 2 && p.canvas) {
@@ -2701,7 +3086,7 @@
       e.needsPermission = !!e.handle;
     }
     srcs.forEach((s) => { s.missing = true; });
-    const ok = await openRelink(entries.filter((e) => clips.some((c) => c.srcId === e.meta.id) || !e.src), 'edit');
+    const ok = await openRelink(entries.filter((e) => allClips().some((c) => c.srcId === e.meta.id) || !e.src), 'edit');
     if (ok) { renderTimeline(); seek(playhead); updateEstimate(); scheduleSave(); }
   }
 
@@ -2754,7 +3139,7 @@
         $('relinkAllowBtn').hidden = !open.some((e) => e.needsPermission);
         $('relinkPickBtn').hidden = !open.length;
         $('relinkRemoveBtn').hidden = !open.length;
-        $('relinkDoneBtn').disabled = open.length > 0 || !clips.length;
+        $('relinkDoneBtn').disabled = open.length > 0 || !allClips().length;
       };
 
       const assign = async (e, file, handle) => {
@@ -2804,14 +3189,15 @@
 
       const onRemove = () => {
         const gone = new Set(entries.filter((e) => !resolved(e)).map((e) => e.meta.id));
-        const keep = (list) => list.filter((c) => !gone.has(c.srcId));
-        clips = keep(clips);
+        const keep = (list) => list.map((t) => ({ ...t, clips: t.clips.filter((c) => !gone.has(c.srcId)) })).filter((t, i) => i === 0 || t.clips.length);
+        setTracks(keep(tracks));
         undoStack = undoStack.map(keep);
         redoStack = redoStack.map(keep);
+        if (selectedId && !findClip(selectedId)) selectedId = null;
         if (clipboard && gone.has(clipboard.srcId)) clipboard = null;
         gone.forEach((id) => { const s = sources.get(id); if (s && s.storage === 'opfs' && s.copyName) Project.releaseCopy(s.copyName); Project.removeHandle(id); if (s) disposeSource(s); sources.delete(id); });
         entries = entries.filter((e) => resolved(e));
-        if (!clips.length) {
+        if (!allClips().length) {
           close(false, true);
           scheduleSave();
           showStart();
@@ -3114,9 +3500,14 @@
   });
 
   // ---------------------------------------------------------------------------
-  // Project files (.videcutto): export and import, e.g. to move to another device
+  // Project files: export and import, e.g. to move to another device.
+  // The extension lives in one place so the app can be renamed; older
+  // extensions stay importable.
   // ---------------------------------------------------------------------------
   const PROJECT_FORMAT = 'videcutto-project';
+  const PROJECT_EXT = 'videcutto';
+  const LEGACY_EXTS = ['videcutto'];
+  const isProjectFile = (name) => [PROJECT_EXT, ...LEGACY_EXTS].some((x) => String(name || '').toLowerCase().endsWith('.' + x));
   const safeFileName = (n) => (String(n || 'project').replace(/[\\/:*?"<>|]+/g, '_').trim() || 'project');
   let pxUrl = null;
   let pxFile = null;
@@ -3174,7 +3565,7 @@
         onProgress: (f) => { $('pxFill').style.width = (f * 100).toFixed(1) + '%'; },
       });
       if (pxUrl) URL.revokeObjectURL(pxUrl);
-      const name = `${safeFileName(projectName)}${withFiles ? '' : '_project-only'}.videcutto`;
+      const name = `${safeFileName(projectName)}${withFiles ? '' : '_project-only'}.${PROJECT_EXT}`;
       pxFile = new File([blob], name, { type: 'application/zip' });
       pxUrl = URL.createObjectURL(pxFile);
       $('pxDownload').href = pxUrl;
@@ -3260,7 +3651,7 @@
     const inp = document.createElement('input');
     inp.type = 'file';
     // Android pickers grey out unknown extensions, so allow everything there.
-    inp.accept = isCoarse ? '*/*' : '.videcutto,application/zip';
+    inp.accept = isCoarse ? '*/*' : [...new Set([PROJECT_EXT, ...LEGACY_EXTS])].map((x) => '.' + x).join(',') + ',application/zip';
     inp.addEventListener('change', () => { const f = inp.files[0]; if (f) handleFiles([f]); });
     inp.click();
   }

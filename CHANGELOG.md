@@ -1,5 +1,19 @@
 # Changelog
 
+### 0.8.0 — 2026-10-28 — Multiple tracks
+- Any number of video tracks: the main track at the bottom, overlay tracks above it; higher tracks are drawn on top, empty space on overlay tracks is transparent
+- Add → *As overlay* (videos & images or color clip): placed at the playhead on the lowest overlay track with room, or on a new track; overlays start at 50 % size, centred
+- Selected clips can be dragged sideways and up/down between tracks; a new track is created when there is no room or when dropping above the top track. Only the selected clip can be dragged — now also with the mouse
+- Main track stays magnetic, with the option to release it (place clips freely, gaps show the background)
+- Track headers with hide 👁 and mute 🔊; tap for track settings: opacity, volume, move up/down, delete, magnetic (main)
+- Timeline scrolls vertically after a number of tracks — adjustable in Settings (default 3 on phones, 5 on desktop)
+- New export engine: composites all tracks frame by frame and mixes the sound of all audible clips; background blur comes from the main track
+- New preview engine: plays several videos at once (element pool, wall clock with buffering wait and drift correction); hint when three or more videos play at the same time
+- *Selected clip only* is greyed out while no clip is selected
+- Cut splits the selected clip (or the main track's clip under the playhead); paste of overlay clips creates overlays
+- Project format version 3 with all tracks; older projects open as a single main track
+- The project file extension is defined in one place (`PROJECT_EXT`) for a possible rename; older extensions stay importable
+
 ### 0.7.0 — 2026-10-28 — Project files for other devices
 - Export a project as a `.videcutto` file: project only (a few KB, files are selected again on the other device) or with all files (size shown beforehand)
 - Download or share the file; import it via the start screen, drag & drop or paste — it becomes a new project

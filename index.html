@@ -118,6 +118,7 @@
       <svg viewBox="0 0 24 24" id="muteAllIcon"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path class="sound" d="M16 9a4 4 0 010 6M18.5 6.5a7.5 7.5 0 010 11"/><path class="cross" d="M16 9.5l5 5M21 9.5l-5 5"/></svg>
     </button>
   </div>
+  <p class="hint warn-hint" id="perfHint" hidden>Three or more videos play at the same time here — the preview may stutter on this device. The exported video is not affected.</p>
   <p class="hint" id="stutterHint" hidden>The preview may stutter briefly where two clips meet — the browser has to switch videos there. The exported video plays smoothly.</p>
 
   <div class="toolbar" id="toolbar">
@@ -139,22 +140,27 @@
         <div class="dropdown" id="addMenu" style="display:none" role="menu">
           <button type="button" role="menuitem" id="addMediaItem"><span class="mi-icon">▶</span>Videos &amp; images</button>
           <button type="button" role="menuitem" id="addColorItem"><span class="mi-icon">■</span>Color clip</button>
+          <div class="menu-sep" role="separator"></div>
+          <span class="menu-label">As overlay at the playhead</span>
+          <button type="button" role="menuitem" id="addOverlayMediaItem"><span class="mi-icon">⧉</span>Videos &amp; images</button>
+          <button type="button" role="menuitem" id="addOverlayColorItem"><span class="mi-icon">⧉</span>Color clip</button>
         </div>
       </div>
     </div>
   </div>
 
   <div class="timeline-wrap">
+    <div class="track-heads" id="trackHeads"></div>
     <div class="timeline" id="timeline">
       <div class="tl-inner" id="tlInner">
         <div class="tl-ruler" id="tlRuler"></div>
-        <div class="tl-track" id="tlTrack"></div>
+        <div class="tl-rows" id="tlRows"></div>
       </div>
     </div>
-    <div class="playhead" aria-hidden="true"></div>
+    <div class="playhead" id="playheadLine" aria-hidden="true"></div>
   </div>
   <div class="below-timeline">
-    <p class="hint">Tap a clip to select it, then drag it to move it. Pinch or use the zoom buttons to zoom.</p>
+    <p class="hint">Tap a clip to select it, then drag it — sideways to move it, up or down to another track. Tap a track's left edge for its settings.</p>
     <div class="zoom-ctl">
       <button class="icon small" id="zoomOutBtn" title="Zoom out" aria-label="Zoom out"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M8.5 11h5M20 20l-4.5-4.5"/></svg></button>
       <button class="icon small" id="zoomInBtn" title="Zoom in" aria-label="Zoom in"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M8.5 11h5M11 8.5v5M20 20l-4.5-4.5"/></svg></button>
@@ -162,6 +168,33 @@
   </div>
 
   <!-- Clip panel: shown while a clip is selected -->
+  <section class="card clip-panel track-panel" id="trackPanel" hidden>
+    <div class="cp-head">
+      <span class="cp-kind">Track</span>
+      <strong class="cp-title" id="tpTitle"></strong>
+      <button class="icon small" id="tpClose" title="Close" aria-label="Close track settings"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <span class="mini-label">Opacity</span>
+    <div class="range-row">
+      <input type="range" id="tpOpacity" min="0" max="100" step="1" value="100" aria-label="Track opacity">
+      <span class="range-val" id="tpOpacityVal">100%</span>
+    </div>
+    <span class="mini-label">Volume</span>
+    <div class="range-row">
+      <input type="range" id="tpVolume" min="0" max="100" step="1" value="100" aria-label="Track volume">
+      <span class="range-val" id="tpVolumeVal">100%</span>
+    </div>
+    <div id="tpMagneticRow">
+      <label class="check-row"><input type="checkbox" id="tpMagnetic" checked> Magnetic — clips follow each other without gaps</label>
+      <p class="hint">Untick to place clips of the main track freely in time (gaps show the background).</p>
+    </div>
+    <div class="tp-actions">
+      <button class="btn-chip" id="tpUp" title="Move track up">▲ Up</button>
+      <button class="btn-chip" id="tpDown" title="Move track down">▼ Down</button>
+      <button class="btn-chip danger-text" id="tpDelete">Delete track</button>
+    </div>
+  </section>
+
   <section class="card clip-panel" id="clipPanel" hidden>
     <div class="cp-head">
       <span class="cp-kind" id="cpKind"></span>
@@ -446,6 +479,10 @@
     <div class="field">
       <label for="undoStepsInput">Undo steps</label>
       <input type="number" id="undoStepsInput" min="1" max="100" value="10" inputmode="numeric">
+    </div>
+    <div class="field">
+      <label for="tlRowsInput">Tracks visible before the timeline scrolls</label>
+      <input type="number" id="tlRowsInput" min="1" max="20" value="3" inputmode="numeric">
     </div>
     <h3 class="settings-h">Project</h3>
     <p class="hint" id="storageInfo">Your project is saved automatically on this device.</p>

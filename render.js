@@ -165,9 +165,11 @@
     const t = g.t;
 
     ctx.save();
-    ctx.fillStyle = bg || '#000';
-    ctx.fillRect(0, 0, W, H);
-    if (bgMode === 'blur') drawBlurBg(ctx, src, rawW, rawH, r, sw, sh, W, H);
+    if (bg !== null) { // null: draw only the clip (a layer of a composition)
+      ctx.fillStyle = bg || '#000';
+      ctx.fillRect(0, 0, W, H);
+      if (bgMode === 'blur') drawBlurBg(ctx, src, rawW, rawH, r, sw, sh, W, H);
+    }
 
     ctx.translate(g.cx, g.cy);
     ctx.rotate(g.rad);
@@ -316,21 +318,195 @@
   }
 
   /**
+   * Draw one frame of the composition: background, optional blur from the main
+   * track's picture, then every layer bottom to top with its track opacity.
+   * layers: [{ drawable, w, h, rot, tf, opacity, isMain, isColor }]
+   */
+  function composite(ctx, W, H, layers, bgMode, bg) {
+    ctx.save();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = bg || '#000';
+    ctx.fillRect(0, 0, W, H);
+    const main = layers.find((l) => l.isMain);
+    if (bgMode === 'blur' && main && !main.isColor) {
+      const r = ((main.rot || 0) % 360 + 360) % 360;
+      const rotated = r === 90 || r === 270;
+      drawBlurBg(ctx, main.drawable, main.w, main.h, r, rotated ? main.h : main.w, rotated ? main.w : main.h, W, H);
+    }
+    for (const l of layers) {
+      ctx.globalAlpha = l.opacity == null ? 1 : l.opacity;
+      drawClip(ctx, l.drawable, l.w, l.h, l.rot, W, H, l.tf, 'none', null);
+    }
+    ctx.restore();
+  }
+
+  // Clip of a track that is visible at time t (tracks keep clips sorted by start).
+  function clipAtTime(trackClips, t) {
+    for (const c of trackClips) if (t >= c.start - 1e-6 && t < c.start + (c.out - c.in) - 1e-6) return c;
+    return null;
+  }
+
+  /** Decodes one video clip forward and hands out the frame for a given time. */
+  class VideoReader {
+    constructor(clip) {
+      this.clip = clip;
+      this.track = clip.source.demux.video;
+      this.reader = new MP4.BlobReader(clip.source.file);
+      this.s = this.track.samples;
+      this.i = MP4.keyframeBefore(this.track, clip.in);
+      this.pending = [];
+      this.cur = null;
+      this.ended = false;
+      this.flushed = false;
+      this.err = null;
+      this.decoder = new VideoDecoder({ output: (f) => this.pending.push(f), error: (e) => { this.err = e; } });
+      this.decoder.configure(videoDecoderConfig(this.track));
+    }
+    async feed(signal) {
+      const s = this.s;
+      let n = 0;
+      while (n < 4 && this.i < s.count && s.pts[this.i] < this.clip.out + 0.5) {
+        const k = this.i++;
+        const data = await this.reader.read(s.offsets[k], s.sizes[k]);
+        this.decoder.decode(new EncodedVideoChunk({ type: s.sync[k] ? 'key' : 'delta', timestamp: Math.round(s.pts[k] * 1e6), duration: Math.round(s.dur[k] * 1e6), data }));
+        n++;
+      }
+      if (!n) {
+        if (!this.flushed) { this.flushed = true; await this.decoder.flush(); }
+        this.ended = true;
+        return;
+      }
+      await waitFor(() => this.decoder.decodeQueueSize < 3 || this.pending.length > 0 || this.err, signal);
+    }
+    /** Latest frame at or before t (file time). */
+    async frameAt(t, signal) {
+      for (;;) {
+        if (this.err) throw this.err;
+        while (this.pending.length && this.pending[0].timestamp / 1e6 <= t + 1e-4) {
+          if (this.cur) this.cur.close();
+          this.cur = this.pending.shift();
+        }
+        if (this.pending.length || this.ended) return this.cur || this.pending[0] || null;
+        await this.feed(signal);
+      }
+    }
+    close() {
+      for (const f of this.pending) f.close();
+      this.pending = [];
+      if (this.cur) { this.cur.close(); this.cur = null; }
+      if (this.decoder.state !== 'closed') this.decoder.close();
+    }
+  }
+
+  /** Decodes one clip's audio and mixes it, resampled to 48 kHz stereo, into buffers. */
+  class AudioReader {
+    constructor(clip) {
+      this.clip = clip;
+      this.track = clip.source.demux.audio;
+      this.reader = new MP4.BlobReader(clip.source.file);
+      this.rate = this.track.sampleRate;
+      this.step = this.rate / OUT_RATE;
+      this.queue = [];
+      this.buf = null; // [Float32Array L, Float32Array R]
+      this.pos = 0;    // fractional read position in buf (source samples)
+      this.err = null;
+      this.flushed = false;
+      const s = this.track.samples;
+      this.i = 0;
+      for (let k = 0; k < s.count; k++) if (s.pts[k] <= clip.in) this.i = k; else break;
+      this.decoder = new AudioDecoder({ output: (d) => this.queue.push(d), error: (e) => { this.err = e; } });
+      this.decoder.configure(audioDecoderConfig(this.track));
+    }
+    async more(signal) {
+      // Decode until at least one block of samples is available. Returns false at the end.
+      for (;;) {
+        if (this.err) throw this.err;
+        if (this.queue.length) break;
+        const s = this.track.samples;
+        let n = 0;
+        while (n < 8 && this.i < s.count && s.pts[this.i] <= this.clip.out + 0.1) {
+          const k = this.i++;
+          const data = await this.reader.read(s.offsets[k], s.sizes[k]);
+          this.decoder.decode(new EncodedAudioChunk({ type: 'key', timestamp: Math.round(s.pts[k] * 1e6), duration: Math.round(s.dur[k] * 1e6), data }));
+          n++;
+        }
+        if (!n) {
+          if (this.flushed) return false;
+          this.flushed = true;
+          await this.decoder.flush();
+          continue;
+        }
+        await waitFor(() => this.decoder.decodeQueueSize < 8 || this.queue.length > 0 || this.err, signal);
+      }
+      while (this.queue.length) {
+        const ad = this.queue.shift();
+        const n = ad.numberOfFrames;
+        const L = new Float32Array(n), R = new Float32Array(n);
+        ad.copyTo(L, { planeIndex: 0, format: 'f32-planar' });
+        if (ad.numberOfChannels > 1) ad.copyTo(R, { planeIndex: 1, format: 'f32-planar' }); else R.set(L);
+        const ts = ad.timestamp / 1e6;
+        ad.close();
+        if (!this.buf) {
+          this.buf = [L, R];
+          this.pos = (this.clip.in - ts) * this.rate; // where the in-point lies in the decoded data
+        } else {
+          const keep = this.buf[0].length;
+          const nl = new Float32Array(keep + n), nr = new Float32Array(keep + n);
+          nl.set(this.buf[0]); nl.set(L, keep);
+          nr.set(this.buf[1]); nr.set(R, keep);
+          this.buf = [nl, nr];
+        }
+      }
+      return true;
+    }
+    /** Add n output samples (from the current position) × gain into L/R starting at off. */
+    async mixInto(L, R, off, n, gain, signal) {
+      let produced = 0;
+      while (produced < n) {
+        if (this.buf) {
+          const [bl, br] = this.buf;
+          const len = bl.length;
+          while (produced < n && this.pos + 1 < len) {
+            if (this.pos >= 0) {
+              const i = Math.floor(this.pos), f = this.pos - i;
+              L[off + produced] += (bl[i] + (bl[i + 1] - bl[i]) * f) * gain;
+              R[off + produced] += (br[i] + (br[i + 1] - br[i]) * f) * gain;
+            }
+            this.pos += this.step;
+            produced++;
+          }
+          // Drop consumed samples, keep one for interpolation.
+          const drop = Math.max(0, Math.floor(this.pos) - 1);
+          if (drop > 0) { this.buf = [bl.slice(drop), br.slice(drop)]; this.pos -= drop; }
+        }
+        if (produced >= n) break;
+        if (!(await this.more(signal))) break; // no more sound: the rest stays silent
+      }
+    }
+    close() {
+      for (const d of this.queue) d.close();
+      this.queue = [];
+      if (this.decoder.state !== 'closed') this.decoder.close();
+    }
+  }
+
+  /**
    * @param opts {
-   *   clips: [{ source, in, out, muted }], // source = loaded source object (has .demux, .file, ...)
-   *   settings: { preset, aspect, fit, fps, targetMB, codec, muteAll },
+   *   tracks: [{ hidden, opacity, muted, volume, clips: [{ kind, source, start, in, out, muted, tf, still }] }]
+   *     — bottom (main) track first; clip in/out are in the file's time, start in timeline time
+   *   duration, settings: { width, height, fps, quality, …, codec, muteAll, fit, bg },
    *   onProgress(fraction, label), signal
    * }
-   * @returns { blob, warnings, out, audioCodec }
+   * @returns { blob, warnings, out, audioCodec, videoCodec }
    */
   async function exportTimeline(opts) {
-    const { clips, settings, onProgress = () => {}, signal } = opts;
+    const { tracks, settings, onProgress = () => {}, signal } = opts;
     const warnings = [];
     if (!hasWebCodecs()) throw new Error('This browser does not support WebCodecs video encoding.');
-    if (!clips.length) throw new Error('The timeline is empty.');
-
-    const sources = [...new Set(clips.map((c) => c.source).filter(Boolean))];
-    const duration = clips.reduce((s, c) => s + (c.out - c.in), 0);
+    const all = tracks.flatMap((t) => t.clips);
+    if (!all.length) throw new Error('The timeline is empty.');
+    const sources = [...new Set(all.map((c) => c.source).filter(Boolean))];
+    const duration = opts.duration || Math.max(...all.map((c) => c.start + (c.out - c.in)));
     const out = computeOutput(settings, sources, duration);
 
     // Encoder selection
@@ -343,7 +519,8 @@
     }
     if (!vcfg) throw new Error(`No video encoder available for ${out.width}×${out.height}.`);
 
-    const anyAudio = !settings.muteAll && clips.some((c) => c.kind === 'video' && !c.muted && c.source.audioDecodable);
+    const audible = (t) => !settings.muteAll && !t.muted && (t.volume == null || t.volume > 0);
+    const anyAudio = tracks.some((t) => audible(t) && t.clips.some((c) => c.kind === 'video' && !c.muted && c.source.audioDecodable));
     let acfg = null;
     if (anyAudio) {
       acfg = await pickAudioEncoder(out.audioBitrate);
@@ -357,16 +534,16 @@
     });
 
     const audioShare = acfg ? 0.12 : 0;
-    await encodeVideo({ clips, settings, out, vcfg, muxer, signal, duration, onProgress: (f) => onProgress(f * (1 - audioShare), 'video') });
+    await encodeVideo({ tracks, settings, out, vcfg, muxer, signal, duration, onProgress: (f) => onProgress(f * (1 - audioShare), 'video') });
     if (acfg) {
-      await encodeAudio({ clips, settings, acfg, muxer, signal, duration, onProgress: (f) => onProgress((1 - audioShare) + f * audioShare, 'audio') });
+      await encodeAudio({ tracks, settings, acfg, muxer, signal, duration, audible, onProgress: (f) => onProgress((1 - audioShare) + f * audioShare, 'audio') });
     }
     onProgress(1, 'finalizing');
     const blob = muxer.finalize();
     return { blob, warnings, out, audioCodec: acfg ? acfg.kind : null, videoCodec: vcodec };
   }
 
-  async function encodeVideo({ clips, settings, out, vcfg, muxer, signal, duration, onProgress }) {
+  async function encodeVideo({ tracks, settings, out, vcfg, muxer, signal, duration, onProgress }) {
     const canvas = makeCanvas(out.width, out.height);
     const ctx = canvas.getContext('2d', { alpha: false });
     let encError = null;
@@ -383,106 +560,52 @@
     const frameDur = 1 / out.fps;
     const keyEvery = 2; // seconds
     let lastKeyAt = -Infinity;
-    let lastOut = -Infinity;
-    let timelinePos = 0;
-    let produced = 0;
-    const expectedFrames = Math.max(1, Math.round(duration * out.fps));
+    const nFrames = Math.max(1, Math.round(duration * out.fps));
+    const readers = new Map(); // clip -> VideoReader
+    const bgMode = settings.fit === 'blur' ? 'blur' : 'bars';
 
     try {
-      for (const clip of clips) {
-        if (clip.kind !== 'video') {
-          // Image or colour clip: draw once, then emit frames for its duration.
-          const len = clip.out - clip.in;
-          const st = clip.still; // { drawable, w, h, isColor }
-          drawClip(ctx, st.drawable, st.w, st.h, 0, out.width, out.height, clip.tf, st.isColor ? 'bars' : settings.fit, settings.bg);
-          const n = Math.max(1, Math.round(len * out.fps));
-          for (let k = 0; k < n; k++) {
-            if (signal && signal.aborted) throw new DOMException('Aborted', 'AbortError');
-            if (encError) throw encError;
-            const outT = timelinePos + k / out.fps;
-            if (outT < lastOut + frameDur * 0.75) continue;
-            const vf = new VideoFrame(canvas, { timestamp: Math.round(outT * 1e6), duration: Math.round(frameDur * 1e6) });
-            const key = outT - lastKeyAt >= keyEvery - 1e-6;
-            if (key) lastKeyAt = outT;
-            await waitFor(() => encoder.encodeQueueSize < 6, signal);
-            encoder.encode(vf, { keyFrame: key });
-            vf.close();
-            lastOut = outT;
-            produced++;
-            if (produced % 5 === 0) onProgress(Math.min(0.999, produced / expectedFrames));
+      for (let k = 0; k < nFrames; k++) {
+        if (signal && signal.aborted) throw new DOMException('Aborted', 'AbortError');
+        if (encError) throw encError;
+        const t = k * frameDur;
+        const layers = [];
+        for (let ti = 0; ti < tracks.length; ti++) {
+          const tr = tracks[ti];
+          if (tr.hidden || tr.opacity === 0) continue;
+          const c = clipAtTime(tr.clips, t);
+          if (!c) continue;
+          const base = { tf: c.tf, opacity: tr.opacity == null ? 1 : tr.opacity, isMain: ti === 0 };
+          if (c.kind === 'video') {
+            let r = readers.get(c);
+            if (!r) { r = new VideoReader(c); readers.set(c, r); }
+            const f = await r.frameAt(c.in + (t - c.start), signal);
+            if (f) layers.push({ ...base, drawable: f, w: f.displayWidth, h: f.displayHeight, rot: c.source.rotation, isColor: false });
+          } else if (c.still) {
+            layers.push({ ...base, drawable: c.still.drawable, w: c.still.w, h: c.still.h, rot: 0, isColor: c.still.isColor });
           }
-          timelinePos += len;
-          continue;
         }
-        const src = clip.source;
-        const track = src.demux.video;
-        const reader = new MP4.BlobReader(src.file);
-        const clipStart = timelinePos;
-        const clipLen = clip.out - clip.in;
-        let decError = null;
-        let pendingFrames = [];
-
-        const decoder = new VideoDecoder({
-          output: (frame) => { pendingFrames.push(frame); },
-          error: (e) => { decError = e; },
-        });
-        decoder.configure(videoDecoderConfig(track));
-
-        const drain = async () => {
-          // Frames arrive in presentation order.
-          while (pendingFrames.length) {
-            const frame = pendingFrames.shift();
-            const t = frame.timestamp / 1e6;
-            if (t < clip.in - 1e-4 || t >= clip.out - 1e-4) { frame.close(); continue; }
-            const outT = clipStart + (t - clip.in);
-            if (outT < lastOut + frameDur * 0.75) { frame.close(); continue; } // frame-rate cap
-            drawClip(ctx, frame, frame.displayWidth, frame.displayHeight, src.rotation, out.width, out.height, clip.tf, settings.fit, settings.bg);
-            frame.close();
-            const vf = new VideoFrame(canvas, { timestamp: Math.round(outT * 1e6), duration: Math.round(frameDur * 1e6) });
-            const key = outT - lastKeyAt >= keyEvery - 1e-6;
-            if (key) lastKeyAt = outT;
-            await waitFor(() => encoder.encodeQueueSize < 6, signal);
-            encoder.encode(vf, { keyFrame: key });
-            vf.close();
-            lastOut = outT;
-            produced++;
-            if (produced % 5 === 0) onProgress(Math.min(0.999, produced / expectedFrames));
-          }
-        };
-
-        const s = track.samples;
-        const startIdx = MP4.keyframeBefore(track, clip.in);
-        for (let i = startIdx; i < s.count; i++) {
-          if (signal && signal.aborted) throw new DOMException('Aborted', 'AbortError');
-          if (decError) throw decError;
-          if (encError) throw encError;
-          // Stop once we're safely past the out point (allow for frame reordering).
-          if (s.pts[i] >= clip.out + 0.5) break;
-          const data = await reader.read(s.offsets[i], s.sizes[i]);
-          decoder.decode(new EncodedVideoChunk({
-            type: s.sync[i] ? 'key' : 'delta',
-            timestamp: Math.round(s.pts[i] * 1e6),
-            duration: Math.round(s.dur[i] * 1e6),
-            data,
-          }));
-          await waitFor(() => decoder.decodeQueueSize < 8 || pendingFrames.length > 0, signal);
-          await drain();
-        }
-        await decoder.flush();
-        await drain();
-        decoder.close();
-        if (decError) throw decError;
-        timelinePos += clipLen;
+        composite(ctx, out.width, out.height, layers, bgMode, settings.bg);
+        // Free decoders of clips that are over.
+        for (const [c, r] of readers) if (t + frameDur >= c.start + (c.out - c.in) - 1e-6) { r.close(); readers.delete(c); }
+        const vf = new VideoFrame(canvas, { timestamp: Math.round(t * 1e6), duration: Math.round(frameDur * 1e6) });
+        const key = t - lastKeyAt >= keyEvery - 1e-6;
+        if (key) lastKeyAt = t;
+        await waitFor(() => encoder.encodeQueueSize < 6, signal);
+        encoder.encode(vf, { keyFrame: key });
+        vf.close();
+        if (k % 5 === 0) onProgress(Math.min(0.999, k / nFrames));
       }
       await encoder.flush();
       if (encError) throw encError;
     } finally {
+      for (const r of readers.values()) r.close();
       if (encoder.state !== 'closed') encoder.close();
     }
     onProgress(1);
   }
 
-  async function encodeAudio({ clips, settings, acfg, muxer, signal, duration, onProgress }) {
+  async function encodeAudio({ tracks, acfg, muxer, signal, duration, audible, onProgress }) {
     let encError = null;
     const encoder = new AudioEncoder({
       output: (chunk, meta) => {
@@ -494,128 +617,55 @@
     });
     encoder.configure(acfg.cfg);
 
-    const BLOCK = 4800;
-    let written = 0; // output frames written so far
-    let timelinePos = 0;
-    const totalFrames = Math.round(duration * OUT_RATE);
-    let block = [new Float32Array(BLOCK), new Float32Array(BLOCK)];
-    let blockFill = 0;
-
-    const flushBlock = async (force) => {
-      if (blockFill === 0 || (!force && blockFill < BLOCK)) return;
-      const data = new Float32Array(blockFill * OUT_CHANNELS);
-      data.set(block[0].subarray(0, blockFill), 0);
-      data.set(block[1].subarray(0, blockFill), blockFill);
-      const ad = new AudioData({ format: 'f32-planar', sampleRate: OUT_RATE, numberOfFrames: blockFill, numberOfChannels: OUT_CHANNELS, timestamp: Math.round((written - blockFill) / OUT_RATE * 1e6), data });
-      await waitFor(() => encoder.encodeQueueSize < 10, signal);
-      encoder.encode(ad);
-      ad.close();
-      blockFill = 0;
-      if (encError) throw encError;
-    };
-    const push = async (l, r) => {
-      block[0][blockFill] = l; block[1][blockFill] = r;
-      blockFill++; written++;
-      if (blockFill === BLOCK) await flushBlock(true);
-    };
+    const BLOCK = 4800; // 0.1 s
+    const total = Math.round(duration * OUT_RATE);
+    const readers = new Map(); // clip -> AudioReader
+    const items = [];
+    for (const tr of tracks) {
+      if (!audible(tr)) continue;
+      const gain = tr.volume == null ? 1 : tr.volume;
+      for (const c of tr.clips) {
+        if (c.kind !== 'video' || c.muted || !c.source || !c.source.audioDecodable || !c.source.demux.audio) continue;
+        items.push({ c, gain, s0: Math.round(c.start * OUT_RATE), s1: Math.round((c.start + (c.out - c.in)) * OUT_RATE) });
+      }
+    }
 
     try {
-      for (const clip of clips) {
-        const clipLen = clip.out - clip.in;
-        const targetEnd = Math.round((timelinePos + clipLen) * OUT_RATE);
-        const src = clip.source;
-        const track = clip.kind === 'video' && src ? src.demux.audio : null;
-        const useAudio = !settings.muteAll && !clip.muted && track && src.audioDecodable;
-
-        if (useAudio) {
-          const reader = new MP4.BlobReader(src.file);
-          const rate = track.sampleRate;
-          const step = rate / OUT_RATE;
-          let pending = null; // [Float32Array L, Float32Array R]
-          let pendingStart = 0; // source time of pending[0]
-          let pos = 0; // fractional read position in pending (source samples)
-          let started = false;
-          let decError = null;
-          const queue = [];
-          const decoder = new AudioDecoder({ output: (d) => queue.push(d), error: (e) => { decError = e; } });
-          decoder.configure(audioDecoderConfig(track));
-
-          const consume = async () => {
-            while (queue.length) {
-              const ad = queue.shift();
-              const n = ad.numberOfFrames;
-              const chs = ad.numberOfChannels;
-              const L = new Float32Array(n), R = new Float32Array(n);
-              ad.copyTo(L, { planeIndex: 0, format: 'f32-planar' });
-              if (chs > 1) ad.copyTo(R, { planeIndex: 1, format: 'f32-planar' }); else R.set(L);
-              const ts = ad.timestamp / 1e6;
-              ad.close();
-              if (!pending) {
-                pending = [L, R];
-                pendingStart = ts;
-                // Position where the clip's in-point lies inside the decoded data.
-                pos = (clip.in - ts) * rate;
-                started = true;
-              } else {
-                const nl = new Float32Array(pending[0].length + n), nr = new Float32Array(pending[1].length + n);
-                nl.set(pending[0]); nl.set(L, pending[0].length);
-                nr.set(pending[1]); nr.set(R, pending[1].length);
-                pending = [nl, nr];
-              }
-              // Produce output samples by linear interpolation.
-              const len = pending[0].length;
-              while (written < targetEnd && pos + 1 < len) {
-                if (pos < 0) { await push(0, 0); pos += step; continue; }
-                const i = Math.floor(pos), f = pos - i;
-                const l = pending[0][i] + (pending[0][i + 1] - pending[0][i]) * f;
-                const r = pending[1][i] + (pending[1][i + 1] - pending[1][i]) * f;
-                await push(l, r);
-                pos += step;
-              }
-              // Drop consumed samples, keep one for interpolation.
-              const drop = Math.max(0, Math.floor(pos) - 1);
-              if (drop > 0) {
-                pending = [pending[0].slice(drop), pending[1].slice(drop)];
-                pos -= drop;
-                pendingStart += drop / rate;
-              }
-              onProgress(Math.min(0.999, written / totalFrames));
-            }
-          };
-
-          const s = track.samples;
-          let startIdx = 0;
-          for (let i = 0; i < s.count; i++) if (s.pts[i] <= clip.in) startIdx = i; else break;
-          for (let i = startIdx; i < s.count && written < targetEnd; i++) {
-            if (signal && signal.aborted) throw new DOMException('Aborted', 'AbortError');
-            if (decError) throw decError;
-            if (s.pts[i] > clip.out + 0.1) break;
-            const data = await reader.read(s.offsets[i], s.sizes[i]);
-            decoder.decode(new EncodedAudioChunk({ type: 'key', timestamp: Math.round(s.pts[i] * 1e6), duration: Math.round(s.dur[i] * 1e6), data }));
-            await waitFor(() => decoder.decodeQueueSize < 16 || queue.length > 0, signal);
-            await consume();
-          }
-          await decoder.flush();
-          await consume();
-          decoder.close();
-          if (!started && decError) throw decError;
-        }
-        // Pad with silence (muted clips, clips without audio, or short audio).
-        while (written < targetEnd) await push(0, 0);
-        timelinePos += clipLen;
+      for (let b = 0; b < total; b += BLOCK) {
+        if (signal && signal.aborted) throw new DOMException('Aborted', 'AbortError');
         if (encError) throw encError;
+        const n = Math.min(BLOCK, total - b);
+        const L = new Float32Array(n), R = new Float32Array(n);
+        for (const it of items) {
+          const from = Math.max(b, it.s0), to = Math.min(b + n, it.s1);
+          if (to <= from) continue;
+          let r = readers.get(it.c);
+          if (!r) { r = new AudioReader(it.c); readers.set(it.c, r); }
+          await r.mixInto(L, R, from - b, to - from, it.gain, signal);
+          if (to >= it.s1) { r.close(); readers.delete(it.c); }
+        }
+        const data = new Float32Array(n * OUT_CHANNELS);
+        for (let i = 0; i < n; i++) {
+          data[i] = Math.max(-1, Math.min(1, L[i]));
+          data[n + i] = Math.max(-1, Math.min(1, R[i]));
+        }
+        const ad = new AudioData({ format: 'f32-planar', sampleRate: OUT_RATE, numberOfFrames: n, numberOfChannels: OUT_CHANNELS, timestamp: Math.round((b / OUT_RATE) * 1e6), data });
+        await waitFor(() => encoder.encodeQueueSize < 10, signal);
+        encoder.encode(ad);
+        ad.close();
+        onProgress(Math.min(0.999, (b + n) / total));
       }
-      await flushBlock(true);
       await encoder.flush();
       if (encError) throw encError;
     } finally {
+      for (const r of readers.values()) r.close();
       if (encoder.state !== 'closed') encoder.close();
     }
     onProgress(1);
   }
 
   global.Render = {
-    QUALITY, presetBitrate, computeOutput, estimateSize, drawClip, clipLayout, tfOf, DEFAULT_TF, ANCHORS, displaySize,
+    QUALITY, presetBitrate, computeOutput, estimateSize, drawClip, composite, clipAtTime, clipLayout, tfOf, DEFAULT_TF, ANCHORS, displaySize,
     hasWebCodecs, canDecodeVideo, canDecodeAudio, canEncodeHevc, exportTimeline,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

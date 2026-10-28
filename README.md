@@ -15,12 +15,12 @@ A privacy-friendly video editor and compressor that runs entirely in your browse
   - **Files** opens the regular file browser and keeps real file names
 - **Start with an empty canvas:** a new project with a 16:9 Full HD canvas and a 4-second anthracite color clip
 - Videos are read **on demand** straight from the file instead of being loaded into memory as a whole, so even multi-gigabyte recordings open instantly
-- New media are appended to the end of the timeline; you can also drop or paste files into the editor
+- New media are appended to the end of the main track; *Add → As overlay* puts them on a track above, at the playhead. You can also drop or paste files into the editor
 
 ### Images and color clips
 - **Images** become clips of 4 seconds (adjustable); very large photos are scaled to max. 4096 px on the long side, EXIF orientation is respected
 - **Color clips** (*Add → Color clip*) are single-color images: 4 seconds, anthracite and 1920×1080 by default; color, duration and size (presets, *Like canvas* or custom) are adjustable
-- Both behave like videos on the timeline: cut, copy, paste, delete, reorder
+- Both behave like videos on the timeline: cut, copy, paste, delete, reorder, overlay
 
 ### Pre-trimming
 - For large videos, a **trim dialog** appears before the editor: drag the start/end handles (or use *Start here* / *End here* while previewing) to keep only the part you need
@@ -28,12 +28,24 @@ A privacy-friendly video editor and compressor that runs entirely in your browse
 - Pre-trimming is instant — nothing is re-encoded; it simply limits which part of the file goes onto the timeline
 - Configurable in **Settings**: offer for large videos (default), for every video, or never
 
+### Tracks (multiple timelines)
+- The **main track** is at the bottom, under all others. It is **magnetic**: clips follow each other without gaps and are reordered by dragging. In its track settings the magnet can be switched off ("released") to place clips freely in time — gaps show the canvas background; switching it back on closes the gaps in the current order
+- **Overlay tracks** above it are free: clips sit at any time, empty space is transparent, so the tracks below show through. Higher tracks are drawn on top
+- **Add → As overlay** (videos & images, or a color clip) places the new clip at the playhead on the lowest overlay track with room — a new track is created if none has space. Overlays start at **50 % size, centred** (Size *Free*), ready to be moved
+- **Move clips between tracks:** select a clip, then drag it up or down (and sideways). On the magnetic main track a marker shows where it will be inserted; on free tracks it snaps to the playhead and the edges of other clips. If there is no room at the drop position — or you drop above the top track — a new track is created. Only the selected clip can be dragged (also with the mouse), so scrolling never moves clips by accident
+- **Track header** (left of each track): 👁 **hide** and 🔊 **mute** the track. Tap the header for the **track settings**: **opacity** 0–100 %, **volume** 0–100 %, move the track **up/down**, **delete** the track (overlay tracks), and *Magnetic* for the main track
+- Empty overlay tracks disappear automatically
+- The timeline grows with the tracks up to a limit, then scrolls vertically; how many tracks are visible before it scrolls is set in **Settings** (default 3 on phones, 5 on desktop). On phones the main track is taller, overlay tracks are flatter
+- All audible clips are mixed (a video's sound stays with its clip); hidden tracks keep their sound, muted tracks stay silent
+- **Background blur** uses the picture of the main track only
+- A hint appears when three or more videos play at the same time — the preview may stutter on slower devices, the export is not affected
+
 ### Editing
-- One timeline with thumbnail strips; the playhead stays fixed in the centre — scroll the timeline to scrub
+- Timeline with thumbnail strips; the playhead stays fixed in the centre — scroll the timeline to scrub
 - Preview player with play/pause, frame-by-frame stepping and a time display
-- Toolbar: **Undo / Redo** fixed on the left, **Add** (videos & images, or a color clip) fixed on the right; in between **Cut** at the playhead (split icon — splits the clip), **Copy**, **Paste** at the playhead (splits a clip if necessary) and **Delete**. If space ever runs out, only the middle part scrolls
+- Toolbar: **Undo / Redo** fixed on the left, **Add** (videos & images or a color clip, on the main track or as overlay) fixed on the right; in between **Cut** at the playhead (split icon — splits the selected clip, otherwise the clip of the main track under the playhead), **Copy**, **Paste** at the playhead and **Delete**. Pasting a clip copied from the magnetic main track inserts it there (splitting a clip if necessary); clips from overlay tracks are pasted as overlays. If space ever runs out, only the middle part scrolls
 - **Clip panel:** appears below the timeline while a clip is selected — **Mute** (videos), and for images/color clips the **duration**; for color clips also **color** and **size**
-- **Reorder** clips by dragging (on touch devices: tap to select, then drag the selected clip)
+- **Reorder / move** clips by dragging the selected clip (tap or click to select first)
 - Mute all audio at once with the speaker button
 - **Undo / Redo** — 10 steps by default (adjustable in Settings, 1–100)
 - Zoom the timeline with the zoom buttons, pinch, or Ctrl + mouse wheel
@@ -65,7 +77,7 @@ A privacy-friendly video editor and compressor that runs entirely in your browse
 - The single project of versions 0.2–0.5 is moved into the list automatically
 
 ### Project files (.videcutto) — other devices & backups
-- **Export project** (⇪ next to the project name, or on a project card) creates a `.videcutto` file:
+- **Export project** (⇪ next to the project name, or on a project card) creates a `.videcutto` file (the extension is defined in one place, `PROJECT_EXT` in `app.js`; older extensions stay importable if the app is renamed):
   - **Project only** — cuts, canvas and settings, a few KB. On the other device the videos and images are selected again and recognised automatically (by file size)
   - **Project with all files** — everything included (trimmed working copies only contain the chosen part); the size is shown beforehand. Opens on the other device without selecting anything
 - **Download** or **Share** the file (cloud, USB stick, messenger, e-mail …)
@@ -79,7 +91,7 @@ A privacy-friendly video editor and compressor that runs entirely in your browse
 - Working copies of videos no longer used anywhere (timeline, undo/redo, clipboard) are deleted automatically
 - **Settings → Project** shows how much space the open project and all projects use and lets you **delete** the open project
 - Leftover working copies that no project refers to (e.g. after a crash) are cleaned up after a day
-- The saved format already supports several tracks, prepared for multiple timelines in a later version
+- Projects are saved with all tracks (format version 3); projects of earlier versions open as a single main track
 
 ### Crop, position, size & rotation (per clip)
 The clip panel has four tabs — **Clip**, **Crop**, **Position**, **Rotate**. Opening a transform tab moves the playhead into the selected clip so it can be edited directly in the preview; on phones the preview then stays pinned at the top while you scroll the panel.
@@ -110,7 +122,7 @@ The clip panel has four tabs — **Clip**, **Crop**, **Position**, **Rotate**. O
 - Estimated output size is shown before exporting; progress with time remaining and a **Cancel** button during export
 - **Never uses a higher bitrate than the source** (quality presets and max. file size, timelines with videos only): the video bitrate is capped at ~75 % of the source's (scaled to the output resolution and frame rate), and the audio bitrate at the source's. Already strongly compressed videos (e.g. from Instagram or WhatsApp) no longer get bigger — the estimate and the result show a note when exporting won't make a video noticeably smaller. A custom bitrate is used as entered
 - Keeps the screen awake while exporting (Wake Lock API, where supported)
-- **Whole timeline** or **Selected clip only** — export just one clip without deleting the others (prepared for special exports such as GIF or audio-only later)
+- **Whole timeline** (all tracks) or **Selected clip only** — export just one clip without deleting the others (prepared for special exports such as GIF or audio-only later). *Selected clip only* is greyed out while no clip is selected
 - **Create video** starts the export; **Download** the result, or **Share** it directly (e.g. to a messenger) on devices that support sharing files
 
 ### General
@@ -123,7 +135,7 @@ The clip panel has four tabs — **Clip**, **Crop**, **Position**, **Rotate**. O
 ## Hints shown in the app
 
 - **HEVC videos** (e.g. iPhone "High Efficiency") can't be decoded by every browser (Firefox, some Linux setups). The app tells you so instead of failing silently — use Chrome, Edge or Safari, or record in "Most compatible" (H.264).
-- **Preview stutter:** with two or more clips, the preview may stutter briefly where clips meet, because the browser switches between video elements there. The exported file is not affected.
+- **Preview stutter:** with two or more clips, the preview may stutter briefly where clips meet, because the browser switches between video elements there. With three or more videos playing at once, a separate hint warns that slower devices may stutter. The exported file is not affected.
 - Sound that can't be decoded, unsupported files and audio fallbacks are reported with a short message.
 
 ## How it works
@@ -131,9 +143,9 @@ The clip panel has four tabs — **Clip**, **Crop**, **Position**, **Rotate**. O
 Videcutto uses no third-party libraries — everything is vanilla HTML/CSS/JS, so there are no vendor files to download.
 
 - **`mp4.js`** — a small ISO-BMFF demuxer and muxer. The demuxer reads only the `moov` box and the exact byte ranges of the samples it needs (via `Blob.slice()` with an 8 MB read window), supporting H.264, HEVC, VP9 and AV1 video, AAC and Opus audio, rotation metadata and edit lists. The muxer writes a "fast start" MP4 (moov before mdat, interleaved in 0.5 s chunks, 64-bit offsets for files > 4 GB).
-- **`render.js`** — the export engine and the shared drawing code (`clipLayout` / `drawClip`: crop, size, anchor + offset, rotation and flip, used identically by preview and export). Each clip is decoded with **WebCodecs** (`VideoDecoder` / `AudioDecoder`, hardware-accelerated where available) starting at the nearest keyframe, every frame is drawn onto a canvas (rotation applied, fitted with black bars or a blurred background), and encoded with `VideoEncoder` / `AudioEncoder`. Audio is resampled to 48 kHz stereo; muted clips and clips without sound are filled with silence so audio and video stay in sync.
+- **`render.js`** — the export engine and the shared drawing code (`clipLayout` / `drawClip` / `composite`: crop, size, anchor + offset, rotation and flip, track opacity and layering, used identically by preview and export). The export walks a fixed frame grid: for every output frame it looks up the visible clip of each track, takes the matching frame from a forward-decoding **WebCodecs** reader per video clip (`VideoDecoder`, hardware-accelerated where available, started at the nearest keyframe), composites all tracks bottom to top onto a canvas (background color or blur from the main track) and encodes it with `VideoEncoder`. Audio of all audible clips is decoded, resampled to 48 kHz stereo, mixed per track volume in 0.1 s blocks (clamped) and encoded with `AudioEncoder`; silence fills the gaps so audio and video stay in sync.
 - **`project.js`** — persistence: the projects in IndexedDB (`project:<id>`), shared/duplicated working copies with reference checks, working copies in the Origin Private File System, file handles of originals on desktop. `mp4.js` provides the lossless range copy (`remuxRange`) used for trimmed working copies: it copies the samples from the keyframe before the in-point, keeps the original sample descriptions and rotation, and streams straight to storage without holding the video in memory.
-- **`app.js`** — the UI: file and clipboard loading, pre-trim dialog, timeline, canvas and export settings, clip panel, undo/redo and the preview. The preview draws onto a `<canvas>` with the same drawing code as the export; two `<video>` elements underneath supply frames and sound (the next video clip is always preloaded), images and color clips run on a wall clock.
+- **`app.js`** — the UI: file and clipboard loading, pre-trim dialog, timeline, canvas and export settings, clip panel, undo/redo and the preview. The preview draws onto a `<canvas>` with the same compositing code as the export. A pool of `<video>` elements supplies frames and sound — one per video clip playing at the playhead plus the clips starting within the next 1.5 s (preloaded); a wall clock drives the playhead and waits while a playing video buffers, and elements drifting more than 0.25 s are re-synced.
 
 The preview uses the browser's native `<video>` decoding; the export uses WebCodecs, so what plays in the preview and what can be exported is decided by each browser's codec support.
 
