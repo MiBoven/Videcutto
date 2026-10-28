@@ -1,5 +1,15 @@
 # Changelog
 
+### 0.4.0 — 2026-10-28 — Crop, position, size & rotation
+- Clip panel tabs: Clip, Crop, Position, Rotate (opening one moves the playhead into the selected clip)
+- Crop per clip with handles in the preview and presets (Free, Like canvas, 16:9, 9:16, 1:1, 4:5, 4:3), ratio kept while resizing
+- Position per clip: 3×3 anchor grid, drag in the preview (also beyond the canvas), arrow pad for fine-tuning, snapping to centre and edges with guide lines (Alt = free)
+- Size: Fit, Fill or Free with slider, pinch and mouse wheel
+- Rotation: 90° steps, free angle slider, flip horizontal/vertical
+- Each drag/slider move/series of arrow taps is one undo step; transforms are saved with the project
+- Phones: preview stays pinned at the top while a transform tab is open
+- Fix: the preview box now always keeps the canvas ratio on wide screens
+
 ### 0.3.0 — 2026-10-28 — Canvas, images & color clips
 - New **Canvas** section: formats 16:9, 9:16, 1:1, 4:5, 4:3, 3:4, 21:9, like a chosen video, or a custom ratio; background color (default anthracite) or blur
 - Format and background moved out of the export section

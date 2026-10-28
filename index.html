@@ -161,35 +161,116 @@
       <strong class="cp-title" id="cpTitle"></strong>
       <button class="icon small" id="cpClose" title="Deselect" aria-label="Deselect clip"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
-    <div class="cp-actions">
-      <button class="tool" id="copyBtn" title="Copy clip (Ctrl+C)"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 012-2h9"/></svg><span>Copy</span></button>
-      <button class="tool" id="muteClipBtn" title="Mute clip (M)"><svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg><span>Mute</span></button>
-      <button class="tool" id="deleteBtn" title="Delete clip (Del)"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg><span>Delete</span></button>
+    <div class="segment small cp-tabs" id="cpTabs" role="tablist">
+      <button type="button" class="seg-btn active" data-tab="clip" role="tab">Clip</button>
+      <button type="button" class="seg-btn" data-tab="crop" role="tab" id="cpTabCrop">Crop</button>
+      <button type="button" class="seg-btn" data-tab="position" role="tab">Position</button>
+      <button type="button" class="seg-btn" data-tab="rotate" role="tab">Rotate</button>
     </div>
-    <div class="field" id="cpDurField">
-      <label for="cpDuration">Duration</label>
-      <div class="input-unit"><input type="number" id="cpDuration" min="0.1" max="3600" step="0.1" inputmode="decimal"><span>s</span></div>
+
+    <!-- Clip -->
+    <div class="cp-pane" data-pane="clip">
+      <div class="cp-actions">
+        <button class="tool" id="copyBtn" title="Copy clip (Ctrl+C)"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 012-2h9"/></svg><span>Copy</span></button>
+        <button class="tool" id="muteClipBtn" title="Mute clip (M)"><svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg><span>Mute</span></button>
+        <button class="tool" id="deleteBtn" title="Delete clip (Del)"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg><span>Delete</span></button>
+      </div>
+      <div class="field" id="cpDurField">
+        <label for="cpDuration">Duration</label>
+        <div class="input-unit"><input type="number" id="cpDuration" min="0.1" max="3600" step="0.1" inputmode="decimal"><span>s</span></div>
+      </div>
+      <div class="field" id="cpColorField">
+        <label for="cpColor">Color</label>
+        <input type="color" id="cpColor" value="#293133">
+      </div>
+      <div class="field" id="cpSizeField">
+        <label for="cpSize">Size</label>
+        <select id="cpSize">
+          <option value="1920x1080">1920 × 1080 (16:9)</option>
+          <option value="1280x720">1280 × 720 (16:9)</option>
+          <option value="3840x2160">3840 × 2160 (16:9)</option>
+          <option value="1080x1920">1080 × 1920 (9:16)</option>
+          <option value="1080x1080">1080 × 1080 (1:1)</option>
+          <option value="1080x1350">1080 × 1350 (4:5)</option>
+          <option value="canvas">Like canvas</option>
+          <option value="custom">Custom…</option>
+        </select>
+      </div>
+      <div class="field" id="cpCustomField">
+        <label>Width × height</label>
+        <div class="wh"><input type="number" id="cpW" min="16" max="8192" step="2" inputmode="numeric"><span>×</span><input type="number" id="cpH" min="16" max="8192" step="2" inputmode="numeric"></div>
+      </div>
     </div>
-    <div class="field" id="cpColorField">
-      <label for="cpColor">Color</label>
-      <input type="color" id="cpColor" value="#293133">
+
+    <!-- Crop -->
+    <div class="cp-pane" data-pane="crop" hidden>
+      <div class="chips" id="cropPresets">
+        <button type="button" class="btn-chip" data-ratio="free">Free</button>
+        <button type="button" class="btn-chip" data-ratio="canvas">Like canvas</button>
+        <button type="button" class="btn-chip" data-ratio="16:9">16:9</button>
+        <button type="button" class="btn-chip" data-ratio="9:16">9:16</button>
+        <button type="button" class="btn-chip" data-ratio="1:1">1:1</button>
+        <button type="button" class="btn-chip" data-ratio="4:5">4:5</button>
+        <button type="button" class="btn-chip" data-ratio="4:3">4:3</button>
+      </div>
+      <p class="hint">Drag the frame or its corners in the preview. Presets keep their aspect ratio while you resize.</p>
+      <button type="button" class="btn-secondary wide" id="cropReset">Reset crop</button>
     </div>
-    <div class="field" id="cpSizeField">
-      <label for="cpSize">Size</label>
-      <select id="cpSize">
-        <option value="1920x1080">1920 × 1080 (16:9)</option>
-        <option value="1280x720">1280 × 720 (16:9)</option>
-        <option value="3840x2160">3840 × 2160 (16:9)</option>
-        <option value="1080x1920">1080 × 1920 (9:16)</option>
-        <option value="1080x1080">1080 × 1080 (1:1)</option>
-        <option value="1080x1350">1080 × 1350 (4:5)</option>
-        <option value="canvas">Like canvas</option>
-        <option value="custom">Custom…</option>
-      </select>
+
+    <!-- Position & size -->
+    <div class="cp-pane" data-pane="position" hidden>
+      <div class="pos-row">
+        <div class="pos-col">
+          <span class="mini-label">Position</span>
+          <div class="anchor-grid" id="anchorGrid" role="radiogroup" aria-label="Anchor">
+            <button type="button" data-anchor="tl" aria-label="Top left"></button>
+            <button type="button" data-anchor="t" aria-label="Top"></button>
+            <button type="button" data-anchor="tr" aria-label="Top right"></button>
+            <button type="button" data-anchor="l" aria-label="Left"></button>
+            <button type="button" data-anchor="c" aria-label="Center"></button>
+            <button type="button" data-anchor="r" aria-label="Right"></button>
+            <button type="button" data-anchor="bl" aria-label="Bottom left"></button>
+            <button type="button" data-anchor="b" aria-label="Bottom"></button>
+            <button type="button" data-anchor="br" aria-label="Bottom right"></button>
+          </div>
+        </div>
+        <div class="pos-col">
+          <span class="mini-label">Fine-tune</span>
+          <div class="nudge" id="nudgePad">
+            <span></span><button type="button" data-nudge="0,-1" aria-label="Move up">▲</button><span></span>
+            <button type="button" data-nudge="-1,0" aria-label="Move left">◀</button><button type="button" data-nudge="reset" aria-label="Remove offset" title="Back to the anchor">⊙</button><button type="button" data-nudge="1,0" aria-label="Move right">▶</button>
+            <span></span><button type="button" data-nudge="0,1" aria-label="Move down">▼</button><span></span>
+          </div>
+        </div>
+      </div>
+      <span class="mini-label">Size</span>
+      <div class="segment small" id="fitToggle">
+        <button type="button" class="seg-btn" data-fit="fit">Fit</button>
+        <button type="button" class="seg-btn" data-fit="fill">Fill</button>
+        <button type="button" class="seg-btn" data-fit="free">Free</button>
+      </div>
+      <div class="range-row">
+        <input type="range" id="scaleRange" min="10" max="400" step="1" value="100" aria-label="Size">
+        <span class="range-val" id="scaleVal">100%</span>
+      </div>
+      <label class="check-row"><input type="checkbox" id="snapChk" checked> Snap to center and edges <span class="hint-inline">(hold Alt to move freely)</span></label>
+      <p class="hint">Drag the clip in the preview to move it, pinch or scroll to resize. Parts outside the canvas are cut off.</p>
     </div>
-    <div class="field" id="cpCustomField">
-      <label>Width × height</label>
-      <div class="wh"><input type="number" id="cpW" min="16" max="8192" step="2" inputmode="numeric"><span>×</span><input type="number" id="cpH" min="16" max="8192" step="2" inputmode="numeric"></div>
+
+    <!-- Rotate & flip -->
+    <div class="cp-pane" data-pane="rotate" hidden>
+      <div class="cp-actions">
+        <button class="tool" id="rotLeftBtn" title="Rotate 90° left"><svg viewBox="0 0 24 24"><path d="M4 8V3l4 4"/><path d="M4.6 7.5A8 8 0 1112 20"/></svg><span>90° left</span></button>
+        <button class="tool" id="rotRightBtn" title="Rotate 90° right"><svg viewBox="0 0 24 24"><path d="M20 8V3l-4 4"/><path d="M19.4 7.5A8 8 0 1012 20"/></svg><span>90° right</span></button>
+        <button class="tool" id="flipHBtn" title="Flip horizontally"><svg viewBox="0 0 24 24"><path d="M12 3v18"/><path d="M8 7L3 12l5 5zM16 7l5 5-5 5z"/></svg><span>Flip ↔</span></button>
+        <button class="tool" id="flipVBtn" title="Flip vertically"><svg viewBox="0 0 24 24"><path d="M3 12h18"/><path d="M7 8l5-5 5 5zM7 16l5 5 5-5z"/></svg><span>Flip ↕</span></button>
+      </div>
+      <span class="mini-label">Angle</span>
+      <div class="range-row">
+        <input type="range" id="rotRange" min="-180" max="180" step="1" value="0" aria-label="Angle">
+        <span class="range-val" id="rotVal">0°</span>
+      </div>
+      <button type="button" class="btn-secondary wide" id="rotReset">Reset rotation &amp; flip</button>
     </div>
   </section>
 

@@ -115,47 +115,97 @@
     return blurCanvas;
   }
 
+  // ---------------------------------------------------------------------------
+  // Per-clip transform: crop, size, anchor + offset, rotation, flip
+  // ---------------------------------------------------------------------------
+  // crop: normalised rect in the source's display space (after its rotation metadata).
+  // fit: 'fit' (whole clip visible) | 'fill' (canvas covered) | 'free' (scale × fit size).
+  // anchor: which point of the clip sits on the same point of the canvas.
+  // dx, dy: extra offset as a fraction of the canvas width/height.
+  const DEFAULT_TF = Object.freeze({
+    crop: Object.freeze({ x: 0, y: 0, w: 1, h: 1 }), cropRatio: null,
+    fit: 'fit', scale: 1, anchor: 'c', dx: 0, dy: 0, rot: 0, flipH: false, flipV: false,
+  });
+  const ANCHORS = { tl: [0, 0], t: [0.5, 0], tr: [1, 0], l: [0, 0.5], c: [0.5, 0.5], r: [1, 0.5], bl: [0, 1], b: [0.5, 1], br: [1, 1] };
+  const tfOf = (tf) => (tf ? { ...DEFAULT_TF, ...tf, crop: { ...DEFAULT_TF.crop, ...(tf.crop || {}) } } : { ...DEFAULT_TF, crop: { ...DEFAULT_TF.crop } });
+
   /**
-   * Draw `src` (VideoFrame / video element / bitmap) into ctx with letterboxing.
-   * w, h: un-rotated source size. rotation: clockwise degrees to apply.
+   * Where a clip lands on a W×H canvas. cw/ch: size of the cropped picture in
+   * source pixels. Returns the centre (cx, cy), the drawn size of the picture
+   * (dw, dh), the scale and the axis-aligned bounding box size (bbW, bbH).
    */
-  function drawFit(ctx, src, w, h, rotation, outW, outH, fit, bg) {
-    const rot = ((rotation || 0) % 360 + 360) % 360;
-    const rotated = rot === 90 || rot === 270;
-    const dw = rotated ? h : w;
-    const dh = rotated ? w : h;
+  function clipLayout(cw, ch, W, H, tfIn) {
+    const t = tfOf(tfIn);
+    const rad = t.rot * Math.PI / 180;
+    const c = Math.abs(Math.cos(rad)), s = Math.abs(Math.sin(rad));
+    const bw0 = cw * c + ch * s, bh0 = cw * s + ch * c;
+    const fitS = Math.min(W / bw0, H / bh0);
+    const fillS = Math.max(W / bw0, H / bh0);
+    const sc = t.fit === 'fill' ? fillS : t.fit === 'free' ? fitS * t.scale : fitS;
+    const bbW = bw0 * sc, bbH = bh0 * sc;
+    const [ax, ay] = ANCHORS[t.anchor] || ANCHORS.c;
+    return {
+      cx: ax * (W - bbW) + bbW / 2 + t.dx * W,
+      cy: ay * (H - bbH) + bbH / 2 + t.dy * H,
+      dw: cw * sc, dh: ch * sc, s: sc, bbW, bbH, fitS, fillS, rad, t,
+    };
+  }
+
+  /**
+   * Draw one clip onto the canvas (background first).
+   * src: VideoFrame / <video> / ImageBitmap / canvas; rawW/rawH its size;
+   * metaRot: rotation stored in the file (clockwise degrees).
+   * bgMode: 'blur' or anything else for the plain colour bg.
+   */
+  function drawClip(ctx, src, rawW, rawH, metaRot, W, H, tfIn, bgMode, bg) {
+    const r = ((metaRot || 0) % 360 + 360) % 360;
+    const rotated = r === 90 || r === 270;
+    const sw = rotated ? rawH : rawW, sh = rotated ? rawW : rawH;
+    const g = clipLayout(sw * tfOf(tfIn).crop.w, sh * tfOf(tfIn).crop.h, W, H, tfIn);
+    const t = g.t;
 
     ctx.save();
     ctx.fillStyle = bg || '#000';
-    ctx.fillRect(0, 0, outW, outH);
+    ctx.fillRect(0, 0, W, H);
+    if (bgMode === 'blur') drawBlurBg(ctx, src, rawW, rawH, r, sw, sh, W, H);
 
-    const contain = Math.min(outW / dw, outH / dh);
-    const fillsAll = Math.abs(dw * contain - outW) < 2 && Math.abs(dh * contain - outH) < 2;
+    ctx.translate(g.cx, g.cy);
+    ctx.rotate(g.rad);
+    ctx.scale(t.flipH ? -1 : 1, t.flipV ? -1 : 1);
+    ctx.beginPath();
+    ctx.rect(-g.dw / 2, -g.dh / 2, g.dw, g.dh);
+    ctx.clip();
+    // Full (uncropped) picture positioned so that the crop rect fills the clip.
+    const fw = sw * g.s, fh = sh * g.s;
+    const x0 = -g.dw / 2 - t.crop.x * fw, y0 = -g.dh / 2 - t.crop.y * fh;
+    ctx.translate(x0 + fw / 2, y0 + fh / 2);
+    ctx.rotate(r * Math.PI / 180);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(src, -rawW * g.s / 2, -rawH * g.s / 2, rawW * g.s, rawH * g.s);
+    ctx.restore();
+  }
 
-    if (fit === 'blur' && !fillsAll) {
-      // Cheap, universally supported blur: draw tiny, then scale up smoothly.
-      const bc = getBlurCanvas();
-      const small = 24;
-      const bw = outW >= outH ? small : Math.max(4, Math.round(small * outW / outH));
-      const bh = outW >= outH ? Math.max(4, Math.round(small * outH / outW)) : small;
-      bc.width = bw; bc.height = bh;
-      const bctx = bc.getContext('2d');
-      const cover = Math.max(bw / dw, bh / dh);
-      bctx.save();
-      bctx.translate(bw / 2, bh / 2);
-      bctx.rotate(rot * Math.PI / 180);
-      bctx.drawImage(src, -w * cover / 2, -h * cover / 2, w * cover, h * cover);
-      bctx.restore();
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
-      ctx.drawImage(bc, -outW * 0.05, -outH * 0.05, outW * 1.1, outH * 1.1);
-      ctx.fillStyle = 'rgba(0,0,0,0.35)';
-      ctx.fillRect(0, 0, outW, outH);
-    }
-
-    ctx.translate(outW / 2, outH / 2);
-    ctx.rotate(rot * Math.PI / 180);
-    ctx.drawImage(src, -w * contain / 2, -h * contain / 2, w * contain, h * contain);
+  // Cheap, universally supported blur: draw tiny, then scale up smoothly.
+  function drawBlurBg(ctx, src, rawW, rawH, r, sw, sh, W, H) {
+    const bc = getBlurCanvas();
+    const small = 24;
+    const bw = W >= H ? small : Math.max(4, Math.round(small * W / H));
+    const bh = W >= H ? Math.max(4, Math.round(small * H / W)) : small;
+    bc.width = bw; bc.height = bh;
+    const bctx = bc.getContext('2d');
+    const cover = Math.max(bw / sw, bh / sh);
+    bctx.save();
+    bctx.translate(bw / 2, bh / 2);
+    bctx.rotate(r * Math.PI / 180);
+    bctx.drawImage(src, -rawW * cover / 2, -rawH * cover / 2, rawW * cover, rawH * cover);
+    bctx.restore();
+    ctx.save();
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(bc, -W * 0.05, -H * 0.05, W * 1.1, H * 1.1);
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.fillRect(0, 0, W, H);
     ctx.restore();
   }
 
@@ -344,7 +394,7 @@
           // Image or colour clip: draw once, then emit frames for its duration.
           const len = clip.out - clip.in;
           const st = clip.still; // { drawable, w, h, isColor }
-          drawFit(ctx, st.drawable, st.w, st.h, 0, out.width, out.height, st.isColor ? 'bars' : settings.fit, settings.bg);
+          drawClip(ctx, st.drawable, st.w, st.h, 0, out.width, out.height, clip.tf, st.isColor ? 'bars' : settings.fit, settings.bg);
           const n = Math.max(1, Math.round(len * out.fps));
           for (let k = 0; k < n; k++) {
             if (signal && signal.aborted) throw new DOMException('Aborted', 'AbortError');
@@ -386,7 +436,7 @@
             if (t < clip.in - 1e-4 || t >= clip.out - 1e-4) { frame.close(); continue; }
             const outT = clipStart + (t - clip.in);
             if (outT < lastOut + frameDur * 0.75) { frame.close(); continue; } // frame-rate cap
-            drawFit(ctx, frame, frame.displayWidth, frame.displayHeight, src.rotation, out.width, out.height, settings.fit, settings.bg);
+            drawClip(ctx, frame, frame.displayWidth, frame.displayHeight, src.rotation, out.width, out.height, clip.tf, settings.fit, settings.bg);
             frame.close();
             const vf = new VideoFrame(canvas, { timestamp: Math.round(outT * 1e6), duration: Math.round(frameDur * 1e6) });
             const key = outT - lastKeyAt >= keyEvery - 1e-6;
@@ -565,7 +615,7 @@
   }
 
   global.Render = {
-    QUALITY, presetBitrate, computeOutput, estimateSize, drawFit, displaySize,
+    QUALITY, presetBitrate, computeOutput, estimateSize, drawClip, clipLayout, tfOf, DEFAULT_TF, ANCHORS, displaySize,
     hasWebCodecs, canDecodeVideo, canDecodeAudio, canEncodeHevc, exportTimeline,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

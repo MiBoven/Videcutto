@@ -61,11 +61,22 @@ A privacy-friendly video editor and compressor that runs entirely in your browse
 - **Settings → Project** shows how much space the project uses and lets you **delete** it
 - The saved format already supports several tracks, prepared for multiple timelines in a later version
 
+### Crop, position, size & rotation (per clip)
+The clip panel has four tabs — **Clip**, **Crop**, **Position**, **Rotate**. Opening a transform tab moves the playhead into the selected clip so it can be edited directly in the preview; on phones the preview then stays pinned at the top while you scroll the panel.
+- **Crop** (videos and images): drag the frame or its corners in the preview (the whole picture is shown, the cut-off part darkened). Presets *Free*, *Like canvas*, 16:9, 9:16, 1:1, 4:5, 4:3 keep their ratio while resizing; *Reset crop*
+- **Position:** 3×3 anchor grid (as in JPG75's watermark position) — e.g. top left puts the clip's top-left corner into the canvas' top-left corner, bottom center its bottom edge centre onto the canvas' bottom centre; choosing an anchor removes any manual offset
+- **Move** the clip by dragging it in the preview (finger or mouse) — also beyond the canvas edges; parts outside are cut off, the canvas size never changes. A dashed frame shows where the clip lies. Fine-tune with the arrow pad (0.5 % per tap), ⊙ returns to the anchor
+- **Snap** to the canvas centre and edges while dragging (guide lines appear); switchable, hold Alt on desktop to move freely
+- **Size:** *Fit* (whole clip visible, default), *Fill* (canvas covered), *Free* with a slider (10–400 %), pinch with two fingers or scroll the mouse wheel over the preview
+- **Rotate:** 90° left/right, free angle slider (−180° to 180°, snaps to 0°), flip horizontally/vertically, *Reset*
+- Every change is one undo step (a drag, a slider move or a series of arrow taps); split clips keep their settings
+- Color clips can be positioned, sized and rotated too (no crop)
+
 ### Canvas
 - **Format:** 16:9, 9:16, 1:1, 4:5 (Instagram portrait), 4:3, 3:4, 21:9, **Like a video…** (choose which one; by default the first loaded video) or **Custom** (any ratio, e.g. 3 : 2)
 - A new project that starts with a video takes that video's format; an empty canvas starts as 16:9
 - **Background** for the space around videos and images that don't match the format: a **color** (default anthracite #293133) or a **blurred** copy of the visible video or image (color clips always use the color)
-- The preview draws the canvas exactly like the export
+- The preview draws the canvas exactly like the export and always keeps the canvas ratio
 
 ### Export & compression
 - **Resolution** — only sizes that fit the format, e.g. 16:9: HD 1280×720, Full HD 1920×1080 (default), UHD 3840×2160; 1:1: 1080×1080; 4:5: 1080×1350; *Like a video* adds *Source*; plus **Custom** (width and height stay linked to the format). A project that starts with a video smaller than 1080p uses its source size instead of upscaling
@@ -98,7 +109,7 @@ A privacy-friendly video editor and compressor that runs entirely in your browse
 Videcutto uses no third-party libraries — everything is vanilla HTML/CSS/JS, so there are no vendor files to download.
 
 - **`mp4.js`** — a small ISO-BMFF demuxer and muxer. The demuxer reads only the `moov` box and the exact byte ranges of the samples it needs (via `Blob.slice()` with an 8 MB read window), supporting H.264, HEVC, VP9 and AV1 video, AAC and Opus audio, rotation metadata and edit lists. The muxer writes a "fast start" MP4 (moov before mdat, interleaved in 0.5 s chunks, 64-bit offsets for files > 4 GB).
-- **`render.js`** — the export engine. Each clip is decoded with **WebCodecs** (`VideoDecoder` / `AudioDecoder`, hardware-accelerated where available) starting at the nearest keyframe, every frame is drawn onto a canvas (rotation applied, fitted with black bars or a blurred background), and encoded with `VideoEncoder` / `AudioEncoder`. Audio is resampled to 48 kHz stereo; muted clips and clips without sound are filled with silence so audio and video stay in sync.
+- **`render.js`** — the export engine and the shared drawing code (`clipLayout` / `drawClip`: crop, size, anchor + offset, rotation and flip, used identically by preview and export). Each clip is decoded with **WebCodecs** (`VideoDecoder` / `AudioDecoder`, hardware-accelerated where available) starting at the nearest keyframe, every frame is drawn onto a canvas (rotation applied, fitted with black bars or a blurred background), and encoded with `VideoEncoder` / `AudioEncoder`. Audio is resampled to 48 kHz stereo; muted clips and clips without sound are filled with silence so audio and video stay in sync.
 - **`project.js`** — persistence: the project in IndexedDB, working copies in the Origin Private File System, file handles of originals on desktop. `mp4.js` provides the lossless range copy (`remuxRange`) used for trimmed working copies: it copies the samples from the keyframe before the in-point, keeps the original sample descriptions and rotation, and streams straight to storage without holding the video in memory.
 - **`app.js`** — the UI: file and clipboard loading, pre-trim dialog, timeline, canvas and export settings, clip panel, undo/redo and the preview. The preview draws onto a `<canvas>` with the same drawing code as the export; two `<video>` elements underneath supply frames and sound (the next video clip is always preloaded), images and color clips run on a wall clock.
 

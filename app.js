@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.3.0';
+  const VERSION = '0.4.0';
   const $ = (id) => document.getElementById(id);
 
   // ---------------------------------------------------------------------------
@@ -882,7 +882,7 @@
   function updateClipPanel() {
     const i = selectedIndex();
     const panel = $('clipPanel');
-    if (i < 0) { panel.hidden = true; return; }
+    if (i < 0) { panel.hidden = true; updateTransformingClass(); return; }
     const c = clips[i];
     const src = srcOf(c);
     panel.hidden = false;
@@ -896,6 +896,10 @@
     $('cpColorField').hidden = c.kind !== 'color';
     $('cpSizeField').hidden = c.kind !== 'color';
     $('cpCustomField').hidden = !(c.kind === 'color' && c.size === 'custom');
+    $('cpTabCrop').hidden = c.kind === 'color';
+    if (cpTab === 'crop' && c.kind === 'color') showTab('clip');
+    updateTransformingClass();
+    syncTransformUI();
     if (c.kind === 'color') {
       $('cpColor').value = c.color || DEFAULT_COLOR;
       $('cpSize').value = c.size || 'custom';
@@ -1085,6 +1089,8 @@
     selectedId = el ? (selectedId === el.dataset.id ? null : el.dataset.id) : null;
     renderClips();
     updateToolbar();
+    if (selectedId && cpTab !== 'clip') ensureVisible();
+    renderPreview();
   });
 
   tlTrack.addEventListener('pointerdown', (e) => {
@@ -1442,8 +1448,8 @@
   function updatePreviewAspect() {
     const a = canvasAspect();
     preview.style.aspectRatio = String(a);
-    // Limit width for portrait formats so the preview fits on screen.
-    preview.style.maxWidth = a < 1 ? `calc(52vh * ${a})` : '';
+    // Limit the width by the maximum height so the box always keeps the canvas ratio.
+    preview.style.maxWidth = `calc(var(--pv-h) * ${a})`;
     renderPreview();
   }
 
@@ -1495,17 +1501,30 @@
     const bg = canvasState.bgColor;
     const fit = canvasState.bg === 'blur' ? 'blur' : 'bars';
     const clip = clips[activeIdx];
+    const mode = editMode();
+    pv.classList.toggle('editing', mode === 'move');
+    pv.classList.toggle('cropping', mode === 'crop');
     if (!clip) { pvCtx.fillStyle = bg; pvCtx.fillRect(0, 0, W, H); return; }
-    if (isVideoClip(clip)) {
-      const el = showing;
-      if (!el || el.readyState < 2 || !el.videoWidth) return; // keep the last frame while seeking
-      Render.drawFit(pvCtx, el, el.videoWidth, el.videoHeight, 0, W, H, fit, bg);
+    const out = outputDims();
+    const d = currentDrawable(clip, out.w, out.h);
+    if (!d) {
+      if (isVideoClip(clip) && playableVideo(clip)) return; // keep the last frame while seeking
+      pvCtx.fillStyle = bg; pvCtx.fillRect(0, 0, W, H);
       return;
     }
-    const out = outputDims();
-    const st = stillFor(clip, out.w, out.h);
-    if (!st) { pvCtx.fillStyle = bg; pvCtx.fillRect(0, 0, W, H); return; }
-    Render.drawFit(pvCtx, st.drawable, st.w, st.h, 0, W, H, st.isColor ? 'bars' : fit, bg);
+    if (mode === 'crop') { drawCropMode(clip, d, W, H); return; }
+    Render.drawClip(pvCtx, d.drawable, d.w, d.h, 0, W, H, clip.tf, d.isColor ? 'bars' : fit, bg);
+    if (mode === 'move') drawMoveOverlay(clip, d, W, H, dpr);
+  }
+
+  // Preview <video> elements are already rotated by the browser, so rotation 0 here.
+  function currentDrawable(clip, outW, outH) {
+    if (isVideoClip(clip)) {
+      const el = showing;
+      if (!el || el.readyState < 2 || !el.videoWidth) return null;
+      return { drawable: el, w: el.videoWidth, h: el.videoHeight, isColor: false };
+    }
+    return stillFor(clip, outW, outH);
   }
 
   vids.forEach((v) => {
@@ -1518,6 +1537,403 @@
       toast('This browser can\'t preview this video, but exporting may still work.', 5000);
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Clip transform: crop, position & size, rotation (clip panel tabs + preview gestures)
+  // ---------------------------------------------------------------------------
+  let cpTab = 'clip';
+  const ACCENT = '#4f8cff';
+  const selClip = () => clips[selectedIndex()] || null;
+
+  // The preview is interactive only while a transform tab is open and the selected clip is the visible one.
+  function editMode() {
+    const c = selClip();
+    const vis = clips[activeIdx];
+    if (!c || cpTab === 'clip' || !vis || vis.id !== c.id || playing) return null;
+    if (cpTab === 'crop') return c.kind === 'color' ? null : 'crop';
+    return 'move';
+  }
+
+  // Move the playhead into the selected clip so it can be edited in the preview.
+  function ensureVisible() {
+    const i = selectedIndex();
+    if (i < 0) return;
+    const st = clipStart(i), len = clips[i].out - clips[i].in;
+    if (playhead < st || playhead >= st + len - 1e-3) { pause(); seek(st + Math.min(0.05, len / 2)); }
+  }
+
+  // Display size of a clip's picture (before crop).
+  function srcDims(c) {
+    if (c.kind === 'color') { const o = outputDims(); return colorDims(c, o.w, o.h); }
+    const s = srcOf(c);
+    if (!s) return { w: 16, h: 9 };
+    return c.kind === 'video' ? Render.displaySize(s) : { w: s.width, h: s.height };
+  }
+  function layoutFor(c, W, H, tf) {
+    const d = srcDims(c);
+    const t = Render.tfOf(tf || c.tf);
+    return Render.clipLayout(d.w * t.crop.w, d.h * t.crop.h, W, H, t);
+  }
+  // Size relative to "fit" (1 = fit), whatever the size mode is.
+  function effectiveScale(c) {
+    const o = outputDims();
+    const g = layoutFor(c, o.w, o.h);
+    return g.s / g.fitS;
+  }
+
+  // Live edits (drags, sliders) change the clip directly; one undo step is recorded at the end.
+  let liveBefore = null;
+  function liveEdit(patch) {
+    const i = selectedIndex();
+    if (i < 0) return;
+    if (!liveBefore) liveBefore = snapshot();
+    const c = clips[i];
+    clips[i] = { ...c, tf: { ...Render.tfOf(c.tf), ...patch } };
+    renderPreview();
+    syncTransformUI();
+  }
+  function liveCommit() {
+    if (!liveBefore) return;
+    undoStack.push(liveBefore);
+    while (undoStack.length > settings.undoSteps) undoStack.shift();
+    redoStack = [];
+    liveBefore = null;
+    updateToolbar();
+    scheduleSave();
+  }
+  function setTf(patch) {
+    const c = selClip();
+    if (!c) return;
+    liveCommit();
+    updateSelected({ tf: { ...Render.tfOf(c.tf), ...patch } });
+  }
+
+  function syncTransformUI() {
+    const c = selClip();
+    if (!c) return;
+    const t = Render.tfOf(c.tf);
+    $('anchorGrid').querySelectorAll('button').forEach((b) => {
+      const on = b.dataset.anchor === t.anchor;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-checked', String(on));
+      b.setAttribute('role', 'radio');
+    });
+    $('fitToggle').querySelectorAll('.seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.fit === t.fit));
+    const pct = Math.round(effectiveScale(c) * 100);
+    if (document.activeElement !== $('scaleRange')) $('scaleRange').value = clamp(pct, 10, 400);
+    $('scaleVal').textContent = pct + '%';
+    if (document.activeElement !== $('rotRange')) $('rotRange').value = Math.round(t.rot);
+    $('rotVal').textContent = Math.round(t.rot) + '°';
+    $('flipHBtn').classList.toggle('on', t.flipH);
+    $('flipVBtn').classList.toggle('on', t.flipV);
+    $('cropPresets').querySelectorAll('.btn-chip').forEach((b) => b.classList.toggle('active', b.dataset.ratio === (t.cropRatio || 'free')));
+  }
+
+  function showTab(tab) {
+    const c = selClip();
+    if (tab === 'crop' && c && c.kind === 'color') tab = 'clip';
+    cpTab = tab;
+    $('cpTabs').querySelectorAll('.seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
+    document.querySelectorAll('#clipPanel .cp-pane').forEach((p) => { p.hidden = p.dataset.pane !== tab; });
+    updateTransformingClass();
+  }
+  // On phones the preview sticks to the top while a transform tab is open.
+  function updateTransformingClass() {
+    const on = !$('clipPanel').hidden && cpTab !== 'clip';
+    if (document.body.classList.contains('transforming') !== on) {
+      document.body.classList.toggle('transforming', on);
+      requestAnimationFrame(renderPreview);
+    }
+  }
+  $('cpTabs').addEventListener('click', (e) => {
+    const b = e.target.closest('.seg-btn');
+    if (!b) return;
+    showTab(b.dataset.tab);
+    if (cpTab !== 'clip') ensureVisible();
+    syncTransformUI();
+    renderPreview();
+  });
+
+  // Position: anchor grid, nudging, size
+  $('anchorGrid').addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    ensureVisible();
+    setTf({ anchor: b.dataset.anchor, dx: 0, dy: 0 });
+  });
+  let nudgeTimer = 0;
+  $('nudgePad').addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    const c = selClip();
+    if (!b || !c) return;
+    ensureVisible();
+    if (b.dataset.nudge === 'reset') { setTf({ dx: 0, dy: 0 }); return; }
+    const [x, y] = b.dataset.nudge.split(',').map(Number);
+    const t = Render.tfOf(c.tf);
+    const step = 0.005; // 0.5 % of the canvas per tap
+    liveEdit({ dx: t.dx + x * step, dy: t.dy + y * step });
+    clearTimeout(nudgeTimer);
+    nudgeTimer = setTimeout(liveCommit, 700); // a series of taps is one undo step
+  });
+  $('fitToggle').addEventListener('click', (e) => {
+    const b = e.target.closest('.seg-btn');
+    const c = selClip();
+    if (!b || !c) return;
+    ensureVisible();
+    if (b.dataset.fit === 'free') setTf({ fit: 'free', scale: effectiveScale(c) });
+    else setTf({ fit: b.dataset.fit });
+  });
+  $('scaleRange').addEventListener('input', (e) => { ensureVisible(); liveEdit({ fit: 'free', scale: e.target.value / 100 }); });
+  $('scaleRange').addEventListener('change', liveCommit);
+  $('snapChk').checked = store.get('snap', true);
+  if (isCoarse) document.querySelector('.hint-inline').hidden = true;
+  $('snapChk').addEventListener('change', (e) => store.set('snap', e.target.checked));
+
+  // Rotate & flip
+  const normAngle = (a) => { a = ((a + 180) % 360 + 360) % 360 - 180; return a === -180 ? 180 : a; };
+  $('rotLeftBtn').addEventListener('click', () => { const c = selClip(); if (!c) return; ensureVisible(); setTf({ rot: normAngle(Render.tfOf(c.tf).rot - 90) }); });
+  $('rotRightBtn').addEventListener('click', () => { const c = selClip(); if (!c) return; ensureVisible(); setTf({ rot: normAngle(Render.tfOf(c.tf).rot + 90) }); });
+  $('flipHBtn').addEventListener('click', () => { const c = selClip(); if (!c) return; ensureVisible(); setTf({ flipH: !Render.tfOf(c.tf).flipH }); });
+  $('flipVBtn').addEventListener('click', () => { const c = selClip(); if (!c) return; ensureVisible(); setTf({ flipV: !Render.tfOf(c.tf).flipV }); });
+  $('rotRange').addEventListener('input', (e) => {
+    ensureVisible();
+    let a = Number(e.target.value);
+    if (Math.abs(a) < 2) a = 0; // easy to get back to straight
+    liveEdit({ rot: a });
+  });
+  $('rotRange').addEventListener('change', liveCommit);
+  $('rotReset').addEventListener('click', () => { ensureVisible(); setTf({ rot: 0, flipH: false, flipV: false }); });
+
+  // Crop presets
+  const RATIOS = { '16:9': 16 / 9, '9:16': 9 / 16, '1:1': 1, '4:5': 4 / 5, '4:3': 4 / 3 };
+  const ratioValue = (key) => (key === 'canvas' ? canvasAspect() : RATIOS[key] || null);
+  function centeredCrop(c, ratio) {
+    const d = srcDims(c);
+    const a = d.w / d.h;
+    let w = 1, h = 1;
+    if (ratio > a) h = a / ratio; else w = ratio / a;
+    return { x: (1 - w) / 2, y: (1 - h) / 2, w, h };
+  }
+  $('cropPresets').addEventListener('click', (e) => {
+    const b = e.target.closest('.btn-chip');
+    const c = selClip();
+    if (!b || !c) return;
+    ensureVisible();
+    const key = b.dataset.ratio;
+    if (key === 'free') { setTf({ cropRatio: null }); return; }
+    setTf({ crop: centeredCrop(c, ratioValue(key)), cropRatio: key });
+  });
+  $('cropReset').addEventListener('click', () => { ensureVisible(); setTf({ crop: { x: 0, y: 0, w: 1, h: 1 }, cropRatio: null }); });
+
+  // --- Overlays ---------------------------------------------------------------
+  let snapGuides = null; // { x: [...], y: [...] } in preview pixels
+
+  function drawMoveOverlay(clip, d, W, H, dpr) {
+    const t = Render.tfOf(clip.tf);
+    const g = Render.clipLayout(d.w * t.crop.w, d.h * t.crop.h, W, H, t);
+    pvCtx.save();
+    pvCtx.translate(g.cx, g.cy);
+    pvCtx.rotate(g.rad);
+    pvCtx.lineWidth = 2 * dpr;
+    pvCtx.setLineDash([7 * dpr, 5 * dpr]);
+    pvCtx.strokeStyle = 'rgba(0,0,0,.6)';
+    pvCtx.strokeRect(-g.dw / 2, -g.dh / 2, g.dw, g.dh);
+    pvCtx.lineDashOffset = 6 * dpr;
+    pvCtx.strokeStyle = ACCENT;
+    pvCtx.strokeRect(-g.dw / 2, -g.dh / 2, g.dw, g.dh);
+    pvCtx.setLineDash([]);
+    pvCtx.fillStyle = ACCENT;
+    pvCtx.beginPath();
+    pvCtx.arc(0, 0, 4 * dpr, 0, Math.PI * 2);
+    pvCtx.fill();
+    pvCtx.restore();
+    if (snapGuides) {
+      pvCtx.save();
+      pvCtx.strokeStyle = '#ff4fd8';
+      pvCtx.lineWidth = 1.5 * dpr;
+      for (const x of snapGuides.x) { pvCtx.beginPath(); pvCtx.moveTo(x, 0); pvCtx.lineTo(x, H); pvCtx.stroke(); }
+      for (const y of snapGuides.y) { pvCtx.beginPath(); pvCtx.moveTo(0, y); pvCtx.lineTo(W, y); pvCtx.stroke(); }
+      pvCtx.restore();
+    }
+  }
+
+  // Crop mode shows the whole picture with the crop frame on top.
+  function cropGeom(d, W, H) {
+    const s0 = Math.min(W / d.w, H / d.h) * 0.9;
+    const fw = d.w * s0, fh = d.h * s0;
+    return { s0, fw, fh, ox: (W - fw) / 2, oy: (H - fh) / 2 };
+  }
+  function cropRectPx(t, cg) {
+    return { x: cg.ox + t.crop.x * cg.fw, y: cg.oy + t.crop.y * cg.fh, w: t.crop.w * cg.fw, h: t.crop.h * cg.fh };
+  }
+  function drawCropMode(clip, d, W, H) {
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const t = Render.tfOf(clip.tf);
+    const cg = cropGeom(d, W, H);
+    pvCtx.save();
+    pvCtx.fillStyle = '#0d0d0d';
+    pvCtx.fillRect(0, 0, W, H);
+    pvCtx.drawImage(d.drawable, cg.ox, cg.oy, cg.fw, cg.fh);
+    const r = cropRectPx(t, cg);
+    pvCtx.fillStyle = 'rgba(0,0,0,.6)';
+    pvCtx.beginPath();
+    pvCtx.rect(cg.ox, cg.oy, cg.fw, cg.fh);
+    pvCtx.rect(r.x, r.y, r.w, r.h);
+    pvCtx.fill('evenodd');
+    pvCtx.strokeStyle = 'rgba(255,255,255,.35)';
+    pvCtx.lineWidth = 1 * dpr;
+    for (let k = 1; k < 3; k++) {
+      pvCtx.beginPath(); pvCtx.moveTo(r.x + r.w * k / 3, r.y); pvCtx.lineTo(r.x + r.w * k / 3, r.y + r.h); pvCtx.stroke();
+      pvCtx.beginPath(); pvCtx.moveTo(r.x, r.y + r.h * k / 3); pvCtx.lineTo(r.x + r.w, r.y + r.h * k / 3); pvCtx.stroke();
+    }
+    pvCtx.strokeStyle = '#fff';
+    pvCtx.lineWidth = 2 * dpr;
+    pvCtx.strokeRect(r.x, r.y, r.w, r.h);
+    pvCtx.fillStyle = ACCENT;
+    const hs = 12 * dpr;
+    for (const h of cropHandles(r, !!t.cropRatio)) pvCtx.fillRect(h.x - hs / 2, h.y - hs / 2, hs, hs);
+    pvCtx.restore();
+  }
+  function cropHandles(r, locked) {
+    const hs = [
+      { k: 'nw', x: r.x, y: r.y }, { k: 'ne', x: r.x + r.w, y: r.y },
+      { k: 'sw', x: r.x, y: r.y + r.h }, { k: 'se', x: r.x + r.w, y: r.y + r.h },
+    ];
+    if (!locked) {
+      hs.push({ k: 'n', x: r.x + r.w / 2, y: r.y }, { k: 's', x: r.x + r.w / 2, y: r.y + r.h },
+        { k: 'w', x: r.x, y: r.y + r.h / 2 }, { k: 'e', x: r.x + r.w, y: r.y + r.h / 2 });
+    }
+    return hs;
+  }
+
+  // --- Preview gestures -----------------------------------------------------
+  const pointers = new Map();
+  let gesture = null;
+  function pvPoint(e) {
+    const r = pv.getBoundingClientRect();
+    return { x: (e.clientX - r.left) * pv.width / r.width, y: (e.clientY - r.top) * pv.height / r.height };
+  }
+  const pdist = () => { const [a, b] = [...pointers.values()]; return Math.hypot(a.x - b.x, a.y - b.y) || 1; };
+
+  pv.addEventListener('pointerdown', (e) => {
+    const mode = editMode();
+    if (!mode) return;
+    e.preventDefault();
+    try { pv.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+    const p = pvPoint(e);
+    pointers.set(e.pointerId, p);
+    const c = selClip();
+    const t = Render.tfOf(c.tf);
+    if (mode === 'move') {
+      if (pointers.size === 2) gesture = { type: 'pinch', d0: pdist(), s0: effectiveScale(c) };
+      else if (pointers.size === 1) gesture = { type: 'move', start: p, dx0: t.dx, dy0: t.dy };
+      return;
+    }
+    // crop
+    if (pointers.size > 1) return;
+    const d = srcDims(c);
+    const cg = cropGeom(d, pv.width, pv.height);
+    const r = cropRectPx(t, cg);
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const hit = cropHandles(r, !!t.cropRatio).find((h) => Math.abs(h.x - p.x) < 18 * dpr && Math.abs(h.y - p.y) < 18 * dpr);
+    const inside = p.x > r.x && p.x < r.x + r.w && p.y > r.y && p.y < r.y + r.h;
+    if (!hit && !inside) return;
+    gesture = { type: 'crop', handle: hit ? hit.k : 'move', start: p, crop0: { ...t.crop }, cg, d, ratio: t.cropRatio ? ratioValue(t.cropRatio) : null };
+  });
+
+  pv.addEventListener('pointermove', (e) => {
+    if (!pointers.has(e.pointerId)) return;
+    const p = pvPoint(e);
+    pointers.set(e.pointerId, p);
+    if (!gesture) return;
+    const c = selClip();
+    if (!c) return;
+    const W = pv.width, H = pv.height;
+    if (gesture.type === 'pinch' && pointers.size === 2) {
+      liveEdit({ fit: 'free', scale: clamp(gesture.s0 * pdist() / gesture.d0, 0.05, 10) });
+    } else if (gesture.type === 'move' && pointers.size === 1) {
+      let dx = gesture.dx0 + (p.x - gesture.start.x) / W;
+      let dy = gesture.dy0 + (p.y - gesture.start.y) / H;
+      snapGuides = null;
+      if ($('snapChk').checked && !e.altKey) {
+        const dpr = Math.min(2, window.devicePixelRatio || 1);
+        const thr = 10 * dpr;
+        const g = layoutFor(c, W, H, { ...Render.tfOf(c.tf), dx, dy });
+        const guides = { x: [], y: [] };
+        const snap1 = (pos, half, size) => {
+          const cands = [[pos - size / 2, size / 2], [pos - half, 0], [pos + half - size, size]];
+          let best = null;
+          for (const [diff, line] of cands) if (Math.abs(diff) < thr && (!best || Math.abs(diff) < Math.abs(best[0]))) best = [diff, line];
+          return best;
+        };
+        const sx = snap1(g.cx, g.bbW / 2, W);
+        if (sx) { dx -= sx[0] / W; guides.x.push(sx[1]); }
+        const sy = snap1(g.cy, g.bbH / 2, H);
+        if (sy) { dy -= sy[0] / H; guides.y.push(sy[1]); }
+        if (guides.x.length || guides.y.length) snapGuides = guides;
+      }
+      liveEdit({ dx, dy });
+    } else if (gesture.type === 'crop') {
+      const { cg, crop0, d } = gesture;
+      const du = (p.x - gesture.start.x) / cg.fw;
+      const dv = (p.y - gesture.start.y) / cg.fh;
+      const MIN = 0.05;
+      let { x, y, w, h } = crop0;
+      if (gesture.handle === 'move') {
+        x = clamp(crop0.x + du, 0, 1 - w);
+        y = clamp(crop0.y + dv, 0, 1 - h);
+      } else {
+        let l = crop0.x, r = crop0.x + crop0.w, t = crop0.y, b = crop0.y + crop0.h;
+        const k = gesture.handle;
+        if (k.includes('w')) l = clamp(l + du, 0, r - MIN);
+        if (k.includes('e')) r = clamp(r + du, l + MIN, 1);
+        if (k.includes('n')) t = clamp(t + dv, 0, b - MIN);
+        if (k.includes('s')) b = clamp(b + dv, t + MIN, 1);
+        if (gesture.ratio) {
+          // Keep the preset's ratio: width leads, height follows (anchored at the opposite corner).
+          const toH = (ww) => (ww * d.w) / (gesture.ratio * d.h);
+          const toW = (hh) => (hh * gesture.ratio * d.h) / d.w;
+          let ww = r - l;
+          let hh = toH(ww);
+          const maxH = k.includes('n') ? b : 1 - t;
+          if (hh > maxH) { hh = maxH; ww = toW(hh); }
+          if (k.includes('w')) l = r - ww; else r = l + ww;
+          if (k.includes('n')) t = b - hh; else b = t + hh;
+        }
+        x = l; y = t; w = r - l; h = b - t;
+      }
+      liveEdit({ crop: { x, y, w, h } });
+    }
+  });
+
+  function endGesture(e) {
+    if (!pointers.has(e.pointerId)) return;
+    pointers.delete(e.pointerId);
+    if (pointers.size === 1 && gesture && gesture.type === 'pinch') {
+      // Continue as a move with the remaining finger.
+      const [p] = pointers.values();
+      const t = Render.tfOf((selClip() || {}).tf);
+      gesture = { type: 'move', start: p, dx0: t.dx, dy0: t.dy };
+      return;
+    }
+    if (pointers.size) return;
+    gesture = null;
+    snapGuides = null;
+    liveCommit();
+    renderPreview();
+  }
+  pv.addEventListener('pointerup', endGesture);
+  pv.addEventListener('pointercancel', endGesture);
+
+  let wheelTimer = 0;
+  pv.addEventListener('wheel', (e) => {
+    if (editMode() !== 'move') return;
+    e.preventDefault();
+    const c = selClip();
+    liveEdit({ fit: 'free', scale: clamp(effectiveScale(c) * Math.exp(-e.deltaY * 0.0015), 0.05, 10) });
+    clearTimeout(wheelTimer);
+    wheelTimer = setTimeout(liveCommit, 400);
+  }, { passive: false });
 
   // ---------------------------------------------------------------------------
   // Keyboard shortcuts and pasting
@@ -1741,8 +2157,8 @@
     const s = getExportSettings();
     // Clip times are in media time; the export reads the actual (possibly trimmed-copy) file.
     const expClips = clips.map((c) => {
-      if (isVideoClip(c)) { const src = srcOf(c); return { kind: 'video', source: src, in: c.in - src.base, out: c.out - src.base, muted: c.muted }; }
-      return { kind: c.kind, source: srcOf(c) || null, in: c.in, out: c.out, muted: true, still: stillFor(c, s.width, s.height) };
+      if (isVideoClip(c)) { const src = srcOf(c); return { kind: 'video', source: src, in: c.in - src.base, out: c.out - src.base, muted: c.muted, tf: c.tf }; }
+      return { kind: c.kind, source: srcOf(c) || null, in: c.in, out: c.out, muted: true, still: stillFor(c, s.width, s.height), tf: c.tf };
     });
     const t0 = performance.now();
     try {
