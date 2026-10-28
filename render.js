@@ -14,17 +14,13 @@
   const OUT_CHANNELS = 2;
 
   // ---------------------------------------------------------------------------
-  // Presets
+  // Quality
   // ---------------------------------------------------------------------------
-  const PRESETS = {
-    hd:       { label: 'HD',        short: 720,  bitrate: 2_500_000, audio: 128_000 },
-    fullhd:   { label: 'Full HD',   short: 1080, bitrate: 5_000_000, audio: 128_000 },
-    small:    { label: 'Small',     short: 480,  bitrate: 1_000_000, audio: 96_000 },
-    original: { label: 'Original',  short: null, bitrate: null,      audio: 160_000 },
-    target:   { label: 'Target size', short: null, bitrate: null,    audio: 96_000 },
-  };
+  // Bits per pixel per frame for the quality presets (at 30 fps).
+  const QUALITY = { small: 0.05, standard: 0.08, high: 0.14 };
 
   const even = (n) => Math.max(2, Math.round(n / 2) * 2);
+  const isVideo = (s) => s && (s.kind === 'video' || !s.kind);
 
   // Display (rotation-applied) size of a source.
   function displaySize(src) {
@@ -32,71 +28,76 @@
     return r ? { w: src.height, h: src.width } : { w: src.width, h: src.height };
   }
 
+  // 60 fps needs more bits than 30 fps, but not twice as many.
+  const fpsFactor = (fps) => (fps <= 30 ? fps : 30 + (fps - 30) * 0.5);
+
+  /** Bitrate a quality preset uses for a given size and frame rate. */
+  function presetBitrate(quality, w, h, fps) {
+    return Math.round(w * h * fpsFactor(fps) * (QUALITY[quality] || QUALITY.standard));
+  }
+
   /**
-   * Work out output width/height/bitrate/fps from the settings.
-   * @param settings { preset, aspect, fit, fps, targetMB, codec }
-   * @param first    first source on the timeline (for "auto" aspect / original size)
-   * @param sources  all sources used (to avoid upscaling)
+   * Work out the final output parameters.
+   * @param settings { width, height, fps, quality: small|standard|high|custom|target, bitrateMbps, targetMB, lockRes }
+   * @param sources  all sources used on the timeline (videos and images)
    * @param duration timeline duration in seconds
    */
-  function computeOutput(settings, first, sources, duration) {
-    const p = PRESETS[settings.preset] || PRESETS.hd;
-    const fd = displaySize(first);
-    let aspect;
-    switch (settings.aspect) {
-      case '16:9': aspect = 16 / 9; break;
-      case '9:16': aspect = 9 / 16; break;
-      case '1:1': aspect = 1; break;
-      default: aspect = fd.w / fd.h;
-    }
-    const maxShort = Math.max(...sources.map((s) => { const d = displaySize(s); return Math.min(d.w, d.h); }));
-    const maxFps = Math.max(...sources.map((s) => s.frameRate || 30));
-    const fps = settings.fps === 'original' ? Math.min(60, Math.round(maxFps)) : Math.min(Number(settings.fps) || 30, Math.max(24, Math.round(maxFps)));
+  function computeOutput(settings, sources, duration) {
+    const vids = sources.filter(isVideo);
+    const maxFps = vids.length ? Math.max(...vids.map((s) => s.frameRate || 30)) : 30;
+    let fps;
+    if (settings.fps === 'original') fps = Math.min(60, Math.round(maxFps));
+    else fps = Number(settings.fps) || 30;
+    // Don't invent frames the sources don't have (stills are fine at any rate).
+    if (vids.length && settings.fps !== 'original') fps = Math.min(fps, Math.max(24, Math.round(maxFps)));
 
-    let audioBitrate = p.audio;
-    let bitrate = p.bitrate;
-    let short = p.short;
+    let w = even(settings.width || 1920), h = even(settings.height || 1080);
+    let audioBitrate = 128_000;
+    let bitrate;
+    let scaled = false;
 
-    if (settings.preset === 'original') {
-      short = Math.min(fd.w, fd.h);
-    } else if (settings.preset === 'target') {
+    if (settings.quality === 'custom') {
+      bitrate = Math.round(Math.min(100, Math.max(0.1, settings.bitrateMbps || 5)) * 1e6);
+    } else if (settings.quality === 'target') {
       const totalBits = Math.max(0.2, settings.targetMB || 25) * 8e6 * 0.96;
       const perSec = totalBits / Math.max(0.5, duration);
       audioBitrate = perSec > 1_000_000 ? 128_000 : perSec > 400_000 ? 96_000 : 64_000;
       bitrate = Math.max(120_000, perSec - audioBitrate);
-      short = bitrate >= 4_000_000 ? 1080 : bitrate >= 1_800_000 ? 720 : bitrate >= 800_000 ? 480 : 360;
+      if (!settings.lockRes) {
+        // Too few bits for this many pixels looks blocky — a smaller picture with
+        // enough bits looks better. Keep at least ~0.06 bits per pixel.
+        const need = w * h * fpsFactor(fps) * 0.06;
+        if (bitrate < need) {
+          const f = Math.max(Math.sqrt(bitrate / need), 240 / Math.min(w, h));
+          w = even(w * f); h = even(h * f);
+          scaled = true;
+        }
+      }
+    } else {
+      bitrate = presetBitrate(settings.quality, w, h, fps);
     }
-    short = Math.min(short, maxShort);
 
-    let w, h;
-    if (aspect >= 1) { h = short; w = h * aspect; } else { w = short; h = w / aspect; }
-    w = even(w); h = even(h);
-
-    if (settings.preset === 'original') {
-      // ~0.07 bits per pixel per frame — visually close to the source, far smaller than phone bitrates.
-      bitrate = Math.round(Math.min(25_000_000, Math.max(1_500_000, w * h * fps * 0.07)));
-    }
-    // Scale preset bitrates a little for 60 fps.
-    if (settings.preset !== 'target' && settings.preset !== 'original' && fps > 30) bitrate = Math.round(bitrate * 1.4);
-
-    // Never spend more bits than the sources have: re-encoding an already
+    // Never spend more bits than the source videos have: re-encoding an already
     // compressed video (e.g. from Instagram or WhatsApp) at a higher bitrate
     // only makes the file bigger without improving quality.
     let capped = false;
-    const withRate = sources.filter((s) => s.videoBitrate > 0);
-    if (withRate.length) {
-      const cap = Math.max(...withRate.map((s) => {
-        const d = displaySize(s);
-        const px = Math.min(1, (w * h) / (d.w * d.h));
-        const fr = Math.min(1, fps / Math.max(1, s.frameRate || fps));
-        return s.videoBitrate * Math.pow(px, 0.75) * Math.pow(fr, 0.5) * 0.75;
-      }));
-      if (cap < bitrate) { bitrate = Math.max(250_000, Math.round(cap)); capped = true; }
+    if (settings.quality !== 'custom') {
+      const withRate = vids.filter((s) => s.videoBitrate > 0);
+      const onlyVideos = withRate.length && withRate.length === sources.length;
+      if (onlyVideos) {
+        const cap = Math.max(...withRate.map((s) => {
+          const d = displaySize(s);
+          const px = Math.min(1, (w * h) / (d.w * d.h));
+          const fr = Math.min(1, fps / Math.max(1, s.frameRate || fps));
+          return s.videoBitrate * Math.pow(px, 0.75) * Math.pow(fr, 0.5) * 0.75;
+        }));
+        if (cap < bitrate) { bitrate = Math.max(250_000, Math.round(cap)); capped = true; }
+      }
     }
-    const srcAudio = Math.max(0, ...sources.map((s) => s.audioBitrate || 0));
+    const srcAudio = Math.max(0, ...vids.map((s) => s.audioBitrate || 0));
     if (srcAudio > 0) audioBitrate = Math.min(audioBitrate, Math.max(64_000, Math.ceil(srcAudio / 32_000) * 32_000));
 
-    return { width: w, height: h, fps, bitrate, audioBitrate, capped };
+    return { width: w, height: h, fps, bitrate, audioBitrate, capped, scaled };
   }
 
   function estimateSize(out, duration, withAudio) {
@@ -118,14 +119,14 @@
    * Draw `src` (VideoFrame / video element / bitmap) into ctx with letterboxing.
    * w, h: un-rotated source size. rotation: clockwise degrees to apply.
    */
-  function drawFit(ctx, src, w, h, rotation, outW, outH, fit) {
+  function drawFit(ctx, src, w, h, rotation, outW, outH, fit, bg) {
     const rot = ((rotation || 0) % 360 + 360) % 360;
     const rotated = rot === 90 || rot === 270;
     const dw = rotated ? h : w;
     const dh = rotated ? w : h;
 
     ctx.save();
-    ctx.fillStyle = '#000';
+    ctx.fillStyle = bg || '#000';
     ctx.fillRect(0, 0, outW, outH);
 
     const contain = Math.min(outW / dw, outH / dh);
@@ -278,9 +279,9 @@
     if (!hasWebCodecs()) throw new Error('This browser does not support WebCodecs video encoding.');
     if (!clips.length) throw new Error('The timeline is empty.');
 
-    const sources = [...new Set(clips.map((c) => c.source))];
+    const sources = [...new Set(clips.map((c) => c.source).filter(Boolean))];
     const duration = clips.reduce((s, c) => s + (c.out - c.in), 0);
-    const out = computeOutput(settings, clips[0].source, sources, duration);
+    const out = computeOutput(settings, sources, duration);
 
     // Encoder selection
     let vcfg = await pickVideoEncoder(settings.codec === 'hevc' ? 'hevc' : 'avc', out.width, out.height, out.fps, out.bitrate);
@@ -292,7 +293,7 @@
     }
     if (!vcfg) throw new Error(`No video encoder available for ${out.width}×${out.height}.`);
 
-    const anyAudio = !settings.muteAll && clips.some((c) => !c.muted && c.source.audioDecodable);
+    const anyAudio = !settings.muteAll && clips.some((c) => c.kind === 'video' && !c.muted && c.source.audioDecodable);
     let acfg = null;
     if (anyAudio) {
       acfg = await pickAudioEncoder(out.audioBitrate);
@@ -339,6 +340,30 @@
 
     try {
       for (const clip of clips) {
+        if (clip.kind !== 'video') {
+          // Image or colour clip: draw once, then emit frames for its duration.
+          const len = clip.out - clip.in;
+          const st = clip.still; // { drawable, w, h, isColor }
+          drawFit(ctx, st.drawable, st.w, st.h, 0, out.width, out.height, st.isColor ? 'bars' : settings.fit, settings.bg);
+          const n = Math.max(1, Math.round(len * out.fps));
+          for (let k = 0; k < n; k++) {
+            if (signal && signal.aborted) throw new DOMException('Aborted', 'AbortError');
+            if (encError) throw encError;
+            const outT = timelinePos + k / out.fps;
+            if (outT < lastOut + frameDur * 0.75) continue;
+            const vf = new VideoFrame(canvas, { timestamp: Math.round(outT * 1e6), duration: Math.round(frameDur * 1e6) });
+            const key = outT - lastKeyAt >= keyEvery - 1e-6;
+            if (key) lastKeyAt = outT;
+            await waitFor(() => encoder.encodeQueueSize < 6, signal);
+            encoder.encode(vf, { keyFrame: key });
+            vf.close();
+            lastOut = outT;
+            produced++;
+            if (produced % 5 === 0) onProgress(Math.min(0.999, produced / expectedFrames));
+          }
+          timelinePos += len;
+          continue;
+        }
         const src = clip.source;
         const track = src.demux.video;
         const reader = new MP4.BlobReader(src.file);
@@ -361,7 +386,7 @@
             if (t < clip.in - 1e-4 || t >= clip.out - 1e-4) { frame.close(); continue; }
             const outT = clipStart + (t - clip.in);
             if (outT < lastOut + frameDur * 0.75) { frame.close(); continue; } // frame-rate cap
-            drawFit(ctx, frame, frame.displayWidth, frame.displayHeight, src.rotation, out.width, out.height, settings.fit);
+            drawFit(ctx, frame, frame.displayWidth, frame.displayHeight, src.rotation, out.width, out.height, settings.fit, settings.bg);
             frame.close();
             const vf = new VideoFrame(canvas, { timestamp: Math.round(outT * 1e6), duration: Math.round(frameDur * 1e6) });
             const key = outT - lastKeyAt >= keyEvery - 1e-6;
@@ -449,7 +474,7 @@
         const clipLen = clip.out - clip.in;
         const targetEnd = Math.round((timelinePos + clipLen) * OUT_RATE);
         const src = clip.source;
-        const track = src.demux.audio;
+        const track = clip.kind === 'video' && src ? src.demux.audio : null;
         const useAudio = !settings.muteAll && !clip.muted && track && src.audioDecodable;
 
         if (useAudio) {
@@ -540,7 +565,7 @@
   }
 
   global.Render = {
-    PRESETS, computeOutput, estimateSize, drawFit, displaySize,
+    QUALITY, presetBitrate, computeOutput, estimateSize, drawFit, displaySize,
     hasWebCodecs, canDecodeVideo, canDecodeAudio, canEncodeHevc, exportTimeline,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

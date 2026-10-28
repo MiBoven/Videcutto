@@ -9,12 +9,18 @@ A privacy-friendly video editor and compressor that runs entirely in your browse
 ## Features
 
 ### Loading
-- Select or drag & drop one or several videos (MP4, MOV, M4V — i.e. what phones and cameras record)
-- **Videos / Files** toggle above the picker (as in JPG75 is Enough):
-  - **Videos** uses the OS media picker — quick, but Android doesn't preserve the original file name
+- Select, drag & drop or **paste** (Ctrl+V, as in JPG75 is Enough) one or several **videos** (MP4, MOV, M4V — what phones and cameras record) and **images** (JPG, PNG, WebP, GIF, AVIF; HEIC where the browser supports it)
+- **Gallery / Files** toggle above the picker on phones and tablets (hidden on desktop, where it makes no difference):
+  - **Gallery** uses the OS media picker — quick, but Android doesn't preserve the original file name
   - **Files** opens the regular file browser and keeps real file names
+- **Start with an empty canvas:** a new project with a 16:9 Full HD canvas and a 4-second anthracite color clip
 - Videos are read **on demand** straight from the file instead of being loaded into memory as a whole, so even multi-gigabyte recordings open instantly
-- Videos added later are appended to the end of the timeline; you can also drop files onto the editor
+- New media are appended to the end of the timeline; you can also drop or paste files into the editor
+
+### Images and color clips
+- **Images** become clips of 4 seconds (adjustable); very large photos are scaled to max. 4096 px on the long side, EXIF orientation is respected
+- **Color clips** (*Add → Color clip*) are single-color images: 4 seconds, anthracite and 1920×1080 by default; color, duration and size (presets, *Like canvas* or custom) are adjustable
+- Both behave like videos on the timeline: cut, copy, paste, delete, reorder
 
 ### Pre-trimming
 - For large videos, a **trim dialog** appears before the editor: drag the start/end handles (or use *Start here* / *End here* while previewing) to keep only the part you need
@@ -25,9 +31,10 @@ A privacy-friendly video editor and compressor that runs entirely in your browse
 ### Editing
 - One timeline with thumbnail strips; the playhead stays fixed in the centre — scroll the timeline to scrub
 - Preview player with play/pause, frame-by-frame stepping and a time display
-- **Split** at the playhead, **Delete**, **Cut / Copy / Paste** (pastes at the playhead, splitting a clip if necessary)
+- Toolbar: **Undo / Redo** (always visible on the left), **Cut** at the playhead, **Paste** at the playhead (splits a clip if necessary), **Add** (videos & images, or a color clip)
+- **Clip panel:** appears below the timeline while a clip is selected — **Copy**, **Mute** (videos), **Delete**, and for images/color clips the **duration**; for color clips also **color** and **size**
 - **Reorder** clips by dragging (on touch devices: tap to select, then drag the selected clip)
-- **Mute** a single clip, or mute all audio at once
+- Mute all audio at once with the speaker button
 - **Undo / Redo** — 10 steps by default (adjustable in Settings, 1–100)
 - Zoom the timeline with the zoom buttons, pinch, or Ctrl + mouse wheel
 - Keyboard shortcuts on desktop:
@@ -37,10 +44,11 @@ A privacy-friendly video editor and compressor that runs entirely in your browse
   | `Space` | Play / pause |
   | `←` / `→` | Previous / next frame |
   | `Shift` + `←` / `→` | Jump 1 second |
-  | `S` | Split at playhead |
+  | `C` or `S` | Cut at playhead |
   | `M` | Mute / unmute clip |
   | `Delete` / `Backspace` | Delete selected clip |
-  | `Ctrl` + `X` / `C` / `V` | Cut / copy / paste |
+  | `Esc` | Deselect clip |
+  | `Ctrl` + `C` / `V` | Copy clip / paste clip or files from the clipboard |
   | `Ctrl` + `Z` / `Y` | Undo / redo |
   | `Home` / `End` | Jump to start / end |
 
@@ -53,16 +61,22 @@ A privacy-friendly video editor and compressor that runs entirely in your browse
 - **Settings → Project** shows how much space the project uses and lets you **delete** it
 - The saved format already supports several tracks, prepared for multiple timelines in a later version
 
+### Canvas
+- **Format:** 16:9, 9:16, 1:1, 4:5 (Instagram portrait), 4:3, 3:4, 21:9, **Like a video…** (choose which one; by default the first loaded video) or **Custom** (any ratio, e.g. 3 : 2)
+- A new project that starts with a video takes that video's format; an empty canvas starts as 16:9
+- **Background** for the space around videos and images that don't match the format: a **color** (default anthracite #293133) or a **blurred** copy of the visible video or image (color clips always use the color)
+- The preview draws the canvas exactly like the export
+
 ### Export & compression
-- **Quality presets:** HD 720p (default, ~2.5 Mbit/s), Full HD 1080p (~5 Mbit/s), Small 480p (~1 Mbit/s), Original resolution (bitrate lowered to ~0.07 bits per pixel), or **Target size** (enter a maximum in MB — bitrate and resolution are calculated from the total length)
-- Phone recordings typically shrink by 80–95 %, similar to what messengers do, but you choose the quality
-- **Format:** like the first video, 16:9, 9:16 or 1:1 — videos with a different shape get **black bars** or a **blurred background**
+- **Resolution** — only sizes that fit the format, e.g. 16:9: HD 1280×720, Full HD 1920×1080 (default), UHD 3840×2160; 1:1: 1080×1080; 4:5: 1080×1350; *Like a video* adds *Source*; plus **Custom** (width and height stay linked to the format). A project that starts with a video smaller than 1080p uses its source size instead of upscaling
+- **Quality:** Small / Standard (default) / High — about 0.05 / 0.08 / 0.14 bits per pixel, the resulting Mbit/s are shown in the list (e.g. Standard at Full HD 30 fps ≈ 5 Mbit/s); **Custom bitrate** in Mbit/s; or **Max. file size** in MB
+- With *Max. file size*, the resolution is lowered automatically when the bitrate would be too low for it (a smaller sharp picture looks better than a large blocky one) — tick **Keep resolution** to prevent this; the estimate says when it happens
+- Phone recordings typically shrink by 70–95 %, similar to what messengers do, but you choose the quality
 - **Frame rate:** 30 fps (default), 60 fps, or like the source (max. 60)
-- **Codec:** H.264 (plays everywhere) or HEVC/H.265 where the browser can encode it
+- **Codec:** H.264 (plays everywhere) or H.265 (HEVC) where the browser can encode it
 - Audio: AAC at 48 kHz stereo; where a browser can't encode AAC (e.g. Chromium on Linux, Firefox), Opus is used automatically and a note is shown
 - Estimated output size is shown before exporting; progress with time remaining and a **Cancel** button during export
-- Never upscales beyond the largest source video
-- **Never uses a higher bitrate than the source:** the video bitrate is capped at ~75 % of the source's (scaled to the output resolution and frame rate), and the audio bitrate at the source's. Already strongly compressed videos (e.g. from Instagram or WhatsApp) no longer get bigger — the estimate and the result show a note when exporting won't make a video noticeably smaller
+- **Never uses a higher bitrate than the source** (quality presets and max. file size, timelines with videos only): the video bitrate is capped at ~75 % of the source's (scaled to the output resolution and frame rate), and the audio bitrate at the source's. Already strongly compressed videos (e.g. from Instagram or WhatsApp) no longer get bigger — the estimate and the result show a note when exporting won't make a video noticeably smaller. A custom bitrate is used as entered
 - Keeps the screen awake while exporting (Wake Lock API, where supported)
 - **Save** the result, or **Share** it directly (e.g. to a messenger) on devices that support sharing files
 
@@ -86,9 +100,9 @@ Videcutto uses no third-party libraries — everything is vanilla HTML/CSS/JS, s
 - **`mp4.js`** — a small ISO-BMFF demuxer and muxer. The demuxer reads only the `moov` box and the exact byte ranges of the samples it needs (via `Blob.slice()` with an 8 MB read window), supporting H.264, HEVC, VP9 and AV1 video, AAC and Opus audio, rotation metadata and edit lists. The muxer writes a "fast start" MP4 (moov before mdat, interleaved in 0.5 s chunks, 64-bit offsets for files > 4 GB).
 - **`render.js`** — the export engine. Each clip is decoded with **WebCodecs** (`VideoDecoder` / `AudioDecoder`, hardware-accelerated where available) starting at the nearest keyframe, every frame is drawn onto a canvas (rotation applied, fitted with black bars or a blurred background), and encoded with `VideoEncoder` / `AudioEncoder`. Audio is resampled to 48 kHz stereo; muted clips and clips without sound are filled with silence so audio and video stay in sync.
 - **`project.js`** — persistence: the project in IndexedDB, working copies in the Origin Private File System, file handles of originals on desktop. `mp4.js` provides the lossless range copy (`remuxRange`) used for trimmed working copies: it copies the samples from the keyframe before the in-point, keeps the original sample descriptions and rotation, and streams straight to storage without holding the video in memory.
-- **`app.js`** — the UI: file loading, pre-trim dialog, timeline, preview playback (two `<video>` elements, the next clip is always preloaded), undo/redo and export.
+- **`app.js`** — the UI: file and clipboard loading, pre-trim dialog, timeline, canvas and export settings, clip panel, undo/redo and the preview. The preview draws onto a `<canvas>` with the same drawing code as the export; two `<video>` elements underneath supply frames and sound (the next video clip is always preloaded), images and color clips run on a wall clock.
 
-The preview uses the browser's native `<video>` playback; the export uses WebCodecs, so what plays in the preview and what can be exported is decided by each browser's codec support.
+The preview uses the browser's native `<video>` decoding; the export uses WebCodecs, so what plays in the preview and what can be exported is decided by each browser's codec support.
 
 ## Files
 

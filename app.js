@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.2.0';
+  const VERSION = '0.3.0';
   const $ = (id) => document.getElementById(id);
 
   // ---------------------------------------------------------------------------
@@ -147,7 +147,7 @@
 
   const totalDuration = () => clips.reduce((s, c) => s + (c.out - c.in), 0);
   const clipStart = (idx) => { let s = 0; for (let i = 0; i < idx; i++) s += clips[i].out - clips[i].in; return s; };
-  const srcOf = (clip) => sources.get(clip.srcId);
+  const srcOf = (clip) => (clip && clip.srcId ? sources.get(clip.srcId) : null);
 
   function clipAt(t) {
     let s = 0;
@@ -197,16 +197,23 @@
   const fileInput = $('fileInput');
   const drop = $('drop');
   const hints = {
-    videos: "Video picker — fast, but original file names aren't preserved on Android.",
+    videos: "Gallery picker — fast, but original file names aren't preserved on Android.",
     files: 'File browser — pick "Files"/"My Files" (not Google Photos) to keep original file names.',
   };
   function setSourceMode(mode) {
     $('sourceToggle').querySelectorAll('.seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.mode === mode));
-    fileInput.accept = mode === 'files' ? '*/*' : 'video/*';
+    fileInput.accept = mode === 'files' ? '*/*' : 'video/*,image/*';
     $('sourceHint').textContent = hints[mode];
     store.set('sourceMode', mode);
   }
   setSourceMode(store.get('sourceMode', 'videos'));
+  // The Gallery/Files distinction only matters for the Android pickers.
+  if (!isCoarse) {
+    $('sourceToggle').hidden = true;
+    $('sourceHint').hidden = true;
+    $('dropTitle').textContent = 'Click to choose videos or images';
+    $('dropSub').textContent = 'or drag & drop or paste (Ctrl+V) them here';
+  }
   $('sourceToggle').addEventListener('click', (e) => {
     const btn = e.target.closest('.seg-btn');
     if (btn) setSourceMode(btn.dataset.mode);
@@ -214,7 +221,10 @@
   // Desktop Chrome/Edge: the file picker returns handles, so the original files
   // can be reopened after a reload without copying them.
   const useHandlePicker = () => !isCoarse && Project.canUseHandles();
-  const PICKER_TYPES = [{ description: 'Videos', accept: { 'video/*': ['.mp4', '.mov', '.m4v', '.3gp'] } }];
+  const PICKER_TYPES = [{
+    description: 'Videos and images',
+    accept: { 'video/*': ['.mp4', '.mov', '.m4v', '.3gp'], 'image/*': ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.avif', '.heic'] },
+  }];
 
   /** @returns {Promise<{file: File, handle?: FileSystemFileHandle}[]>} */
   async function pickFiles(multiple) {
@@ -248,12 +258,17 @@
   }
 
   const pickAndAdd = async () => { const list = await pickFiles(true); if (list.length) handleFiles(list); };
+  const addMenu = $('addMenu');
+  const closeAddMenu = () => { addMenu.style.display = 'none'; };
+  document.addEventListener('click', (e) => { if (!e.target.closest('.add-wrap')) closeAddMenu(); });
   drop.addEventListener('click', pickAndAdd);
   drop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pickAndAdd(); } });
   ['dragenter', 'dragover'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add('drag'); }));
   ['dragleave', 'drop'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove('drag'); }));
   drop.addEventListener('drop', async (e) => { e.stopPropagation(); handleFiles(await fromDataTransfer(e.dataTransfer)); });
-  $('addBtn').addEventListener('click', pickAndAdd);
+  $('addBtn').addEventListener('click', () => { addMenu.style.display = addMenu.style.display === 'none' ? 'block' : 'none'; });
+  $('addMediaItem').addEventListener('click', () => { closeAddMenu(); pickAndAdd(); });
+  $('addColorItem').addEventListener('click', () => { closeAddMenu(); addColorClip(); });
 
   // Dropping files anywhere in the editor adds them too
   document.addEventListener('dragover', (e) => { if (!$('editorScreen').hidden) e.preventDefault(); });
@@ -264,19 +279,23 @@
   });
 
   const isVideoFile = (f) => f.type.startsWith('video/') || /\.(mp4|m4v|mov|3gp)$/i.test(f.name);
+  const isImageFile = (f) => f.type.startsWith('image/') || /\.(jpe?g|png|webp|gif|bmp|avif|heic|heif)$/i.test(f.name);
 
   let loadingQueue = Promise.resolve();
   function handleFiles(list) {
     const entries = [...list].map((x) => (x instanceof File ? { file: x } : x));
-    const videos = entries.filter((x) => isVideoFile(x.file));
-    if (!videos.length) { if (entries.length) toast('Please choose video files (MP4, MOV, M4V).'); return; }
-    if (videos.length < entries.length) toast('Some files were skipped because they are not videos.');
-    if (pendingProject) {
+    const media = entries.filter((x) => isVideoFile(x.file) || isImageFile(x.file));
+    if (!media.length) { if (entries.length) toast('Please choose videos (MP4, MOV, M4V) or images (JPG, PNG, WebP).'); return; }
+    if (media.length < entries.length) toast('Some files were skipped because they are neither videos nor images.');
+    if (pendingProject && !clips.length) {
       if (!confirm('Start a new project? Your last project will be discarded.')) return;
       loadingQueue = loadingQueue.then(() => newProject(true));
     }
     loadingQueue = loadingQueue.then(async () => {
-      for (const v of videos) await addFile(v.file, v.handle);
+      for (const m of media) {
+        if (isImageFile(m.file) && !isVideoFile(m.file)) await addImage(m.file, m.handle, m.pasted);
+        else await addFile(m.file, m.handle, m.pasted);
+      }
     }).catch((e) => { console.error(e); hideBusy(); });
   }
 
@@ -380,8 +399,8 @@
    * after a reload. Only the pre-trimmed part is copied (losslessly).
    * Replaces src.file/demux/base on success. Returns true if a copy was made.
    */
-  async function makeWorkingCopy(src) {
-    if (!isCoarse || !Project.canCopy()) return false;
+  async function makeWorkingCopy(src, force) {
+    if ((!isCoarse && !force) || !Project.canCopy()) return false;
     const full = src.rangeIn <= src.start + 0.05 && src.rangeOut >= src.duration - 0.05;
     const estimate = full ? src.file.size : ((src.rangeOut - src.rangeIn) / Math.max(0.1, src.fileDuration)) * src.file.size;
     if ((await Project.freeSpace()) < estimate * 1.2 + 50 * 1024 * 1024) {
@@ -416,7 +435,7 @@
     }
   }
 
-  async function addFile(file, handle) {
+  async function addFile(file, handle, pasted) {
     if (!Render.hasWebCodecs()) { toast('This browser can\'t process videos (no WebCodecs support).', 5000); return; }
     let probed;
     try { probed = await probe(file); } catch (e) { toast(e.message, 7000); return; }
@@ -438,21 +457,103 @@
       src.rangeOut = range.out;
     }
 
-    if (!(await makeWorkingCopy(src)) && handle) {
+    // Pasted files have no handle, so keep a copy on desktop too.
+    if (!(await makeWorkingCopy(src, pasted)) && handle) {
       src.storage = 'handle';
       await Project.saveHandle(src.id, handle);
     }
 
+    const wasEmpty = clips.length === 0;
     sources.set(src.id, src);
     saveEnabled = true;
-    const wasEmpty = clips.length === 0;
+    // A new project starting with a video takes that video's format.
+    if (wasEmpty) {
+      canvasState = Object.assign(defaultCanvas(), { aspect: 'video', videoSrcId: src.id });
+      // Full HD by default, but don't upscale smaller videos.
+      const d = Render.displaySize(src);
+      exportState.res = Math.min(d.w, d.h) >= 1080 ? '1080' : 'source';
+    }
     commit(() => {
-      clips.push({ id: newId(), srcId: src.id, in: src.rangeIn, out: src.rangeOut, muted: false });
+      clips.push({ id: newId(), kind: 'video', srcId: src.id, in: src.rangeIn, out: src.rangeOut, muted: false });
     });
-    if (wasEmpty) playhead = 0;
+    if (wasEmpty) { playhead = 0; onCanvasChange(); }
     showEditor();
     queueThumbs(src);
   }
+
+  // ---------------------------------------------------------------------------
+  // Images and colour clips
+  // ---------------------------------------------------------------------------
+  const STILL_DURATION = 4;
+
+  async function decodeImage(file) {
+    let bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    const MAX = 4096; // plenty for UHD output, keeps memory in check with big photos
+    const long = Math.max(bmp.width, bmp.height);
+    if (long > MAX) {
+      const f = MAX / long;
+      const small = await createImageBitmap(bmp, { resizeWidth: Math.round(bmp.width * f), resizeHeight: Math.round(bmp.height * f), resizeQuality: 'high' });
+      bmp.close();
+      bmp = small;
+    }
+    return bmp;
+  }
+
+  function makeImageSource(meta, file, bitmap) {
+    return {
+      id: meta.id, kind: 'image', name: meta.name, origSize: meta.origSize, origLastModified: meta.origLastModified,
+      file, url: null, bitmap, demux: null, base: 0, width: bitmap.width, height: bitmap.height, rotation: 0, frameRate: 30,
+      fileDuration: 0, start: 0, duration: 0, hasAudio: false, audioDecodable: false, videoBitrate: 0, audioBitrate: 0,
+      rangeIn: 0, rangeOut: 0, storage: meta.storage || 'none', copyName: meta.copyName || null, thumbs: [], thumbStep: Infinity, missing: false,
+    };
+  }
+
+  async function addImage(file, handle, pasted) {
+    let bmp;
+    try { bmp = await decodeImage(file); } catch (e) { toast(`"${file.name}" couldn't be opened as an image in this browser.`, 6000); return; }
+    const meta = { id: nextSrcId(), name: file.name || 'Pasted image', origSize: file.size, origLastModified: file.lastModified };
+    const src = makeImageSource(meta, file, bmp);
+    // Images are small: always keep a copy so they survive reloads.
+    if (Project.canCopy()) {
+      const name = `${src.id}-${Date.now().toString(36)}-${++copyCounter}${(/\.[a-z0-9]+$/i.exec(file.name || '') || ['.img'])[0]}`;
+      try { src.file = await Project.copyWhole(name, file); src.storage = 'opfs'; src.copyName = name; Project.requestPersist(); } catch (e) { /* keep original */ }
+    }
+    if (src.storage === 'none' && handle) { src.storage = 'handle'; await Project.saveHandle(src.id, handle); }
+    if (pasted && src.storage === 'none') toast('This pasted image can\'t be stored here — it will be missing after a reload.', 5000);
+    const wasEmpty = clips.length === 0;
+    sources.set(src.id, src);
+    saveEnabled = true;
+    commit(() => { clips.push({ id: newId(), kind: 'image', srcId: src.id, in: 0, out: STILL_DURATION, muted: false }); });
+    if (wasEmpty) { playhead = 0; onCanvasChange(); }
+    showEditor();
+    queueThumbs(src);
+  }
+
+  function addColorClip() {
+    const wasEmpty = clips.length === 0;
+    saveEnabled = true;
+    let insertAt = clips.length;
+    commit(() => {
+      const nc = { id: newId(), kind: 'color', srcId: null, in: 0, out: STILL_DURATION, muted: false, color: DEFAULT_COLOR, size: '1920x1080', w: 1920, h: 1080 };
+      clips.splice(insertAt, 0, nc);
+      selectedId = nc.id;
+    });
+    if (wasEmpty) playhead = 0;
+    showEditor();
+  }
+
+  async function startEmptyCanvas() {
+    if ((clips.length || pendingProject) && !(await newProject(false))) return;
+    canvasState = defaultCanvas();
+    exportState.res = '1080';
+    saveEnabled = true;
+    commit(() => { clips.push({ id: newId(), kind: 'color', srcId: null, in: 0, out: STILL_DURATION, muted: false, color: DEFAULT_COLOR, size: '1920x1080', w: 1920, h: 1080 }); });
+    undoStack = [];
+    playhead = 0;
+    showEditor();
+    onCanvasChange();
+  }
+  $('emptyCanvasBtn').addEventListener('click', startEmptyCanvas);
 
   // ---------------------------------------------------------------------------
   // Thumbnails
@@ -461,6 +562,21 @@
   function queueThumbs(src) { thumbQueue = thumbQueue.then(() => makeThumbs(src)).catch(() => {}); }
 
   async function makeThumbs(src) {
+    if (src.kind === 'image') {
+      if (!src.bitmap) return;
+      const th = 72, tw = Math.round(clamp(th * src.width / src.height, 40, 128));
+      const c = document.createElement('canvas');
+      c.width = tw; c.height = th;
+      const x = c.getContext('2d');
+      const sc = Math.max(tw / src.width, th / src.height);
+      x.drawImage(src.bitmap, (tw - src.width * sc) / 2, (th - src.height * sc) / 2, src.width * sc, src.height * sc);
+      const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.7));
+      if (blob) src.thumbs = [URL.createObjectURL(blob)];
+      src.thumbAspect = tw / th;
+      src.thumbStep = Infinity;
+      renderClips();
+      return;
+    }
     const v = document.createElement('video');
     v.muted = true; v.playsInline = true; v.preload = 'auto';
     v.src = src.url;
@@ -669,16 +785,11 @@
     const i = selectedIndex();
     if (i < 0) { toast('Select a clip first.'); return false; }
     const c = clips[i];
-    clipboard = { srcId: c.srcId, in: c.in, out: c.out, muted: c.muted };
+    const { id, ...rest } = c;
+    clipboard = { ...rest };
     if (!silent) toast('Clip copied — move the playhead and paste.');
     updateToolbar();
     return true;
-  }
-  function cutSelected() {
-    if (!copySelected(true)) return;
-    const i = selectedIndex();
-    commit(() => { clips.splice(i, 1); selectedId = null; });
-    toast('Clip cut — move the playhead and paste.');
   }
   function paste() {
     if (!clipboard) return;
@@ -706,8 +817,13 @@
   function toggleMuteClip() {
     let i = selectedIndex();
     if (i < 0) i = clipAt(playhead).idx;
-    if (i < 0) return;
+    if (i < 0 || !isVideoClip(clips[i])) return;
     commit(() => { clips[i] = { ...clips[i], muted: !clips[i].muted }; });
+  }
+  function updateSelected(patch) {
+    const i = selectedIndex();
+    if (i < 0) return;
+    commit(() => { clips[i] = { ...clips[i], ...patch }; });
   }
   function toggleMuteAll() {
     muteAll = !muteAll;
@@ -718,30 +834,87 @@
     scheduleSave();
   }
 
-  $('undoBtn').addEventListener('click', undo);
-  $('redoBtn').addEventListener('click', redo);
+  $('undoBtn').addEventListener('click', () => { if (undoStack.length) undo(); else toast('Nothing to undo.', 1500); });
+  $('redoBtn').addEventListener('click', () => { if (redoStack.length) redo(); else toast('Nothing to redo.', 1500); });
   $('splitBtn').addEventListener('click', splitAtPlayhead);
   $('deleteBtn').addEventListener('click', deleteSelected);
-  $('cutBtn').addEventListener('click', cutSelected);
   $('copyBtn').addEventListener('click', () => copySelected(false));
+  $('cpClose').addEventListener('click', () => { selectedId = null; renderClips(); updateToolbar(); });
+
+  // Clip panel fields
+  $('cpDuration').addEventListener('change', (e) => {
+    const c = clips[selectedIndex()];
+    if (!c || c.kind === 'video') return;
+    const d = clamp(parseFloat(e.target.value) || STILL_DURATION, 0.1, 3600);
+    updateSelected({ out: c.in + d });
+  });
+  $('cpColor').addEventListener('input', (e) => {
+    // Live preview without creating an undo step for every colour tick.
+    const c = clips[selectedIndex()];
+    if (c && c.kind === 'color') { c.color = e.target.value; renderPreview(); renderClips(); }
+  });
+  // The colour picker previews live; the undo step is recorded once on 'change'.
+  let clipColorBefore = null;
+  const rememberColor = () => { const c = clips[selectedIndex()]; clipColorBefore = c ? c.color : null; };
+  $('cpColor').addEventListener('focus', rememberColor);
+  $('cpColor').addEventListener('click', rememberColor);
+  $('cpColor').addEventListener('change', (e) => {
+    const c = clips[selectedIndex()];
+    if (!c || c.kind !== 'color') return;
+    if (clipColorBefore) c.color = clipColorBefore; // so the undo snapshot holds the old colour
+    clipColorBefore = null;
+    updateSelected({ color: e.target.value });
+  });
+  $('cpSize').addEventListener('change', (e) => {
+    const v = e.target.value;
+    const c = clips[selectedIndex()];
+    if (!c || c.kind !== 'color') return;
+    if (v === 'canvas') updateSelected({ size: 'canvas' });
+    else if (v === 'custom') updateSelected({ size: 'custom' });
+    else { const [w, h] = v.split('x').map(Number); updateSelected({ size: v, w, h }); }
+  });
+  ['cpW', 'cpH'].forEach((id) => $(id).addEventListener('change', () => {
+    const w = Math.round(clamp(parseInt($('cpW').value, 10) || 1920, 16, 8192));
+    const h = Math.round(clamp(parseInt($('cpH').value, 10) || 1080, 16, 8192));
+    updateSelected({ size: 'custom', w, h });
+  }));
+
+  function updateClipPanel() {
+    const i = selectedIndex();
+    const panel = $('clipPanel');
+    if (i < 0) { panel.hidden = true; return; }
+    const c = clips[i];
+    const src = srcOf(c);
+    panel.hidden = false;
+    $('cpKind').textContent = c.kind === 'video' ? 'Video' : c.kind === 'image' ? 'Image' : 'Color clip';
+    $('cpTitle').textContent = src ? src.name : `${(c.color || DEFAULT_COLOR).toUpperCase()} · ${c.size === 'canvas' ? 'canvas size' : `${c.w}×${c.h}`}`;
+    $('muteClipBtn').hidden = c.kind !== 'video';
+    $('muteClipBtn').classList.toggle('on', !!c.muted);
+    $('muteClipBtn').querySelector('span').textContent = c.muted ? 'Unmute' : 'Mute';
+    $('cpDurField').hidden = c.kind === 'video';
+    if (document.activeElement !== $('cpDuration')) $('cpDuration').value = +(c.out - c.in).toFixed(2);
+    $('cpColorField').hidden = c.kind !== 'color';
+    $('cpSizeField').hidden = c.kind !== 'color';
+    $('cpCustomField').hidden = !(c.kind === 'color' && c.size === 'custom');
+    if (c.kind === 'color') {
+      $('cpColor').value = c.color || DEFAULT_COLOR;
+      $('cpSize').value = c.size || 'custom';
+      $('cpW').value = c.w || 1920;
+      $('cpH').value = c.h || 1080;
+    }
+  }
   $('pasteBtn').addEventListener('click', paste);
   $('muteClipBtn').addEventListener('click', toggleMuteClip);
   $('muteAllBtn').addEventListener('click', toggleMuteAll);
 
   function updateToolbar() {
-    const hasSel = selectedIndex() >= 0;
-    $('undoBtn').disabled = !undoStack.length;
-    $('redoBtn').disabled = !redoStack.length;
+    // Undo/redo stay clickable; they just look dimmed when there's nothing to do.
+    $('undoBtn').classList.toggle('idle', !undoStack.length);
+    $('redoBtn').classList.toggle('idle', !redoStack.length);
     $('splitBtn').disabled = !clips.length;
-    $('deleteBtn').disabled = !hasSel;
-    $('cutBtn').disabled = !hasSel;
-    $('copyBtn').disabled = !hasSel;
     $('pasteBtn').disabled = !clipboard;
-    $('muteClipBtn').disabled = !clips.length;
-    const ref = hasSel ? clips[selectedIndex()] : (clips.length ? clips[clipAt(playhead).idx] : null);
-    $('muteClipBtn').classList.toggle('on', !!(ref && ref.muted));
-    $('muteClipBtn').querySelector('span').textContent = ref && ref.muted ? 'Unmute' : 'Mute';
     $('exportBtn').disabled = !clips.length || exporting;
+    updateClipPanel();
   }
 
   // ---------------------------------------------------------------------------
@@ -793,7 +966,7 @@
     updateToolbar();
     updateTime();
     updatePreviewAspect();
-    $('stutterHint').hidden = clips.length < 2;
+    $('stutterHint').hidden = clips.filter(isVideoClip).length < 2;
     $('previewEmpty').hidden = clips.length > 0;
   }
 
@@ -808,7 +981,8 @@
       const len = c.out - c.in;
       const src = srcOf(c);
       const el = document.createElement('div');
-      el.className = 'clip' + (c.id === selectedId ? ' selected' : '');
+      el.className = 'clip' + (c.id === selectedId ? ' selected' : '') + (c.kind === 'color' ? ' color-clip' : '');
+      if (c.kind === 'color') el.style.background = c.color || DEFAULT_COLOR;
       el.dataset.id = c.id;
       el.dataset.idx = i;
       const w = Math.max(3, len * pps - 2);
@@ -832,7 +1006,8 @@
       if (w > 50) {
         const label = document.createElement('span');
         label.className = 'clip-label';
-        label.textContent = `${fmtTime(len, false)}${w > 140 && src ? ' · ' + src.name : ''}`;
+        const nm = src ? src.name : c.kind === 'color' ? 'Color' : '';
+        label.textContent = `${fmtTime(len, false)}${w > 140 && nm ? ' · ' + nm : ''}`;
         el.appendChild(label);
       }
       if (c.muted) {
@@ -993,13 +1168,20 @@
   window.addEventListener('pointercancel', endDrag);
 
   // ---------------------------------------------------------------------------
-  // Preview playback (two <video> elements, the next clip is preloaded)
+  // Preview (a canvas draws the composition exactly like the export; two
+  // <video> elements underneath supply frames and sound, the next video clip
+  // is always preloaded in the element that isn't showing)
   // ---------------------------------------------------------------------------
   const vids = [$('vidA'), $('vidB')];
-  let active = 0;
+  const pv = $('pvCanvas');
+  const pvCtx = pv.getContext('2d', { alpha: false });
+  let showing = null;   // <video> element currently providing frames (null for stills)
   let activeIdx = -1;
+  let clock = null;     // stills: { t0, ph0 } — wall clock instead of a video's time
   const unlocked = new WeakSet();
-  vids[1].classList.add('standby');
+
+  const isVideoClip = (c) => !!c && c.kind === 'video';
+  const playableVideo = (c) => isVideoClip(c) && srcOf(c) && !srcOf(c).missing;
 
   function setVideoTime(el, t) {
     if (el.readyState >= 1) el.currentTime = t;
@@ -1014,36 +1196,64 @@
       el.dataset.url = src.url;
       el.src = src.url;
     }
+    el.dataset.clip = clip.id;
     setVideoTime(el, Math.max(0, t - src.base));
   }
   const mediaTime = (el) => { const s = sources.get(el.dataset.src); return el.currentTime + (s ? s.base : 0); };
+
+  // Element for a video clip: prefer one that already holds the same source.
+  function elementFor(clip, avoid) {
+    const src = srcOf(clip);
+    const cand = vids.filter((v) => v !== avoid);
+    return cand.find((v) => v.dataset.clip === clip.id) || cand.find((v) => v.dataset.src === src.id) || cand[0];
+  }
+
   function applyMute() {
-    vids.forEach((el, i) => {
-      const clip = i === active ? clips[activeIdx] : clips[activeIdx + 1];
-      el.muted = muteAll || !clip || clip.muted;
+    vids.forEach((el) => {
+      const clip = clips.find((c) => c.id === el.dataset.clip);
+      el.muted = muteAll || !clip || clip.muted || el !== showing;
     });
+  }
+
+  function prepareNext() {
+    const next = clips[activeIdx + 1];
+    if (playableVideo(next)) loadInto(elementFor(next, showing), next, next.in);
+  }
+
+  function resetVideos() {
+    vids.forEach((v) => { v.pause(); v.removeAttribute('src'); delete v.dataset.src; delete v.dataset.url; delete v.dataset.clip; v.load(); });
   }
 
   function seek(t, fromScroll) {
     playhead = clamp(t, 0, totalDuration());
     if (!clips.length) {
-      vids.forEach((v) => { v.pause(); v.removeAttribute('src'); delete v.dataset.src; delete v.dataset.url; v.load(); });
+      resetVideos();
+      showing = null;
       activeIdx = -1;
       updateTime();
-      drawBlur();
+      renderPreview();
       return;
     }
     const { idx, offset } = clipAt(playhead);
     const clip = clips[idx];
     activeIdx = idx;
-    const el = vids[active];
-    loadInto(el, clip, clip.in + offset);
-    const next = clips[idx + 1];
-    if (next) loadInto(vids[1 - active], next, next.in);
+    if (playableVideo(clip)) {
+      const el = elementFor(clip, null);
+      if (showing && showing !== el) showing.pause();
+      showing = el;
+      loadInto(el, clip, clip.in + offset);
+      if (playing) el.play().catch(() => {});
+    } else {
+      if (showing) showing.pause();
+      showing = null;
+      clock = { t0: performance.now(), ph0: playhead };
+    }
+    prepareNext();
     applyMute();
     if (!fromScroll) syncScroll();
     updateTime();
     updateToolbar();
+    renderPreview();
   }
 
   function setPlayIcon() {
@@ -1055,12 +1265,11 @@
 
   function unlock(el) {
     // iOS only lets a <video> play with sound if play() was first called in a user gesture.
-    if (unlocked.has(el)) return;
+    if (unlocked.has(el) || !el.getAttribute('src')) return;
     unlocked.add(el);
-    const wasMuted = el.muted;
     const t = el.currentTime;
     el.muted = true;
-    el.play().then(() => { if (vids[active] !== el) { el.pause(); el.currentTime = t; } el.muted = wasMuted; applyMute(); }).catch(() => {});
+    el.play().then(() => { if (el !== showing) { el.pause(); el.currentTime = t; } applyMute(); }).catch(() => {});
   }
 
   function play() {
@@ -1068,13 +1277,16 @@
     if (playhead >= totalDuration() - 0.03) seek(0);
     playing = true;
     setPlayIcon();
-    const el = vids[active];
-    unlock(vids[1 - active]);
-    unlocked.add(el);
-    applyMute();
-    el.play().catch((err) => {
-      if (err && err.name === 'NotAllowedError') { el.muted = true; el.play().catch(() => {}); toast('Sound was blocked by the browser — tap play again for sound.'); }
-    });
+    vids.forEach((v) => { if (v !== showing) unlock(v); });
+    if (showing) {
+      unlocked.add(showing);
+      applyMute();
+      showing.play().catch((err) => {
+        if (err && err.name === 'NotAllowedError') { showing.muted = true; showing.play().catch(() => {}); toast('Sound was blocked by the browser — tap play again for sound.'); }
+      });
+    } else {
+      clock = { t0: performance.now(), ph0: playhead };
+    }
     requestAnimationFrame(tick);
   }
   function pause() {
@@ -1085,44 +1297,55 @@
   }
   $('playBtn').addEventListener('click', () => (playing ? pause() : play()));
 
-  function switchToNext() {
-    const cur = vids[active];
+  // Move on to the next clip while playing. Returns false at the end.
+  function advance() {
     const nextIdx = activeIdx + 1;
+    if (nextIdx >= clips.length) {
+      playhead = totalDuration();
+      pause();
+      syncScroll();
+      updateTime();
+      return false;
+    }
     const next = clips[nextIdx];
-    const sb = vids[1 - active];
-    cur.pause();
-    // Make sure the standby element really holds the next clip.
-    if (sb.dataset.src !== next.srcId || Math.abs(mediaTime(sb) - next.in) > 0.25) loadInto(sb, next, next.in);
-    sb.classList.remove('standby');
-    cur.classList.add('standby');
-    active = 1 - active;
+    const prev = showing;
     activeIdx = nextIdx;
-    applyMute();
-    sb.play().catch(() => { sb.muted = true; sb.play().catch(() => {}); });
-    const after = clips[nextIdx + 1];
-    if (after) loadInto(cur, after, after.in);
+    if (playableVideo(next)) {
+      const el = elementFor(next, prev);
+      if (el.dataset.clip !== next.id || Math.abs(mediaTime(el) - next.in) > 0.25) loadInto(el, next, next.in);
+      if (prev) prev.pause();
+      showing = el;
+      applyMute();
+      el.play().catch(() => { el.muted = true; el.play().catch(() => {}); });
+    } else {
+      if (prev) prev.pause();
+      showing = null;
+      clock = { t0: performance.now(), ph0: clipStart(nextIdx) };
+      applyMute();
+    }
+    prepareNext();
+    return true;
   }
 
   function tick() {
     if (!playing) return;
-    const el = vids[active];
     const clip = clips[activeIdx];
     if (!clip) { pause(); return; }
-    const t = mediaTime(el);
-    playhead = clipStart(activeIdx) + clamp(t - clip.in, 0, clip.out - clip.in);
-    if (t >= clip.out - 0.02 || el.ended) {
-      if (activeIdx + 1 >= clips.length) {
-        playhead = totalDuration();
-        pause();
-        syncScroll();
-        updateTime();
-        return;
-      }
-      switchToNext();
+    const start = clipStart(activeIdx);
+    const len = clip.out - clip.in;
+    let done;
+    if (showing && isVideoClip(clip)) {
+      const t = mediaTime(showing);
+      playhead = start + clamp(t - clip.in, 0, len);
+      done = t >= clip.out - 0.02 || showing.ended;
+    } else {
+      playhead = Math.min(start + len, clock.ph0 + (performance.now() - clock.t0) / 1000);
+      done = playhead >= start + len - 1e-3;
     }
+    if (done && !advance()) { renderPreview(); return; }
     syncScroll();
     updateTime();
-    drawBlur();
+    renderPreview();
     requestAnimationFrame(tick);
   }
 
@@ -1130,7 +1353,7 @@
     if (!clips.length) return;
     pause();
     const src = srcOf(clips[clipAt(playhead).idx]);
-    seek(playhead + dir / (src ? src.frameRate : 30));
+    seek(playhead + dir / (src && src.kind === 'video' ? src.frameRate : 30));
   }
   $('frameBackBtn').addEventListener('click', () => frameStep(-1));
   $('frameFwdBtn').addEventListener('click', () => frameStep(1));
@@ -1140,41 +1363,156 @@
     $('totalTime').textContent = fmtTime(totalDuration());
   }
 
-  // Preview format and blurred background
+  // ---------------------------------------------------------------------------
+  // Canvas (format, background)
+  // ---------------------------------------------------------------------------
+  const DEFAULT_COLOR = '#293133'; // anthracite (RAL 7016)
+  const ASPECTS = { '16:9': 16 / 9, '9:16': 9 / 16, '1:1': 1, '4:5': 4 / 5, '4:3': 4 / 3, '3:4': 3 / 4, '21:9': 64 / 27 };
+  const defaultCanvas = () => ({ aspect: '16:9', videoSrcId: null, ratioW: 3, ratioH: 2, bg: 'color', bgColor: DEFAULT_COLOR });
+  let canvasState = defaultCanvas();
+
+  const videoSources = () => [...sources.values()].filter((s) => s.kind === 'video' && !s.missing);
+  function aspectVideo() {
+    const s = sources.get(canvasState.videoSrcId);
+    return s && s.kind === 'video' ? s : videoSources()[0] || null;
+  }
+  function canvasAspect() {
+    const a = canvasState.aspect;
+    if (ASPECTS[a]) return ASPECTS[a];
+    if (a === 'custom') return clamp((canvasState.ratioW || 1) / (canvasState.ratioH || 1), 0.1, 10);
+    const v = aspectVideo();
+    if (v) { const d = Render.displaySize(v); return d.w / d.h; }
+    return 16 / 9;
+  }
+
+  function syncCanvasUI() {
+    $('aspectSel').value = canvasState.aspect;
+    $('aspectCustomField').hidden = canvasState.aspect !== 'custom';
+    $('aspectVideoField').hidden = canvasState.aspect !== 'video';
+    $('ratioW').value = canvasState.ratioW;
+    $('ratioH').value = canvasState.ratioH;
+    const vs = videoSources();
+    const sel = $('aspectVideoSel');
+    sel.replaceChildren(...(vs.length ? vs.map((s) => {
+      const o = document.createElement('option');
+      const d = Render.displaySize(s);
+      o.value = s.id;
+      o.textContent = `${s.name} · ${d.w}×${d.h}`;
+      return o;
+    }) : [Object.assign(document.createElement('option'), { value: '', textContent: 'No video loaded — using 16:9' })]));
+    const av = aspectVideo();
+    if (av) sel.value = av.id;
+    $('bgToggle').querySelectorAll('.seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.bg === canvasState.bg));
+    $('bgColor').value = canvasState.bgColor;
+    $('bgHint').textContent = canvasState.bg === 'blur'
+      ? 'Blurred copy of the visible video or image. Color clips and empty areas use the color.'
+      : 'Fills the space around videos and images that don\'t match the format.';
+  }
+
+  function onCanvasChange() {
+    syncCanvasUI();
+    updateResolutionOptions();
+    updatePreviewAspect();
+    updateEstimate();
+    renderPreview();
+    scheduleSave();
+  }
+  $('aspectSel').addEventListener('change', (e) => {
+    canvasState.aspect = e.target.value;
+    if (canvasState.aspect === 'video' && !sources.get(canvasState.videoSrcId)) canvasState.videoSrcId = (videoSources()[0] || {}).id || null;
+    onCanvasChange();
+  });
+  $('aspectVideoSel').addEventListener('change', (e) => { canvasState.videoSrcId = e.target.value || null; onCanvasChange(); });
+  ['ratioW', 'ratioH'].forEach((id) => $(id).addEventListener('change', () => {
+    canvasState.ratioW = clamp(parseFloat($('ratioW').value) || 1, 0.1, 100);
+    canvasState.ratioH = clamp(parseFloat($('ratioH').value) || 1, 0.1, 100);
+    onCanvasChange();
+  }));
+  $('bgToggle').addEventListener('click', (e) => {
+    const b = e.target.closest('.seg-btn');
+    if (!b) return;
+    canvasState.bg = b.dataset.bg;
+    onCanvasChange();
+  });
+  $('bgColor').addEventListener('input', (e) => { canvasState.bgColor = e.target.value; renderPreview(); });
+  $('bgColor').addEventListener('change', (e) => { canvasState.bgColor = e.target.value; onCanvasChange(); });
+
+  // Preview format
   const preview = $('preview');
-  const blurBg = $('blurBg');
-  const blurCtx = blurBg.getContext('2d');
-  let previewAspect = 16 / 9;
-
   function updatePreviewAspect() {
-    if (!clips.length) return;
-    const first = srcOf(clips[0]);
-    if (!first) return;
-    const a = $('aspectSel').value;
-    const d = Render.displaySize(first);
-    previewAspect = a === '16:9' ? 16 / 9 : a === '9:16' ? 9 / 16 : a === '1:1' ? 1 : d.w / d.h;
-    preview.style.aspectRatio = String(previewAspect);
+    const a = canvasAspect();
+    preview.style.aspectRatio = String(a);
     // Limit width for portrait formats so the preview fits on screen.
-    preview.style.maxWidth = previewAspect < 1 ? `calc(52vh * ${previewAspect})` : '';
-    drawBlur();
+    preview.style.maxWidth = a < 1 ? `calc(52vh * ${a})` : '';
+    renderPreview();
   }
 
-  function drawBlur() {
-    const el = vids[active];
-    const show = $('fitSel').value === 'blur' && clips.length && el.videoWidth &&
-      Math.abs(el.videoWidth / el.videoHeight - previewAspect) > 0.02;
-    blurBg.hidden = !show;
-    if (!show) return;
-    const w = 24, h = Math.max(4, Math.round(24 / previewAspect));
-    if (blurBg.width !== w || blurBg.height !== h) { blurBg.width = w; blurBg.height = h; }
-    const s = Math.max(w / el.videoWidth, h / el.videoHeight);
-    try { blurCtx.drawImage(el, (w - el.videoWidth * s) / 2, (h - el.videoHeight * s) / 2, el.videoWidth * s, el.videoHeight * s); } catch (e) { /* not ready */ }
+  // Colour clips are drawn from a small cached canvas with the clip's shape.
+  const colorCache = new Map();
+  function colorCanvas(color, w, h) {
+    const k = 64;
+    const cw = w >= h ? k : Math.max(1, Math.round(k * w / h));
+    const ch = w >= h ? Math.max(1, Math.round(k * h / w)) : k;
+    const key = `${color}|${cw}|${ch}`;
+    let c = colorCache.get(key);
+    if (!c) {
+      c = document.createElement('canvas');
+      c.width = cw; c.height = ch;
+      const x = c.getContext('2d');
+      x.fillStyle = color;
+      x.fillRect(0, 0, cw, ch);
+      if (colorCache.size > 50) colorCache.clear();
+      colorCache.set(key, c);
+    }
+    return c;
   }
+  function colorDims(clip, outW, outH) {
+    if (clip.size === 'canvas') return { w: outW, h: outH };
+    return { w: clip.w || 1920, h: clip.h || 1080 };
+  }
+
+  // What to draw for a clip (null = not ready yet).
+  function stillFor(clip, outW, outH) {
+    if (clip.kind === 'image') {
+      const s = srcOf(clip);
+      if (!s || !s.bitmap) return null;
+      return { drawable: s.bitmap, w: s.width, h: s.height, isColor: false };
+    }
+    if (clip.kind === 'color') {
+      const d = colorDims(clip, outW, outH);
+      return { drawable: colorCanvas(clip.color || DEFAULT_COLOR, d.w, d.h), w: d.w, h: d.h, isColor: true };
+    }
+    return null;
+  }
+
+  function renderPreview() {
+    if ($('editorScreen').hidden) return;
+    const cw = pv.clientWidth, ch = pv.clientHeight;
+    if (!cw || !ch) return;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const W = Math.round(cw * dpr), H = Math.round(ch * dpr);
+    if (pv.width !== W || pv.height !== H) { pv.width = W; pv.height = H; }
+    const bg = canvasState.bgColor;
+    const fit = canvasState.bg === 'blur' ? 'blur' : 'bars';
+    const clip = clips[activeIdx];
+    if (!clip) { pvCtx.fillStyle = bg; pvCtx.fillRect(0, 0, W, H); return; }
+    if (isVideoClip(clip)) {
+      const el = showing;
+      if (!el || el.readyState < 2 || !el.videoWidth) return; // keep the last frame while seeking
+      Render.drawFit(pvCtx, el, el.videoWidth, el.videoHeight, 0, W, H, fit, bg);
+      return;
+    }
+    const out = outputDims();
+    const st = stillFor(clip, out.w, out.h);
+    if (!st) { pvCtx.fillStyle = bg; pvCtx.fillRect(0, 0, W, H); return; }
+    Render.drawFit(pvCtx, st.drawable, st.w, st.h, 0, W, H, st.isColor ? 'bars' : fit, bg);
+  }
+
   vids.forEach((v) => {
-    v.addEventListener('seeked', () => { if (v === vids[active]) drawBlur(); });
-    v.addEventListener('loadeddata', () => { if (v === vids[active]) drawBlur(); });
+    v.addEventListener('seeked', () => { if (v === showing) renderPreview(); });
+    v.addEventListener('loadeddata', () => { if (v === showing) renderPreview(); });
     v.addEventListener('error', async () => {
-      if (v !== vids[active] || !v.getAttribute('src')) return;
+      if (v !== showing || !v.getAttribute('src')) return;
       const src = sources.get(v.dataset.src);
       if (src && !(await isReadable(src))) { lostAccess([src]); return; }
       toast('This browser can\'t preview this video, but exporting may still work.', 5000);
@@ -1182,8 +1520,9 @@
   });
 
   // ---------------------------------------------------------------------------
-  // Keyboard shortcuts
+  // Keyboard shortcuts and pasting
   // ---------------------------------------------------------------------------
+  let pasteFallback = 0;
   document.addEventListener('keydown', (e) => {
     if ($('editorScreen').hidden || exporting) return;
     if (document.querySelector('.modal-bg:not([hidden])')) return;
@@ -1193,13 +1532,18 @@
     const k = e.key.toLowerCase();
     if (mod && k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
     else if (mod && (k === 'y' || (k === 'z' && e.shiftKey))) { e.preventDefault(); redo(); }
-    else if (mod && k === 'x') { e.preventDefault(); cutSelected(); }
     else if (mod && k === 'c') { e.preventDefault(); copySelected(false); }
-    else if (mod && k === 'v') { e.preventDefault(); paste(); }
+    else if (mod && k === 'v') {
+      // The paste event decides (files in the clipboard win); if the browser
+      // sends none, paste the copied clip.
+      clearTimeout(pasteFallback);
+      pasteFallback = setTimeout(() => { if (clipboard) paste(); }, 80);
+    }
     else if (mod) return;
     else if (e.key === ' ') { e.preventDefault(); playing ? pause() : play(); }
-    else if (k === 's') splitAtPlayhead();
+    else if (k === 's' || k === 'c') splitAtPlayhead();
     else if (k === 'm') toggleMuteClip();
+    else if (e.key === 'Escape') { selectedId = null; renderClips(); updateToolbar(); }
     else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSelected(); }
     else if (e.key === 'ArrowLeft') { e.preventDefault(); e.shiftKey ? (pause(), seek(playhead - 1)) : frameStep(-1); }
     else if (e.key === 'ArrowRight') { e.preventDefault(); e.shiftKey ? (pause(), seek(playhead + 1)) : frameStep(1); }
@@ -1207,69 +1551,172 @@
     else if (e.key === 'End') { pause(); seek(totalDuration()); }
   });
 
+  // Paste images or video files from the clipboard (start screen and editor),
+  // otherwise paste the copied clip.
+  document.addEventListener('paste', (e) => {
+    clearTimeout(pasteFallback);
+    if (exporting || document.querySelector('.modal-bg:not([hidden])')) return;
+    const tag = (e.target.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea') return;
+    const files = [...((e.clipboardData && e.clipboardData.files) || [])];
+    if (files.length) {
+      e.preventDefault();
+      handleFiles(files.map((file) => ({ file, pasted: true })));
+      return;
+    }
+    if (!$('editorScreen').hidden && clipboard) { e.preventDefault(); paste(); }
+  });
+
   // ---------------------------------------------------------------------------
   // Export
   // ---------------------------------------------------------------------------
-  const expEls = {
-    preset: $('presetSel'), target: $('targetMB'), aspect: $('aspectSel'), fit: $('fitSel'), fps: $('fpsSel'), codec: $('codecSel'),
-  };
-  const savedExport = store.get('export', {});
-  for (const k of Object.keys(expEls)) {
-    if (savedExport[k] !== undefined) expEls[k].value = savedExport[k];
-    expEls[k].addEventListener('change', onExportSettingChange);
-    expEls[k].addEventListener('input', onExportSettingChange);
-  }
-  if (expEls.codec.value === 'hevc') expEls.codec.value = 'avc'; // re-enabled below if supported
-  if (!expEls.preset.value) expEls.preset.value = 'hd';
-  Render.canEncodeHevc().then((ok) => {
-    const opt = expEls.codec.querySelector('option[value="hevc"]');
-    if (ok) {
-      opt.disabled = false;
-      opt.textContent = 'HEVC · smaller, newer devices';
-      if (savedExport.codec === 'hevc') expEls.codec.value = 'hevc';
+  const exportDefaults = () => ({ res: '1080', resW: 1920, resH: 1080, quality: 'standard', bitrateMbps: 5, targetMB: 25, lockRes: false, fps: '30', codec: 'avc' });
+  let exportState = Object.assign(exportDefaults(), store.get('export2', {}));
+
+  function resolutionOptions() {
+    const a = canvasAspect();
+    const land = a >= 1;
+    const dims = (short) => (land ? { w: even(short * a), h: short } : { w: short, h: even(short / a) });
+    const opts = [];
+    if (canvasState.aspect === 'video') {
+      const v = aspectVideo();
+      if (v) { const d = Render.displaySize(v); opts.push({ key: 'source', label: `Source · ${even(d.w)}×${even(d.h)}`, w: even(d.w), h: even(d.h) }); }
     }
-  });
+    const wide = canvasState.aspect === '16:9' || canvasState.aspect === '9:16';
+    const names = wide ? { 720: 'HD', 1080: 'Full HD', 2160: 'UHD' } : { 720: '720p', 1080: '1080p', 2160: '4K' };
+    for (const sh of [720, 1080, 2160]) { const d = dims(sh); opts.push({ key: String(sh), label: `${names[sh]} · ${d.w}×${d.h}`, w: d.w, h: d.h }); }
+    opts.push({ key: 'custom', label: 'Custom…' });
+    return opts;
+  }
+  const even = (n) => Math.max(2, Math.round(n / 2) * 2);
+
+  function updateResolutionOptions() {
+    const opts = resolutionOptions();
+    const sel = $('resSel');
+    sel.replaceChildren(...opts.map((o) => Object.assign(document.createElement('option'), { value: o.key, textContent: o.label })));
+    if (!opts.some((o) => o.key === exportState.res)) exportState.res = '1080';
+    sel.value = exportState.res;
+    if (exportState.res !== 'custom') {
+      const o = opts.find((x) => x.key === exportState.res);
+      exportState.resW = o.w; exportState.resH = o.h;
+    }
+    $('resCustomField').hidden = exportState.res !== 'custom';
+    $('resW').value = exportState.resW;
+    $('resH').value = exportState.resH;
+    updateQualityLabels();
+  }
+
+  function outputDims() {
+    if (exportState.res === 'custom') return { w: even(clamp(exportState.resW, 16, 8192)), h: even(clamp(exportState.resH, 16, 8192)) };
+    const o = resolutionOptions().find((x) => x.key === exportState.res) || resolutionOptions().find((x) => x.key === '1080');
+    return { w: o.w, h: o.h };
+  }
 
   function getExportSettings() {
+    const d = outputDims();
     return {
-      preset: expEls.preset.value,
-      targetMB: parseFloat(expEls.target.value) || 25,
-      aspect: expEls.aspect.value,
-      fit: expEls.fit.value,
-      fps: expEls.fps.value,
-      codec: expEls.codec.value,
-      muteAll,
+      width: d.w, height: d.h,
+      quality: exportState.quality, bitrateMbps: exportState.bitrateMbps, targetMB: exportState.targetMB, lockRes: exportState.lockRes,
+      fps: exportState.fps, codec: exportState.codec, muteAll,
+      fit: canvasState.bg === 'blur' ? 'blur' : 'bars', bg: canvasState.bgColor,
     };
   }
-  function onExportSettingChange() {
-    const s = getExportSettings();
-    store.set('export', { preset: s.preset, target: s.targetMB, aspect: s.aspect, fit: s.fit, fps: s.fps, codec: s.codec });
-    $('targetField').hidden = s.preset !== 'target';
-    updatePreviewAspect();
+
+  function syncExportUI() {
+    updateResolutionOptions();
+    $('qualitySel').value = exportState.quality;
+    $('bitrateMbps').value = exportState.bitrateMbps;
+    $('targetMB').value = exportState.targetMB;
+    $('lockRes').checked = !!exportState.lockRes;
+    $('fpsSel').value = exportState.fps;
+    if (!$('codecSel').querySelector(`option[value="${exportState.codec}"]`).disabled) $('codecSel').value = exportState.codec;
+    $('bitrateField').hidden = exportState.quality !== 'custom';
+    $('targetField').hidden = exportState.quality !== 'target';
+    $('lockResField').hidden = exportState.quality !== 'target';
+    updateQualityLabels();
+  }
+
+  function updateQualityLabels() {
+    const d = outputDims();
+    const fps = Number(exportState.fps) || 30;
+    const names = { small: 'Small', standard: 'Standard', high: 'High' };
+    for (const q of Object.keys(names)) {
+      const o = $('qualitySel').querySelector(`option[value="${q}"]`);
+      o.textContent = `${names[q]} · ≈ ${(Render.presetBitrate(q, d.w, d.h, fps) / 1e6).toFixed(1)} Mbit/s`;
+    }
+  }
+
+  function onExportChange() {
+    exportState.quality = $('qualitySel').value;
+    exportState.bitrateMbps = clamp(parseFloat($('bitrateMbps').value) || 5, 0.1, 100);
+    exportState.targetMB = clamp(parseFloat($('targetMB').value) || 25, 0.2, 100000);
+    exportState.lockRes = $('lockRes').checked;
+    exportState.fps = $('fpsSel').value;
+    exportState.codec = $('codecSel').value;
+    store.set('export2', exportState);
+    syncExportUI();
     updateEstimate();
     scheduleSave();
   }
-  $('targetField').hidden = expEls.preset.value !== 'target';
+  ['qualitySel', 'bitrateMbps', 'targetMB', 'lockRes', 'fpsSel', 'codecSel'].forEach((id) => $(id).addEventListener('change', onExportChange));
+  $('resSel').addEventListener('change', (e) => {
+    exportState.res = e.target.value;
+    if (exportState.res === 'custom') {
+      const d = outputDims();
+      exportState.resW = d.w; exportState.resH = d.h;
+    }
+    onExportChange();
+    renderPreview();
+  });
+  // Custom resolution: width and height stay linked to the canvas format.
+  $('resW').addEventListener('change', () => {
+    exportState.resW = even(clamp(parseInt($('resW').value, 10) || 1920, 16, 8192));
+    exportState.resH = even(clamp(exportState.resW / canvasAspect(), 16, 8192));
+    onExportChange();
+  });
+  $('resH').addEventListener('change', () => {
+    exportState.resH = even(clamp(parseInt($('resH').value, 10) || 1080, 16, 8192));
+    exportState.resW = even(clamp(exportState.resH * canvasAspect(), 16, 8192));
+    onExportChange();
+  });
+
+  Render.canEncodeHevc().then((ok) => {
+    const opt = $('codecSel').querySelector('option[value="hevc"]');
+    if (ok) {
+      opt.disabled = false;
+      opt.textContent = 'H.265 (HEVC) · smaller, newer devices';
+      if (exportState.codec === 'hevc') $('codecSel').value = 'hevc';
+    } else if (exportState.codec === 'hevc') {
+      exportState.codec = 'avc';
+      $('codecSel').value = 'avc';
+    }
+  });
+
+  const usedSources = () => [...new Set(clips.map((c) => srcOf(c)).filter(Boolean))];
 
   function sourceBytes() {
     return clips.reduce((sum, c) => {
       const s = srcOf(c);
-      return s && s.file ? sum + ((c.out - c.in) / Math.max(0.01, s.fileDuration)) * s.file.size : sum;
+      return s && s.kind === 'video' && s.file ? sum + ((c.out - c.in) / Math.max(0.01, s.fileDuration)) * s.file.size : sum;
     }, 0);
   }
 
   function updateEstimate() {
     if (!clips.length) { $('estimate').textContent = ''; return; }
     const s = getExportSettings();
-    const used = [...new Set(clips.map((c) => srcOf(c)).filter(Boolean))];
+    const used = usedSources();
     const dur = totalDuration();
-    const out = Render.computeOutput(s, srcOf(clips[0]), used, dur);
-    const withAudio = !muteAll && clips.some((c) => !c.muted && srcOf(c) && srcOf(c).audioDecodable);
+    const out = Render.computeOutput(s, used, dur);
+    const withAudio = !muteAll && clips.some((c) => isVideoClip(c) && !c.muted && srcOf(c) && srcOf(c).audioDecodable);
     const est = Render.estimateSize(out, dur, withAudio);
     const srcBytes = sourceBytes();
-    $('estimate').innerHTML = `${out.width}×${out.height} · ${out.fps} fps · ${fmtTime(dur, false)}<br>` +
-      `Estimated size: <strong>≈ ${fmtSize(est)}</strong> (source ≈ ${fmtSize(srcBytes)})` +
-      (est >= srcBytes * 0.9 ? '<span class="warn-line">This video is already strongly compressed — exporting won\'t make it noticeably smaller.</span>' : '');
+    const onlyVideos = used.length && used.every((x) => x.kind === 'video');
+    let html = `${out.width}×${out.height} · ${out.fps} fps · ${(out.bitrate / 1e6).toFixed(1)} Mbit/s · ${fmtTime(dur, false)}<br>` +
+      `Estimated size: <strong>≈ ${fmtSize(est)}</strong>` + (srcBytes ? ` (source videos ≈ ${fmtSize(srcBytes)})` : '');
+    if (out.scaled) html += `<span class="warn-line">Exported as ${out.width}×${out.height} — at this file size, a smaller picture looks better than a blocky one. Tick "Keep resolution" to prevent this.</span>`;
+    if (onlyVideos && est >= srcBytes * 0.9) html += '<span class="warn-line">This video is already strongly compressed — exporting won\'t make it noticeably smaller.</span>';
+    else if (out.capped) html += '<span class="hint-line">Bitrate limited so the file doesn\'t get bigger than the source.</span>';
+    $('estimate').innerHTML = html;
   }
 
   let abortCtl = null;
@@ -1293,7 +1740,10 @@
 
     const s = getExportSettings();
     // Clip times are in media time; the export reads the actual (possibly trimmed-copy) file.
-    const expClips = clips.map((c) => { const src = srcOf(c); return { source: src, in: c.in - src.base, out: c.out - src.base, muted: c.muted }; });
+    const expClips = clips.map((c) => {
+      if (isVideoClip(c)) { const src = srcOf(c); return { kind: 'video', source: src, in: c.in - src.base, out: c.out - src.base, muted: c.muted }; }
+      return { kind: c.kind, source: srcOf(c) || null, in: c.in, out: c.out, muted: true, still: stillFor(c, s.width, s.height) };
+    });
     const t0 = performance.now();
     try {
       const r = await Render.exportTimeline({
@@ -1326,8 +1776,8 @@
 
   function showResult(r) {
     if (resultUrl) URL.revokeObjectURL(resultUrl);
-    const first = srcOf(clips[0]);
-    const base = (first ? first.name : 'video').replace(/\.[^.]+$/, '');
+    const first = clips.map((c) => srcOf(c)).find(Boolean);
+    const base = (first ? first.name : 'videcutto').replace(/\.[^.]+$/, '');
     const name = `${base}_videcutto.mp4`;
     resultFile = new File([r.blob], name, { type: 'video/mp4' });
     resultUrl = URL.createObjectURL(resultFile);
@@ -1336,11 +1786,12 @@
     link.download = name;
     const before = sourceBytes();
     const after = r.blob.size;
-    const saving = Math.round((1 - after / before) * 100);
-    $('resultSizes').innerHTML = `Done! ${fmtSize(before)} → <strong>${fmtSize(after)}</strong>` +
+    const saving = before ? Math.round((1 - after / before) * 100) : 0;
+    $('resultSizes').innerHTML = (before ? `Done! ${fmtSize(before)} → <strong>${fmtSize(after)}</strong>` : `Done! <strong>${fmtSize(after)}</strong>`) +
       (saving > 0 ? ` <span class="saving">−${saving}%</span>` : '') +
-      `<br><span class="hint">${r.out.width}×${r.out.height} · ${r.videoCodec === 'hevc' ? 'HEVC' : 'H.264'}${r.audioCodec ? ' · ' + (r.audioCodec === 'aac' ? 'AAC' : 'Opus') : ' · no sound'}</span>`;
-    if (after >= before * 0.95) r.warnings.push('The source was already strongly compressed, so the file didn\'t get noticeably smaller.');
+      `<br><span class="hint">${r.out.width}×${r.out.height} · ${r.videoCodec === 'hevc' ? 'H.265' : 'H.264'}${r.audioCodec ? ' · ' + (r.audioCodec === 'aac' ? 'AAC' : 'Opus') : ' · no sound'}</span>`;
+    const onlyVideos = usedSources().every((x) => x.kind === 'video');
+    if (before && onlyVideos && after >= before * 0.95) r.warnings.push('The source was already strongly compressed, so the file didn\'t get noticeably smaller.');
     const ul = $('resultWarnings');
     ul.replaceChildren(...r.warnings.map((w) => { const li = document.createElement('li'); li.textContent = w; return li; }));
     $('shareBtn').hidden = !(navigator.canShare && navigator.canShare({ files: [resultFile] }));
@@ -1364,11 +1815,11 @@
 
   function referencedIds() {
     const ids = new Set();
-    const add = (list) => list.forEach((c) => ids.add(c.srcId));
+    const add = (list) => list.forEach((c) => { if (c.srcId) ids.add(c.srcId); });
     add(clips);
     undoStack.forEach(add);
     redoStack.forEach(add);
-    if (clipboard) ids.add(clipboard.srcId);
+    if (clipboard && clipboard.srcId) ids.add(clipboard.srcId);
     return ids;
   }
 
@@ -1381,6 +1832,7 @@
       if (src.storage === 'handle') Project.removeHandle(src.id);
       if (src.url) URL.revokeObjectURL(src.url);
       src.thumbs.forEach((u) => u && URL.revokeObjectURL(u));
+      if (src.bitmap) src.bitmap.close();
       sources.delete(src.id);
     }
   }
@@ -1388,16 +1840,16 @@
   async function saveNow() {
     if (!saveEnabled) return;
     cleanupMedia();
-    const s = getExportSettings();
     await Project.saveProject({
-      version: 1,
+      version: 2,
       app: VERSION,
       savedAt: Date.now(),
       playhead,
       muteAll,
-      export: { preset: s.preset, target: s.targetMB, aspect: s.aspect, fit: s.fit, fps: s.fps, codec: s.codec },
-      // Tracks are prepared for multiple timelines; 0.2.0 uses a single video track.
-      tracks: [{ id: 't1', kind: 'video', clips: clips.map((c) => ({ ...c })) }],
+      canvas: { ...canvasState },
+      export: { ...exportState },
+      // Tracks are prepared for multiple timelines; for now there is one main track.
+      tracks: [{ id: 't1', kind: 'main', clips: clips.map((c) => ({ ...c })) }],
       media: [...sources.values()].map(mediaMeta),
     });
   }
@@ -1408,7 +1860,8 @@
     try { await src.file.slice(0, 16).arrayBuffer(); return true; } catch (e) { return false; }
   }
   async function unreadableSources() {
-    const used = [...new Set(clips.map((c) => srcOf(c)).filter(Boolean))];
+    // Images are decoded into memory when loaded, only videos are read during export.
+    const used = [...new Set(clips.filter(isVideoClip).map((c) => srcOf(c)).filter(Boolean))];
     const out = [];
     for (const s of used) if (s.missing || !(await isReadable(s))) out.push(s);
     return out;
@@ -1442,10 +1895,13 @@
     pause();
     clearTimeout(saveTimer);
     clips = []; undoStack = []; redoStack = []; clipboard = null; selectedId = null; playhead = 0;
-    for (const src of sources.values()) { if (src.url) URL.revokeObjectURL(src.url); src.thumbs.forEach((u) => u && URL.revokeObjectURL(u)); }
+    for (const src of sources.values()) { if (src.url) URL.revokeObjectURL(src.url); src.thumbs.forEach((u) => u && URL.revokeObjectURL(u)); if (src.bitmap) src.bitmap.close(); }
     sources.clear();
     pendingProject = null;
     await Project.clearAll();
+    canvasState = defaultCanvas();
+    syncCanvasUI();
+    syncExportUI();
     saveEnabled = true;
     seek(0);
     updateResumeCard();
@@ -1474,6 +1930,10 @@
   }
 
   async function attach(m, file, base, extra = {}) {
+    if (m.kind === 'image') {
+      const bmp = await decodeImage(file).catch(() => { throw new Error(`"${file.name}" couldn't be opened as an image.`); });
+      return Object.assign(makeImageSource(m, file, bmp), extra);
+    }
     const probed = await probe(file);
     const src = makeSource(m, file, probed, base);
     Object.assign(src, extra);
@@ -1503,16 +1963,23 @@
     const cl = (p.tracks && p.tracks[0] && p.tracks[0].clips) || [];
     cl.forEach((c) => bump(c.id));
     uid = Math.max(uid, maxId);
-    clips = cl.map((c) => ({ ...c }));
+    clips = cl.map((c) => ({ ...c, kind: c.kind || 'video' }));
     undoStack = []; redoStack = []; clipboard = null; selectedId = null;
     muteAll = !!p.muteAll;
     $('muteAllBtn').setAttribute('aria-pressed', String(muteAll));
-    if (p.export) {
-      for (const [k, el] of Object.entries(expEls)) {
-        const val = k === 'target' ? p.export.target : p.export[k];
-        if (val !== undefined && (k !== 'codec' || !el.querySelector(`option[value="${val}"]`).disabled)) el.value = val;
-      }
-      $('targetField').hidden = expEls.preset.value !== 'target';
+    if (p.version >= 2 && p.canvas) {
+      canvasState = Object.assign(defaultCanvas(), p.canvas);
+      exportState = Object.assign(exportDefaults(), p.export || {});
+    } else {
+      // Projects from 0.2.x: format and background lived in the export settings.
+      const old = p.export || {};
+      canvasState = defaultCanvas();
+      if (old.aspect === 'auto' || !old.aspect) canvasState.aspect = 'video';
+      else if (ASPECTS[old.aspect]) canvasState.aspect = old.aspect;
+      if (old.fit === 'blur') canvasState.bg = 'blur';
+      exportState = Object.assign(exportDefaults(), { fps: old.fps || '30', codec: old.codec || 'avc' });
+      if (old.preset === 'target') Object.assign(exportState, { quality: 'target', targetMB: old.target || 25 });
+      if (old.preset === 'hd' || old.preset === 'small') exportState.res = '720';
     }
     entries.forEach((e) => { if (e.src) sources.set(e.src.id, e.src); });
     const missing = entries.filter((e) => !e.src);
@@ -1521,6 +1988,9 @@
       saveEnabled = true;
       playhead = clamp(p.playhead || 0, 0, totalDuration());
       showEditor();
+      syncCanvasUI();
+      syncExportUI();
+      updatePreviewAspect();
       updateEstimate();
       sources.forEach((s) => { if (!s.thumbs.length) queueThumbs(s); });
       scheduleSave();
@@ -1578,7 +2048,9 @@
           name.textContent = e.meta.name;
           const meta = document.createElement('div');
           meta.className = 'm-meta';
-          meta.textContent = `${fmtTime(e.meta.duration - e.meta.start, false)} · ${fmtSize(e.meta.origSize)}`;
+          meta.textContent = e.meta.kind === 'image'
+            ? `Image · ${e.meta.width}×${e.meta.height} · ${fmtSize(e.meta.origSize)}`
+            : `${fmtTime(e.meta.duration - e.meta.start, false)} · ${fmtSize(e.meta.origSize)}`;
           info.append(name, meta);
           const st = document.createElement('span');
           st.className = 'status ' + (resolved(e) ? 'ok' : e.needsPermission ? 'ask' : 'missing');
@@ -1601,14 +2073,21 @@
       };
 
       const assign = async (e, file, handle) => {
-        showBusy('Opening video…', file.name);
+        showBusy(e.meta.kind === 'image' ? 'Opening image…' : 'Opening video…', file.name);
         try {
           const m = e.meta;
           const src = await attach(m, file, 0, { storage: handle ? 'handle' : 'none', copyName: null });
           if (e.old) { src.thumbs = e.old.thumbs; src.thumbStep = e.old.thumbStep; src.thumbAspect = e.old.thumbAspect; if (e.old.url) URL.revokeObjectURL(e.old.url); }
-          if (src.fileDuration + 0.05 < m.rangeOut) toast(`"${file.name}" is shorter than the original — some cuts may be cut off.`, 6000);
+          if (m.kind !== 'image' && src.fileDuration + 0.05 < m.rangeOut) toast(`"${file.name}" is shorter than the original — some cuts may be cut off.`, 6000);
           hideBusy();
-          if (!(await makeWorkingCopy(src)) && handle) await Project.saveHandle(src.id, handle);
+          if (m.kind === 'image') {
+            if (Project.canCopy()) {
+              const name = `${src.id}-${Date.now().toString(36)}-${++copyCounter}.img`;
+              try { src.file = await Project.copyWhole(name, file); src.storage = 'opfs'; src.copyName = name; } catch (err) { /* keep */ }
+            }
+            if (src.storage !== 'opfs' && handle) await Project.saveHandle(src.id, handle);
+            if (!src.thumbs.length) queueThumbs(src);
+          } else if (!(await makeWorkingCopy(src)) && handle) await Project.saveHandle(src.id, handle);
           if (e.old && e.old.storage === 'opfs' && e.old.copyName && e.old.copyName !== src.copyName) Project.removeCopy(e.old.copyName);
           e.src = src;
           sources.set(src.id, src);
@@ -1727,5 +2206,8 @@
   }
 
   setPlayIcon();
+  syncCanvasUI();
+  syncExportUI();
+  updatePreviewAspect();
   updateToolbar();
 })();

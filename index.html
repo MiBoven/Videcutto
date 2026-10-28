@@ -66,17 +66,20 @@
   </div>
 
   <div class="segment" id="sourceToggle">
-    <button type="button" class="seg-btn active" data-mode="videos">Videos</button>
+    <button type="button" class="seg-btn active" data-mode="videos">Gallery</button>
     <button type="button" class="seg-btn" data-mode="files">Files</button>
   </div>
-  <p class="segment-hint" id="sourceHint">Video picker — fast, but original file names aren't preserved on Android.</p>
+  <p class="segment-hint" id="sourceHint">Gallery picker — fast, but original file names aren't preserved on Android.</p>
 
-  <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choose videos">
+  <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choose videos or images">
     <svg class="drop-icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M10 9.5v5l4.5-2.5z"/></svg>
-    <p><strong>Tap to choose videos</strong><br>or drag and drop them here</p>
-    <p class="drop-formats">MP4 · MOV · M4V</p>
+    <p><strong id="dropTitle">Tap to choose videos or images</strong><br><span id="dropSub">or drag and drop them here</span></p>
+    <p class="drop-formats">MP4 · MOV · M4V · JPG · PNG · WebP</p>
   </div>
-  <input type="file" id="fileInput" accept="video/*" multiple hidden>
+  <input type="file" id="fileInput" accept="video/*,image/*" multiple hidden>
+  <button class="btn-secondary wide" id="emptyCanvasBtn">
+    <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M12 9v6M9 12h6"/></svg>Start with an empty canvas
+  </button>
 
 
   <div class="card info-card">
@@ -90,10 +93,11 @@
 <main id="editorScreen" hidden>
   <div class="preview-wrap">
     <div class="preview" id="preview">
-      <canvas id="blurBg" width="24" height="24" hidden></canvas>
       <video id="vidA" playsinline preload="auto" muted></video>
       <video id="vidB" playsinline preload="auto" muted></video>
-      <div class="preview-empty" id="previewEmpty" hidden>Timeline is empty — add a video</div>
+      <!-- The canvas shows the composition; the videos underneath only supply frames and sound. -->
+      <canvas id="pvCanvas"></canvas>
+      <div class="preview-empty" id="previewEmpty" hidden>Timeline is empty — add a video, an image or a color clip</div>
     </div>
   </div>
 
@@ -115,17 +119,22 @@
   <p class="hint" id="stutterHint" hidden>The preview may stutter briefly where two clips meet — the browser has to switch videos there. The exported video plays smoothly.</p>
 
   <div class="toolbar" id="toolbar">
-    <button class="tool" id="undoBtn" title="Undo (Ctrl+Z)"><svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 010 12h-3"/></svg><span>Undo</span></button>
-    <button class="tool" id="redoBtn" title="Redo (Ctrl+Y)"><svg viewBox="0 0 24 24"><path d="M15 14l5-5-5-5"/><path d="M20 9H10a6 6 0 000 12h3"/></svg><span>Redo</span></button>
+    <div class="tool-group fixed">
+      <button class="tool" id="undoBtn" title="Undo (Ctrl+Z)"><svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 010 12h-3"/></svg><span>Undo</span></button>
+      <button class="tool" id="redoBtn" title="Redo (Ctrl+Y)"><svg viewBox="0 0 24 24"><path d="M15 14l5-5-5-5"/><path d="M20 9H10a6 6 0 000 12h3"/></svg><span>Redo</span></button>
+    </div>
     <span class="tool-sep"></span>
-    <button class="tool" id="splitBtn" title="Split at playhead (S)"><svg viewBox="0 0 24 24"><path d="M12 3v18"/><path d="M5 8l-2 4 2 4M19 8l2 4-2 4"/></svg><span>Split</span></button>
-    <button class="tool" id="deleteBtn" title="Delete clip (Del)"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg><span>Delete</span></button>
-    <button class="tool" id="cutBtn" title="Cut clip (Ctrl+X)"><svg viewBox="0 0 24 24"><circle cx="6" cy="18" r="3"/><circle cx="18" cy="18" r="3"/><path d="M8.2 16L19 4M15.8 16L5 4"/></svg><span>Cut</span></button>
-    <button class="tool" id="copyBtn" title="Copy clip (Ctrl+C)"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 012-2h9"/></svg><span>Copy</span></button>
-    <button class="tool" id="pasteBtn" title="Paste at playhead (Ctrl+V)"><svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="16" rx="2"/><path d="M9 5V3h6v2"/><path d="M9 12h6M9 16h4"/></svg><span>Paste</span></button>
-    <button class="tool" id="muteClipBtn" title="Mute clip (M)"><svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg><span>Mute</span></button>
-    <span class="tool-sep"></span>
-    <button class="tool" id="addBtn" title="Add video"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>Add</span></button>
+    <div class="tool-group scroll">
+      <button class="tool" id="splitBtn" title="Cut at playhead (C / S)"><svg viewBox="0 0 24 24"><circle cx="6" cy="18" r="3"/><circle cx="18" cy="18" r="3"/><path d="M8.2 16L19 4M15.8 16L5 4"/></svg><span>Cut</span></button>
+      <button class="tool" id="pasteBtn" title="Paste at playhead (Ctrl+V)"><svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="16" rx="2"/><path d="M9 5V3h6v2"/><path d="M9 12h6M9 16h4"/></svg><span>Paste</span></button>
+      <div class="menu-wrap add-wrap">
+        <button class="tool" id="addBtn" title="Add" aria-haspopup="true"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>Add</span></button>
+        <div class="dropdown" id="addMenu" style="display:none" role="menu">
+          <button type="button" role="menuitem" id="addMediaItem"><span class="mi-icon">▶</span>Videos &amp; images</button>
+          <button type="button" role="menuitem" id="addColorItem"><span class="mi-icon">■</span>Color clip</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <div class="timeline-wrap">
@@ -145,38 +154,115 @@
     </div>
   </div>
 
+  <!-- Clip panel: shown while a clip is selected -->
+  <section class="card clip-panel" id="clipPanel" hidden>
+    <div class="cp-head">
+      <span class="cp-kind" id="cpKind"></span>
+      <strong class="cp-title" id="cpTitle"></strong>
+      <button class="icon small" id="cpClose" title="Deselect" aria-label="Deselect clip"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="cp-actions">
+      <button class="tool" id="copyBtn" title="Copy clip (Ctrl+C)"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 012-2h9"/></svg><span>Copy</span></button>
+      <button class="tool" id="muteClipBtn" title="Mute clip (M)"><svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg><span>Mute</span></button>
+      <button class="tool" id="deleteBtn" title="Delete clip (Del)"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg><span>Delete</span></button>
+    </div>
+    <div class="field" id="cpDurField">
+      <label for="cpDuration">Duration</label>
+      <div class="input-unit"><input type="number" id="cpDuration" min="0.1" max="3600" step="0.1" inputmode="decimal"><span>s</span></div>
+    </div>
+    <div class="field" id="cpColorField">
+      <label for="cpColor">Color</label>
+      <input type="color" id="cpColor" value="#293133">
+    </div>
+    <div class="field" id="cpSizeField">
+      <label for="cpSize">Size</label>
+      <select id="cpSize">
+        <option value="1920x1080">1920 × 1080 (16:9)</option>
+        <option value="1280x720">1280 × 720 (16:9)</option>
+        <option value="3840x2160">3840 × 2160 (16:9)</option>
+        <option value="1080x1920">1080 × 1920 (9:16)</option>
+        <option value="1080x1080">1080 × 1080 (1:1)</option>
+        <option value="1080x1350">1080 × 1350 (4:5)</option>
+        <option value="canvas">Like canvas</option>
+        <option value="custom">Custom…</option>
+      </select>
+    </div>
+    <div class="field" id="cpCustomField">
+      <label>Width × height</label>
+      <div class="wh"><input type="number" id="cpW" min="16" max="8192" step="2" inputmode="numeric"><span>×</span><input type="number" id="cpH" min="16" max="8192" step="2" inputmode="numeric"></div>
+    </div>
+  </section>
+
+  <!-- Canvas -->
+  <section class="card canvas-card" id="canvasCard">
+    <h2>Canvas</h2>
+    <div class="field">
+      <label for="aspectSel">Format</label>
+      <select id="aspectSel">
+        <option value="16:9">16:9 · landscape</option>
+        <option value="9:16">9:16 · portrait</option>
+        <option value="1:1">1:1 · square</option>
+        <option value="4:5">4:5 · portrait (Instagram)</option>
+        <option value="4:3">4:3</option>
+        <option value="3:4">3:4</option>
+        <option value="21:9">21:9 · cinema</option>
+        <option value="video">Like a video…</option>
+        <option value="custom">Custom…</option>
+      </select>
+    </div>
+    <div class="field" id="aspectVideoField" hidden>
+      <label for="aspectVideoSel">Video</label>
+      <select id="aspectVideoSel"></select>
+    </div>
+    <div class="field" id="aspectCustomField" hidden>
+      <label>Ratio</label>
+      <div class="wh"><input type="number" id="ratioW" min="1" max="100" step="0.01" value="3" inputmode="decimal"><span>:</span><input type="number" id="ratioH" min="1" max="100" step="0.01" value="2" inputmode="decimal"></div>
+    </div>
+    <div class="field">
+      <label>Background</label>
+      <div class="bg-row">
+        <div class="segment small" id="bgToggle">
+          <button type="button" class="seg-btn active" data-bg="color">Color</button>
+          <button type="button" class="seg-btn" data-bg="blur">Blur</button>
+        </div>
+        <input type="color" id="bgColor" value="#293133" title="Background color">
+      </div>
+    </div>
+    <p class="hint" id="bgHint">Fills the space around videos and images that don't match the format.</p>
+  </section>
+
   <!-- Export -->
   <section class="card export-card" id="exportCard">
     <h2>Export</h2>
     <div class="field">
-      <label for="presetSel">Quality</label>
-      <select id="presetSel">
-        <option value="hd">HD (720p)</option>
-        <option value="fullhd">Full HD (1080p)</option>
-        <option value="small">Small (480p)</option>
-        <option value="original">Original resolution</option>
-        <option value="target">Target size…</option>
+      <label for="resSel">Resolution</label>
+      <select id="resSel"></select>
+    </div>
+    <div class="field" id="resCustomField" hidden>
+      <label>Width × height</label>
+      <div class="wh"><input type="number" id="resW" min="16" max="8192" step="2" inputmode="numeric"><span>×</span><input type="number" id="resH" min="16" max="8192" step="2" inputmode="numeric"></div>
+    </div>
+    <div class="field">
+      <label for="qualitySel">Quality</label>
+      <select id="qualitySel">
+        <option value="small">Small</option>
+        <option value="standard">Standard</option>
+        <option value="high">High</option>
+        <option value="custom">Custom bitrate…</option>
+        <option value="target">Max. file size…</option>
       </select>
+    </div>
+    <div class="field" id="bitrateField" hidden>
+      <label for="bitrateMbps">Bitrate</label>
+      <div class="input-unit"><input type="number" id="bitrateMbps" min="0.1" max="100" step="0.1" value="5" inputmode="decimal"><span>Mbit/s</span></div>
     </div>
     <div class="field" id="targetField" hidden>
       <label for="targetMB">Max. size</label>
       <div class="input-unit"><input type="number" id="targetMB" min="1" max="4000" step="1" value="25" inputmode="decimal"><span>MB</span></div>
     </div>
-    <div class="field">
-      <label for="aspectSel">Format</label>
-      <select id="aspectSel">
-        <option value="auto">Like first video</option>
-        <option value="16:9">16:9 landscape</option>
-        <option value="9:16">9:16 portrait</option>
-        <option value="1:1">1:1 square</option>
-      </select>
-    </div>
-    <div class="field">
-      <label for="fitSel">Empty space</label>
-      <select id="fitSel">
-        <option value="blur">Blurred background</option>
-        <option value="bars">Black bars</option>
-      </select>
+    <div class="field check" id="lockResField" hidden>
+      <label for="lockRes">Keep resolution</label>
+      <input type="checkbox" id="lockRes">
     </div>
     <div class="field">
       <label for="fpsSel">Frame rate</label>
@@ -290,7 +376,7 @@
     <p class="modal-sub" id="relinkSub"></p>
     <ul class="media-list" id="relinkList"></ul>
     <button class="btn-primary wide" id="relinkAllowBtn" hidden>Allow access</button>
-    <button class="btn-secondary wide" id="relinkPickBtn">Select videos…</button>
+    <button class="btn-secondary wide" id="relinkPickBtn">Select files…</button>
     <div class="btn-row">
       <button class="btn-secondary" id="relinkRemoveBtn">Remove missing clips</button>
       <button class="btn-primary" id="relinkDoneBtn" disabled>Open project</button>

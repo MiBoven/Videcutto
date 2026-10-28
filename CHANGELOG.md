@@ -1,5 +1,18 @@
 # Changelog
 
+### 0.3.0 — 2026-10-28 — Canvas, images & color clips
+- New **Canvas** section: formats 16:9, 9:16, 1:1, 4:5, 4:3, 3:4, 21:9, like a chosen video, or a custom ratio; background color (default anthracite) or blur
+- Format and background moved out of the export section
+- Export reworked: resolution options matching the format (incl. custom), quality Small / Standard / High with Mbit/s shown, custom bitrate, or max. file size with optional "Keep resolution"; H.264 or H.265 (HEVC)
+- Images can be added (4 s by default, adjustable) and are always stored as a copy
+- Color clips (color, duration and size adjustable); "Start with an empty canvas" creates a 4 s anthracite color clip on a 16:9 Full HD canvas
+- Paste images and video files from the clipboard (Ctrl+V); pasted videos get a working copy on desktop too
+- Toolbar: Undo/Redo always visible, "Split" renamed to "Cut" (scissors), old Cut removed, Add menu (media / color clip)
+- Clip panel below the timeline for the selected clip: copy, mute, delete, duration, color, size
+- Preview now draws the composition on a canvas exactly like the export (incl. blurred background)
+- Gallery/Files toggle hidden on desktop
+- Projects from 0.2.x are migrated (format and background move to the canvas)
+
 ### 0.2.0 — 2026-10-26 — Saved projects & no bigger files
 - The last project is saved automatically and can be continued after a reload ("Continue" / "New project" on the start screen)
 - Phones: working copy of each video in the browser's private storage (only the pre-trimmed part, copied losslessly) — fixes "The requested file could not be read" on Android
