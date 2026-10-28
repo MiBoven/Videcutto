@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.5.0';
+  const VERSION = '0.6.0';
   const $ = (id) => document.getElementById(id);
 
   // ---------------------------------------------------------------------------
@@ -142,8 +142,7 @@
   let playing = false;
   let pps = 60; // timeline pixels per second
   let exporting = false;
-  let saveEnabled = false;     // false while a saved project waits to be resumed or discarded
-  let pendingProject = null;   // saved project from a previous visit, not opened yet
+  let saveEnabled = false;     // true while a project is open in this tab and may be saved
 
   const totalDuration = () => clips.reduce((s, c) => s + (c.out - c.in), 0);
   const clipStart = (idx) => { let s = 0; for (let i = 0; i < idx; i++) s += clips[i].out - clips[i].in; return s; };
@@ -172,7 +171,7 @@
     pause();
     $('startScreen').hidden = false;
     $('editorScreen').hidden = true;
-    updateResumeCard();
+    renderProjectList();
     document.body.classList.remove('editing');
   }
   function showEditor() {
@@ -287,11 +286,10 @@
     const media = entries.filter((x) => isVideoFile(x.file) || isImageFile(x.file));
     if (!media.length) { if (entries.length) toast('Please choose videos (MP4, MOV, M4V) or images (JPG, PNG, WebP).'); return; }
     if (media.length < entries.length) toast('Some files were skipped because they are neither videos nor images.');
-    if (pendingProject && !clips.length) {
-      if (!confirm('Start a new project? Your last project will be discarded.')) return;
-      loadingQueue = loadingQueue.then(() => newProject(true));
-    }
+    // From the start screen, media always start a new project; in the editor they are added.
+    const fresh = !$('startScreen').hidden || !projectId;
     loadingQueue = loadingQueue.then(async () => {
+      if (fresh) await createProject(baseName(media[0].file.name) || '');
       for (const m of media) {
         if (isImageFile(m.file) && !isVideoFile(m.file)) await addImage(m.file, m.handle, m.pasted);
         else await addFile(m.file, m.handle, m.pasted);
@@ -543,7 +541,7 @@
   }
 
   async function startEmptyCanvas() {
-    if ((clips.length || pendingProject) && !(await newProject(false))) return;
+    await createProject('');
     canvasState = defaultCanvas();
     exportState.res = '1080';
     saveEnabled = true;
@@ -2318,7 +2316,7 @@
   // ---------------------------------------------------------------------------
   let saveTimer = 0;
   function scheduleSave() {
-    if (!saveEnabled) return;
+    if (!saveEnabled || !projectId) return;
     clearTimeout(saveTimer);
     saveTimer = setTimeout(saveNow, 400);
   }
@@ -2333,24 +2331,64 @@
     return ids;
   }
 
+  function disposeSource(src) {
+    if (src.url) URL.revokeObjectURL(src.url);
+    src.thumbs.forEach((u) => u && URL.revokeObjectURL(u));
+    if (src.bitmap) src.bitmap.close();
+  }
+
   // Drop media that nothing (timeline, undo/redo, clipboard) refers to anymore.
+  // Working copies are only deleted if no other project uses them.
   function cleanupMedia() {
     const used = referencedIds();
     for (const src of [...sources.values()]) {
       if (used.has(src.id)) continue;
-      if (src.storage === 'opfs' && src.copyName) Project.removeCopy(src.copyName);
+      if (src.storage === 'opfs' && src.copyName) Project.releaseCopy(src.copyName);
       if (src.storage === 'handle') Project.removeHandle(src.id);
-      if (src.url) URL.revokeObjectURL(src.url);
-      src.thumbs.forEach((u) => u && URL.revokeObjectURL(u));
-      if (src.bitmap) src.bitmap.close();
+      disposeSource(src);
       sources.delete(src.id);
     }
   }
 
+  // Small cover image for the project list (first clip).
+  let thumbCache = { key: '', data: '' };
+  async function projectThumb() {
+    const c = clips[0];
+    if (!c) return '';
+    const src = srcOf(c);
+    const key = `${c.id}|${c.color || ''}|${src && src.thumbs[0] ? src.thumbs[0] : ''}`;
+    if (key === thumbCache.key) return thumbCache.data;
+    const cv = document.createElement('canvas');
+    cv.width = 160; cv.height = 90;
+    const x = cv.getContext('2d');
+    x.fillStyle = canvasState.bgColor || DEFAULT_COLOR;
+    x.fillRect(0, 0, 160, 90);
+    if (c.kind === 'color') {
+      x.fillStyle = c.color || DEFAULT_COLOR;
+      x.fillRect(0, 0, 160, 90);
+    } else if (src && src.thumbs[0]) {
+      const img = new Image();
+      img.src = src.thumbs[0];
+      try { await img.decode(); } catch (e) { return thumbCache.data; }
+      const s = Math.max(160 / img.width, 90 / img.height);
+      x.drawImage(img, (160 - img.width * s) / 2, (90 - img.height * s) / 2, img.width * s, img.height * s);
+    } else {
+      return thumbCache.data;
+    }
+    thumbCache = { key, data: cv.toDataURL('image/jpeg', 0.7) };
+    return thumbCache.data;
+  }
+
+  let projectSaved = false; // a document exists for the open project
   async function saveNow() {
-    if (!saveEnabled) return;
+    if (!saveEnabled || !projectId) return;
+    if (!clips.length && !projectSaved) return; // don't create empty projects
     cleanupMedia();
-    await Project.saveProject({
+    const id = projectId;
+    const doc = {
+      id,
+      name: projectName,
+      createdAt: projectCreated,
       version: 2,
       app: VERSION,
       savedAt: Date.now(),
@@ -2361,7 +2399,12 @@
       // Tracks are prepared for multiple timelines; for now there is one main track.
       tracks: [{ id: 't1', kind: 'main', clips: clips.map((c) => ({ ...c })) }],
       media: [...sources.values()].map(mediaMeta),
-    });
+      thumb: await projectThumb().catch(() => ''),
+    };
+    if (id !== projectId || !saveEnabled) return; // project closed meanwhile
+    await Project.saveProject(doc);
+    projectSaved = true;
+    if (bc) bc.postMessage({ type: 'saved', id });
   }
   document.addEventListener('visibilitychange', () => { if (document.hidden && saveEnabled) { clearTimeout(saveTimer); saveNow(); } });
 
@@ -2383,44 +2426,136 @@
     return { count: cl.length, dur, media: (p.media || []).length };
   }
 
-  function updateResumeCard() {
-    const card = $('resumeCard');
-    if (clips.length) {
-      $('resumeTitle').textContent = 'Current project';
-      $('resumeMeta').textContent = `${clips.length} clip${clips.length === 1 ? '' : 's'} · ${fmtTime(totalDuration(), false)}`;
-      card.hidden = false;
-    } else if (pendingProject) {
-      const sum = projectSummary(pendingProject);
-      const when = new Date(pendingProject.savedAt).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' });
-      $('resumeTitle').textContent = 'Last project';
-      $('resumeMeta').textContent = `${sum.count} clip${sum.count === 1 ? '' : 's'} · ${fmtTime(sum.dur, false)} · saved ${when}`;
-      card.hidden = false;
-    } else {
-      card.hidden = true;
-    }
+  // ---------------------------------------------------------------------------
+  // Project library: open / create / close, one project per tab
+  // ---------------------------------------------------------------------------
+  let projectId = null;
+  let projectName = '';
+  let projectCreated = 0;
+  let lockRelease = null;
+  const bc = 'BroadcastChannel' in window ? new BroadcastChannel('videcutto') : null;
+
+  const hashId = () => { const m = /[#&]p=([a-z0-9]+)/i.exec(location.hash); return m ? m[1] : null; };
+  function setHash(id) {
+    const url = id ? `${location.pathname}${location.search}#p=${id}` : `${location.pathname}${location.search}`;
+    history.replaceState(null, '', url);
   }
 
-  async function newProject(skipConfirm) {
-    if (!skipConfirm && (clips.length || pendingProject) && !confirm('Start a new project? The current project and its saved videos will be deleted.')) return false;
-    pause();
-    clearTimeout(saveTimer);
-    clips = []; undoStack = []; redoStack = []; clipboard = null; selectedId = null; playhead = 0;
-    for (const src of sources.values()) { if (src.url) URL.revokeObjectURL(src.url); src.thumbs.forEach((u) => u && URL.revokeObjectURL(u)); if (src.bitmap) src.bitmap.close(); }
-    sources.clear();
-    pendingProject = null;
-    await Project.clearAll();
-    canvasState = defaultCanvas();
-    syncCanvasUI();
-    syncExportUI();
-    saveEnabled = true;
-    seek(0);
-    updateResumeCard();
-    updateToolbar();
+  function syncProjectBar() {
+    $('projectName').value = projectName;
+    document.title = projectId && projectName ? `${projectName} · Videcutto` : 'Videcutto';
+  }
+  $('projectName').addEventListener('change', (e) => {
+    const v = e.target.value.trim();
+    if (v) projectName = v;
+    syncProjectBar();
+    if (projectSaved) saveNow(); else scheduleSave();
+  });
+  $('projectName').addEventListener('keydown', (e) => { if (e.key === 'Enter') e.target.blur(); });
+
+  // Web Locks make sure a project is edited in only one tab at a time.
+  async function acquireLock(id, fresh) {
+    if (!navigator.locks) return true;
+    const name = 'videcutto-project-' + id;
+    const take = (opts) => new Promise((resolve) => {
+      navigator.locks.request(name, opts, (lock) => {
+        if (!lock) { resolve(false); return undefined; }
+        resolve(true);
+        return new Promise((r) => { lockRelease = r; });
+      }).catch(() => resolve(false));
+    });
+    if (await take({ ifAvailable: true })) return true;
+    if (fresh) return true;
+    if (!confirm('This project is open in another tab. Continue editing it here? The other tab will stop editing it.')) return false;
+    if (bc) bc.postMessage({ type: 'takeover', id });
+    await take({ steal: true });
     return true;
   }
+  function releaseLock() { if (lockRelease) { lockRelease(); lockRelease = null; } }
 
-  $('resumeBtn').addEventListener('click', () => { if (pendingProject && !clips.length) restoreProject(pendingProject); else showEditor(); });
-  $('newProjectBtn').addEventListener('click', async () => { if (await newProject(false)) showStart(); });
+  function onTakenOver() {
+    saveEnabled = false;
+    clearTimeout(saveTimer);
+    pause();
+    lockRelease = null;
+    document.querySelectorAll('.modal-bg').forEach((m) => { m.hidden = true; });
+    openModal('takeoverModal');
+  }
+  $('takeoverBackBtn').addEventListener('click', async () => {
+    closeModal('takeoverModal');
+    await closeProject(true);
+    showStart();
+  });
+  if (bc) {
+    bc.onmessage = (e) => {
+      const m = e.data || {};
+      if (m.type === 'takeover' && m.id === projectId) onTakenOver();
+      if ((m.type === 'saved' || m.type === 'changed') && !$('startScreen').hidden) renderProjectList();
+    };
+  }
+
+  function resetState() {
+    clips = []; undoStack = []; redoStack = []; clipboard = null; selectedId = null; playhead = 0;
+    for (const src of sources.values()) disposeSource(src);
+    sources.clear();
+    canvasState = defaultCanvas();
+    muteAll = false;
+    $('muteAllBtn').setAttribute('aria-pressed', 'false');
+    thumbCache = { key: '', data: '' };
+    $('resultBox').hidden = true;
+    syncCanvasUI();
+    syncExportUI();
+    seek(0);
+    updateToolbar();
+  }
+
+  /** Close the open project (saving it first unless skipSave). */
+  async function closeProject(skipSave) {
+    if (projectId && saveEnabled && !skipSave) { clearTimeout(saveTimer); await saveNow(); }
+    pause();
+    clearTimeout(saveTimer);
+    saveEnabled = false;
+    releaseLock();
+    resetState();
+    projectId = null;
+    projectName = '';
+    projectSaved = false;
+    Project.setCurrent(null);
+    setHash(null);
+    syncProjectBar();
+  }
+
+  async function createProject(name) {
+    await closeProject();
+    const docs = await Project.listProjects();
+    projectId = Project.newId();
+    Project.setCurrent(projectId);
+    projectName = name || `Project ${docs.length + 1}`;
+    projectCreated = Date.now();
+    projectSaved = false;
+    await acquireLock(projectId, true);
+    setHash(projectId);
+    saveEnabled = true;
+    syncProjectBar();
+  }
+
+  async function openProject(id) {
+    if (id === projectId) { showEditor(); return; }
+    const doc = await Project.loadProject(id);
+    if (!doc) { toast('This project doesn\'t exist anymore.'); setHash(projectId); return; }
+    await closeProject();
+    if (!(await acquireLock(id))) { showStart(); return; }
+    projectId = id;
+    Project.setCurrent(id);
+    projectName = doc.name || 'Project';
+    projectCreated = doc.createdAt || doc.savedAt || Date.now();
+    projectSaved = true;
+    setHash(id);
+    syncProjectBar();
+    await restoreProject(doc);
+  }
+
+  const baseName = (n) => String(n || '').replace(/\.[^.]+$/, '');
 
   /** Try to get a readable file for a saved media entry without user interaction. */
   async function locateMedia(m) {
@@ -2494,7 +2629,6 @@
     entries.forEach((e) => { if (e.src) sources.set(e.src.id, e.src); });
     const missing = entries.filter((e) => !e.src);
     const finish = () => {
-      pendingProject = null;
       saveEnabled = true;
       playhead = clamp(p.playhead || 0, 0, totalDuration());
       showEditor();
@@ -2510,9 +2644,43 @@
     if (ok) finish();
     else {
       // Back to the start screen; the saved project stays untouched.
-      clips = [];
-      sources.clear();
-      updateResumeCard();
+      await closeProject(true);
+      showStart();
+    }
+  }
+
+  /**
+   * Replace a media's file (relink): the clips keep their cuts. Keeps a working
+   * copy on phones, otherwise links the handle; frees the previous copy.
+   */
+  async function replaceMedia(m, old, file, handle) {
+    showBusy(m.kind === 'image' ? 'Opening image…' : 'Opening video…', file.name);
+    try {
+      const src = await attach(m, file, 0, { storage: handle ? 'handle' : 'none', copyName: null });
+      if (old) { src.thumbs = old.thumbs; src.thumbStep = old.thumbStep; src.thumbAspect = old.thumbAspect; if (old.url) URL.revokeObjectURL(old.url); }
+      if (m.kind !== 'image' && src.fileDuration + 0.05 < m.rangeOut) toast(`"${file.name}" is shorter than the original — some cuts may be cut off.`, 6000);
+      hideBusy();
+      if (m.kind === 'image') {
+        if (Project.canCopy()) {
+          const name = `${src.id}-${Date.now().toString(36)}-${++copyCounter}.img`;
+          try { src.file = await Project.copyWhole(name, file); src.storage = 'opfs'; src.copyName = name; } catch (err) { /* keep */ }
+        }
+        if (src.storage !== 'opfs' && handle) await Project.saveHandle(src.id, handle);
+        if (!src.thumbs.length) queueThumbs(src);
+      } else if (!(await makeWorkingCopy(src)) && handle) await Project.saveHandle(src.id, handle);
+      if (src.storage !== 'handle') Project.removeHandle(src.id);
+      if (old && old.storage === 'opfs' && old.copyName && old.copyName !== src.copyName) {
+        Project.releaseCopy(old.copyName);
+      }
+      sources.set(src.id, src);
+      vids.forEach((v) => { if (v.dataset.src === src.id) delete v.dataset.url; });
+      scheduleSave();
+      return src;
+    } catch (err) {
+      toast(err.message || String(err), 6000);
+      return null;
+    } finally {
+      hideBusy();
     }
   }
 
@@ -2583,30 +2751,8 @@
       };
 
       const assign = async (e, file, handle) => {
-        showBusy(e.meta.kind === 'image' ? 'Opening image…' : 'Opening video…', file.name);
-        try {
-          const m = e.meta;
-          const src = await attach(m, file, 0, { storage: handle ? 'handle' : 'none', copyName: null });
-          if (e.old) { src.thumbs = e.old.thumbs; src.thumbStep = e.old.thumbStep; src.thumbAspect = e.old.thumbAspect; if (e.old.url) URL.revokeObjectURL(e.old.url); }
-          if (m.kind !== 'image' && src.fileDuration + 0.05 < m.rangeOut) toast(`"${file.name}" is shorter than the original — some cuts may be cut off.`, 6000);
-          hideBusy();
-          if (m.kind === 'image') {
-            if (Project.canCopy()) {
-              const name = `${src.id}-${Date.now().toString(36)}-${++copyCounter}.img`;
-              try { src.file = await Project.copyWhole(name, file); src.storage = 'opfs'; src.copyName = name; } catch (err) { /* keep */ }
-            }
-            if (src.storage !== 'opfs' && handle) await Project.saveHandle(src.id, handle);
-            if (!src.thumbs.length) queueThumbs(src);
-          } else if (!(await makeWorkingCopy(src)) && handle) await Project.saveHandle(src.id, handle);
-          if (e.old && e.old.storage === 'opfs' && e.old.copyName && e.old.copyName !== src.copyName) Project.removeCopy(e.old.copyName);
-          e.src = src;
-          sources.set(src.id, src);
-          vids.forEach((v) => { if (v.dataset.src === src.id) delete v.dataset.url; });
-        } catch (err) {
-          toast(err.message || String(err), 6000);
-        } finally {
-          hideBusy();
-        }
+        const src = await replaceMedia(e.meta, e.old, file, handle);
+        if (src) e.src = src;
       };
 
       const pickFor = async (i) => {
@@ -2656,11 +2802,13 @@
         undoStack = undoStack.map(keep);
         redoStack = redoStack.map(keep);
         if (clipboard && gone.has(clipboard.srcId)) clipboard = null;
-        gone.forEach((id) => { const s = sources.get(id); if (s && s.storage === 'opfs' && s.copyName) Project.removeCopy(s.copyName); Project.removeHandle(id); sources.delete(id); });
+        gone.forEach((id) => { const s = sources.get(id); if (s && s.storage === 'opfs' && s.copyName) Project.releaseCopy(s.copyName); Project.removeHandle(id); if (s) disposeSource(s); sources.delete(id); });
         entries = entries.filter((e) => resolved(e));
         if (!clips.length) {
           close(false, true);
-          newProject(true).then(() => { showStart(); toast('No clips were left — started a new project.'); });
+          scheduleSave();
+          showStart();
+          toast('No clips are left in this project.');
           return;
         }
         close(true);
@@ -2687,26 +2835,284 @@
   }
 
   // Settings: storage info and project deletion
+  // ---------------------------------------------------------------------------
+  // Start screen: project list
+  // ---------------------------------------------------------------------------
+  const ICON = {
+    rename: '<svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg>',
+    duplicate: '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 012-2h9"/></svg>',
+    files: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6"/><path class="fill" d="M12 6.6a1.2 1.2 0 110 2.4 1.2 1.2 0 010-2.4z"/></svg>',
+    remove: '<svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>',
+  };
+
+  let listRendering = null;
+  function renderProjectList() {
+    // Coalesce calls; the list reads from IndexedDB/OPFS asynchronously.
+    if (listRendering) { listRendering.again = true; return; }
+    listRendering = { again: false };
+    (async () => {
+      try {
+        const docs = await Project.listProjects();
+        const sizes = await Project.copySizes();
+        let held = new Set();
+        try { if (navigator.locks && navigator.locks.query) held = new Set((await navigator.locks.query()).held.map((l) => l.name)); } catch (e) { /* ignore */ }
+        const list = $('projectList');
+        list.replaceChildren(...docs.map((d) => projectCard(d, sizes, held)));
+        $('projectsSection').hidden = !docs.length;
+        $('newProjectHead').hidden = !docs.length;
+        const used = new Set();
+        let total = 0;
+        for (const d of docs) for (const m of d.media || []) if (m.copyName && !used.has(m.copyName)) { used.add(m.copyName); total += sizes.get(m.copyName) || 0; }
+        const free = await Project.freeSpace();
+        $('projectsStorage').textContent = docs.length
+          ? `${docs.length} project${docs.length === 1 ? '' : 's'} · working copies use ${fmtSize(total)}${Number.isFinite(free) ? ` · ${fmtSize(free)} free in this browser` : ''}`
+          : '';
+        $('projectsStorage').classList.toggle('warn-text', Number.isFinite(free) && free < 500 * 1024 * 1024);
+      } finally {
+        const again = listRendering.again;
+        listRendering = null;
+        if (again) renderProjectList();
+      }
+    })();
+  }
+
+  function projectCard(d, sizes, held) {
+    const sum = projectSummary(d);
+    const card = document.createElement('div');
+    card.className = 'project-card';
+    const open = document.createElement('button');
+    open.type = 'button';
+    open.className = 'pc-open';
+    open.title = 'Open project';
+    const th = document.createElement('div');
+    th.className = 'pc-thumb';
+    if (d.thumb) th.style.backgroundImage = `url("${d.thumb}")`;
+    const info = document.createElement('div');
+    info.className = 'pc-info';
+    const name = document.createElement('strong');
+    name.textContent = d.name || 'Project';
+    const meta = document.createElement('span');
+    const when = new Date(d.savedAt || Date.now()).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' });
+    meta.textContent = `${sum.count} clip${sum.count === 1 ? '' : 's'} · ${fmtTime(sum.dur, false)} · ${when}`;
+    const meta2 = document.createElement('span');
+    const bytes = Project.projectBytes(d, sizes);
+    const linked = (d.media || []).filter((m) => m.storage === 'handle').length;
+    meta2.textContent = bytes ? `${fmtSize(bytes)} in browser storage${linked ? ` · ${linked} linked` : ''}` : linked ? `${linked} linked file${linked === 1 ? '' : 's'} · no extra space` : 'No stored copies';
+    info.append(name, meta, meta2);
+    if (d.id === projectId) {
+      const b = document.createElement('span'); b.className = 'pc-badge'; b.textContent = 'Open in this tab'; info.append(b);
+    } else if (held.has('videcutto-project-' + d.id)) {
+      const b = document.createElement('span'); b.className = 'pc-badge other'; b.textContent = 'Open in another tab'; info.append(b);
+    }
+    open.append(th, info);
+    open.addEventListener('click', () => openProject(d.id));
+    const actions = document.createElement('div');
+    actions.className = 'pc-actions';
+    const act = (key, label, fn) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'icon small';
+      b.title = label;
+      b.setAttribute('aria-label', `${label}: ${d.name}`);
+      b.innerHTML = ICON[key];
+      b.addEventListener('click', fn);
+      actions.append(b);
+    };
+    act('rename', 'Rename', () => renameProject(d));
+    act('duplicate', 'Duplicate', () => openDuplicate(d));
+    act('files', 'Files & storage', () => openFilesModal(d));
+    act('remove', 'Delete', () => deleteProject(d));
+    card.append(open, actions);
+    return card;
+  }
+
+  async function renameProject(d) {
+    const v = prompt('Project name', d.name || '');
+    if (v === null || !v.trim()) return;
+    if (d.id === projectId) {
+      projectName = v.trim();
+      syncProjectBar();
+      await saveNow();
+    } else {
+      const doc = await Project.loadProject(d.id);
+      if (!doc) return;
+      doc.name = v.trim();
+      await Project.saveProject(doc);
+    }
+    if (bc) bc.postMessage({ type: 'changed' });
+    renderProjectList();
+  }
+
+  async function deleteProject(d) {
+    if (!confirm(`Delete "${d.name}"? Its working copies are removed from this browser (unless another project uses them). Your original files are not touched.`)) return;
+    if (d.id === projectId) await closeProject(true);
+    await Project.deleteProject(d.id);
+    if (bc) bc.postMessage({ type: 'changed' });
+    renderProjectList();
+    toast('Project deleted.');
+  }
+
+  // Duplicate: share the video files or make independent copies.
+  let dupTarget = null;
+  async function openDuplicate(d) {
+    if (d.id === projectId) await saveNow();
+    dupTarget = d;
+    const sizes = await Project.copySizes();
+    const bytes = Project.projectBytes(d, sizes);
+    $('dupInfo').textContent = `"${d.name}" uses ${fmtSize(bytes)} of working copies in this browser.`;
+    $('dupIndependentNote').textContent = bytes ? `Needs another ${fmtSize(bytes)}. The two projects are completely separate.` : 'This project has no stored copies, so this needs no extra space.';
+    openModal('duplicateModal');
+  }
+  async function doDuplicate(mode) {
+    const d = dupTarget;
+    closeModal('duplicateModal');
+    if (!d) return;
+    if (mode === 'independent') {
+      const sizes = await Project.copySizes();
+      if ((await Project.freeSpace()) < Project.projectBytes(d, sizes) * 1.1) { toast('Not enough free storage for independent copies.', 5000); return; }
+      showBusy('Duplicating…', 'Copying the video files.');
+    }
+    try {
+      const copy = await Project.duplicateProject(d.id, mode, busyProgress);
+      toast(`Created "${copy.name}".`);
+      if (bc) bc.postMessage({ type: 'changed' });
+    } catch (e) {
+      toast('Duplicating failed: ' + (e.message || e), 6000);
+    } finally {
+      hideBusy();
+      renderProjectList();
+    }
+  }
+  $('dupShareBtn').addEventListener('click', () => doDuplicate('share'));
+  $('dupIndependentBtn').addEventListener('click', () => doDuplicate('independent'));
+  $('dupCancelBtn').addEventListener('click', () => closeModal('duplicateModal'));
+
+  // ---------------------------------------------------------------------------
+  // Files & storage of a project
+  // ---------------------------------------------------------------------------
+  let filesDoc = null;
+  async function openFilesModal(d) {
+    filesDoc = d;
+    if (d.id === projectId) await saveNow();
+    await renderFilesModal();
+    openModal('filesModal');
+  }
+  async function renderFilesModal() {
+    const d = filesDoc;
+    const isCurrent = d.id === projectId;
+    const sizes = await Project.copySizes();
+    const metas = isCurrent ? [...sources.values()].map((s) => ({ ...mediaMeta(s), missing: s.missing })) : (d.media || []);
+    $('filesTitle').textContent = `Files of "${isCurrent ? projectName : d.name}"`;
+    const rows = metas.map((m) => {
+      const li = document.createElement('li');
+      const info = document.createElement('div');
+      info.className = 'm-info';
+      const name = document.createElement('div');
+      name.className = 'm-name';
+      name.textContent = m.name;
+      const where = document.createElement('div');
+      where.className = 'm-meta';
+      const kind = m.kind === 'image' ? 'Image' : 'Video';
+      if (m.missing) where.textContent = `${kind} · missing — select it again`;
+      else if (m.storage === 'opfs') where.textContent = `${kind} · working copy in this browser's storage · ${fmtSize(sizes.get(m.copyName) || 0)}`;
+      else if (m.storage === 'handle') where.textContent = `${kind} · linked to the original file "${m.name}" on this computer`;
+      else where.textContent = `${kind} · not stored — has to be selected again after a reload`;
+      info.append(name, where);
+      li.append(info);
+      if (isCurrent) {
+        const src = sources.get(m.id);
+        const btns = document.createElement('div');
+        btns.className = 'm-btns';
+        const mk = (label, title, fn) => {
+          const b = document.createElement('button');
+          b.className = 'btn-chip';
+          b.textContent = label;
+          b.title = title;
+          b.addEventListener('click', async () => { await fn(); await renderFilesModal(); });
+          btns.append(b);
+        };
+        mk('Relink…', 'Select the file again, e.g. after moving or renaming it', async () => {
+          const [sel] = await pickFiles(false);
+          if (!sel) return;
+          if (sel.file.size !== m.origSize && !confirm('This file isn\'t identical to the original — cuts may not line up exactly. Use it anyway?')) return;
+          await replaceMedia(m, src, sel.file, sel.handle);
+          afterRelink();
+        });
+        if (src && m.storage !== 'opfs' && Project.canCopy() && !src.missing) {
+          mk('Copy to browser', 'Keep a working copy in this browser, independent of the original file', async () => {
+            const ok = m.kind === 'image' ? await copyImageToBrowser(src) : await makeWorkingCopy(src, true);
+            if (ok) { Project.removeHandle(src.id); scheduleSave(); toast('Working copy saved.'); }
+          });
+        }
+        if (src && m.storage === 'opfs' && useHandlePicker()) {
+          mk('Use original', 'Link the original file instead of a copy (frees space)', async () => {
+            const [sel] = await pickFiles(false);
+            if (!sel) return;
+            if (!sel.handle) { toast('This browser can\'t link files.'); return; }
+            if (sel.file.size !== m.origSize && !confirm('This file isn\'t identical to the original — cuts may not line up exactly. Use it anyway?')) return;
+            await replaceMedia(m, src, sel.file, sel.handle);
+            afterRelink();
+          });
+        }
+        li.append(btns);
+      }
+      return li;
+    });
+    $('filesList').replaceChildren(...rows);
+    $('filesOpenBtn').hidden = isCurrent;
+    $('filesEmpty').hidden = metas.length > 0;
+  }
+  function afterRelink() {
+    renderTimeline();
+    seek(playhead);
+    updateEstimate();
+    scheduleSave();
+  }
+  async function copyImageToBrowser(src) {
+    const name = `${src.id}-${Date.now().toString(36)}-${++copyCounter}.img`;
+    try { src.file = await Project.copyWhole(name, src.file); src.storage = 'opfs'; src.copyName = name; return true; } catch (e) { return false; }
+  }
+  $('filesOpenBtn').addEventListener('click', () => { closeModal('filesModal'); if (filesDoc) openProject(filesDoc.id); });
+  $('filesCloseBtn').addEventListener('click', () => { closeModal('filesModal'); if (!$('startScreen').hidden) renderProjectList(); });
+  $('projectFilesBtn').addEventListener('click', () => { if (projectId) openFilesModal({ id: projectId, name: projectName }); });
+  ['filesModal', 'duplicateModal'].forEach((id) => $(id).addEventListener('click', (e) => { if (e.target.id === id) closeModal(id); }));
+
+  // Settings: storage info and project deletion
   $('settingsItem').addEventListener('click', async () => {
-    const copies = await Project.listCopies();
-    const bytes = copies.reduce((s, c) => s + c.size, 0);
-    const linked = [...sources.values()].filter((s) => s.storage === 'handle').length;
-    let txt = 'Your project is saved automatically on this device.';
-    if (copies.length) txt += ` Working copies of ${copies.length} video${copies.length === 1 ? '' : 's'} use ${fmtSize(bytes)}.`;
-    if (linked) txt += ` ${linked} video${linked === 1 ? ' is' : 's are'} linked to the original file${linked === 1 ? '' : 's'} (no extra space).`;
+    const docs = await Project.listProjects();
+    const sizes = await Project.copySizes();
+    let txt = 'Projects are saved automatically in this browser.';
+    if (projectId) {
+      const mine = [...sources.values()];
+      const bytes = Project.projectBytes({ media: mine.map(mediaMeta) }, sizes);
+      const linked = mine.filter((s) => s.storage === 'handle').length;
+      txt += ` This project: ${fmtSize(bytes)} of working copies`;
+      if (linked) txt += `, ${linked} linked file${linked === 1 ? '' : 's'} (no extra space)`;
+      txt += '.';
+    }
+    const all = new Set();
+    let total = 0;
+    for (const d of docs) for (const m of d.media || []) if (m.copyName && !all.has(m.copyName)) { all.add(m.copyName); total += sizes.get(m.copyName) || 0; }
+    txt += ` All ${docs.length} project${docs.length === 1 ? '' : 's'}: ${fmtSize(total)}.`;
     $('storageInfo').textContent = txt;
+    $('deleteProjectBtn').hidden = !projectId;
   });
   $('deleteProjectBtn').addEventListener('click', async () => {
-    if (await newProject(false)) { closeModal('settingsModal'); showStart(); toast('Project deleted.'); }
+    if (!projectId) return;
+    closeModal('settingsModal');
+    await deleteProject({ id: projectId, name: projectName });
+    showStart();
   });
 
-  // On start: look for a saved project.
+  // On start: migrate the single project of 0.2–0.5, open the project in the URL.
   (async () => {
-    const p = await Project.loadProject().catch(() => null);
-    if (p && projectSummary(p).count) pendingProject = p;
-    else saveEnabled = true;
-    updateResumeCard();
+    try { await Project.migrateLegacy(); } catch (e) { /* ignore */ }
+    Project.cleanupOrphans().catch(() => {});
+    const id = hashId();
+    if (id) await openProject(id);
+    renderProjectList();
   })();
+  window.addEventListener('hashchange', () => { const id = hashId(); if (id && id !== projectId) openProject(id); });
 
   // ---------------------------------------------------------------------------
   // Service worker

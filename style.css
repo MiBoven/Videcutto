@@ -290,10 +290,6 @@ footer { text-align: center; color: var(--text-secondary); font-size: 12px; marg
 :fullscreen body { max-width: none; }
 
 /* ---------- Project / relink (0.2.0) ---------- */
-.resume-card { display: grid; gap: 4px; }
-.resume-info { display: flex; flex-direction: column; gap: 2px; font-size: 14px; }
-.resume-info span { color: var(--text-secondary); font-size: 12.5px; }
-.resume-card .btn-row { margin-top: 8px; }
 .settings-h { font-size: 14px; margin: 18px 0 4px; }
 .danger-text { color: var(--danger); }
 .media-list { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 8px; }
@@ -373,3 +369,28 @@ input[type=color] { width: 44px; height: 36px; padding: 2px; border: 1px solid v
 }
 .scope { margin-bottom: 12px; }
 .add-wrap { flex: 0 0 auto; min-width: 52px; }
+
+/* ---------- 0.6.0: project library ---------- */
+.section-h { font-size: 15px; margin: 6px 0 10px; }
+.projects { margin-bottom: 18px; }
+.project-list { display: grid; gap: 8px; }
+.project-card { display: flex; align-items: stretch; gap: 6px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 8px; }
+.pc-open { flex: 1; min-width: 0; display: flex; gap: 10px; align-items: center; background: none; border: none; color: var(--text); text-align: left; cursor: pointer; padding: 0; border-radius: 8px; }
+.pc-thumb { width: 96px; height: 54px; flex-shrink: 0; border-radius: 7px; background: var(--surface-2) center / cover no-repeat; }
+.pc-info { min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 12.5px; }
+.pc-info strong { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pc-info span { color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pc-info .pc-badge { color: var(--accent); font-weight: 700; font-size: 11.5px; }
+.pc-info .pc-badge.other { color: var(--warn-text); }
+.pc-actions { display: grid; grid-template-columns: repeat(2, 30px); grid-auto-rows: 30px; gap: 4px; align-content: center; }
+.hint.warn-text { color: var(--warn-text); }
+.project-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.project-name { flex: 1; min-width: 0; background: transparent; border: 1px solid transparent; border-radius: 8px; color: var(--text); font: inherit; font-size: 15px; font-weight: 700; padding: 6px 8px; }
+.project-name:hover, .project-name:focus { border-color: var(--border); background: var(--surface); outline: none; }
+.choice { display: flex; flex-direction: column; gap: 4px; width: 100%; text-align: left; background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; color: var(--text); cursor: pointer; margin-bottom: 10px; font: inherit; }
+.choice strong { font-size: 14px; }
+.choice span { font-size: 12.5px; color: var(--text-secondary); line-height: 1.4; }
+.choice:hover { border-color: var(--accent); }
+.files-list li { flex-wrap: wrap; }
+.files-list .m-meta { white-space: normal; }
+.m-btns { display: flex; gap: 6px; flex-wrap: wrap; width: 100%; }

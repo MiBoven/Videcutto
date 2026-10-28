@@ -54,17 +54,13 @@
 
   <div class="notice warn" id="noSupport" hidden></div>
 
-  <div class="card resume-card" id="resumeCard" hidden>
-    <div class="resume-info">
-      <strong id="resumeTitle">Last project</strong>
-      <span id="resumeMeta"></span>
-    </div>
-    <div class="btn-row">
-      <button class="btn-secondary" id="newProjectBtn">New project</button>
-      <button class="btn-primary" id="resumeBtn">Continue</button>
-    </div>
-  </div>
+  <section class="projects" id="projectsSection" hidden>
+    <h2 class="section-h">Your projects</h2>
+    <div class="project-list" id="projectList"></div>
+    <p class="hint" id="projectsStorage"></p>
+  </section>
 
+  <h2 class="section-h" id="newProjectHead" hidden>New project</h2>
   <div class="segment" id="sourceToggle">
     <button type="button" class="seg-btn active" data-mode="videos">Gallery</button>
     <button type="button" class="seg-btn" data-mode="files">Files</button>
@@ -91,6 +87,10 @@
 
 <!-- ===================== Editor ===================== -->
 <main id="editorScreen" hidden>
+  <div class="project-bar">
+    <input type="text" id="projectName" class="project-name" maxlength="80" aria-label="Project name" title="Rename project" spellcheck="false">
+    <button class="icon small" id="projectFilesBtn" title="Files &amp; storage" aria-label="Files and storage"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6"/><path class="fill" d="M12 6.6a1.2 1.2 0 110 2.4 1.2 1.2 0 010-2.4z"/></svg></button>
+  </div>
   <div class="preview-wrap">
     <div class="preview" id="preview">
       <video id="vidA" playsinline preload="auto" muted></video>
@@ -478,6 +478,44 @@
       <button class="btn-primary" id="relinkDoneBtn" disabled>Open project</button>
     </div>
     <button class="link-btn center" id="relinkCancelBtn">Back</button>
+  </div>
+</div>
+
+<!-- ===================== Duplicate ===================== -->
+<div class="modal-bg" id="duplicateModal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="dupTitle">
+    <h2 id="dupTitle">Duplicate project</h2>
+    <p class="modal-sub" id="dupInfo"></p>
+    <button class="choice" id="dupShareBtn">
+      <strong>Share the video files</strong>
+      <span>No extra space. The copies use the same files, which are only deleted when neither project needs them.</span>
+    </button>
+    <button class="choice" id="dupIndependentBtn">
+      <strong>Independent copies</strong>
+      <span id="dupIndependentNote"></span>
+    </button>
+    <button class="link-btn center" id="dupCancelBtn">Cancel</button>
+  </div>
+</div>
+
+<!-- ===================== Files & storage ===================== -->
+<div class="modal-bg" id="filesModal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="filesTitle">
+    <h2 id="filesTitle">Files</h2>
+    <p class="modal-sub">Where the videos and images of this project are kept. For privacy, browsers never reveal folder paths — only file names. If you moved or renamed a file, use <strong>Relink…</strong> and pick it at its new location.</p>
+    <ul class="media-list files-list" id="filesList"></ul>
+    <p class="hint" id="filesEmpty" hidden>This project has no videos or images yet.</p>
+    <button class="btn-primary wide" id="filesOpenBtn">Open project to change files</button>
+    <button class="btn-secondary wide" id="filesCloseBtn">Close</button>
+  </div>
+</div>
+
+<!-- ===================== Taken over by another tab ===================== -->
+<div class="modal-bg" id="takeoverModal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="takeoverTitle">
+    <h2 id="takeoverTitle">Opened in another tab</h2>
+    <p class="modal-sub">This project is now being edited in another tab. To keep it safe, this tab has stopped editing and saving it.</p>
+    <button class="btn-primary wide" id="takeoverBackBtn">Back to projects</button>
   </div>
 </div>
 

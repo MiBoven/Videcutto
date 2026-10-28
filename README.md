@@ -52,13 +52,25 @@ A privacy-friendly video editor and compressor that runs entirely in your browse
   | `Ctrl` + `Z` / `Y` | Undo / redo |
   | `Home` / `End` | Jump to start / end |
 
-### Saving & restoring the project
-- The last project is **saved automatically** after every change (clips, order, mutes, export settings) and offered as **Continue** on the start screen next time; **New project** discards it
+### Projects
+- **Any number of projects**, each saved automatically after every change (clips, canvas, export settings, name)
+- The start screen lists **Your projects** (most recent first) with cover image, name, clip count, length, last change and the storage they use; total storage and free space are shown below the list (with a warning when space gets low)
+- Per project: **open**, **rename**, **duplicate**, **files & storage (ⓘ)** and **delete**
+- Choosing media or *Start with an empty canvas* on the start screen always creates a **new project** (named after the first file, or "Project N"); nothing is discarded anymore
+- The project name is shown above the preview in the editor and can be edited there
+- **Duplicate** asks how: **share the video files** (no extra space — a shared working copy is only deleted when no project needs it anymore) or **independent copies** (needs the same space again, shown beforehand)
+- **Several tabs:** each project has its own address (`#p=…`), so a reload reopens the same project and different projects can be edited side by side in different tabs. Opening a project that is already open in another tab asks first; the other tab then stops editing and saving it (Web Locks API). The list marks projects that are open in this or another tab
+- **Files & storage (ⓘ):** lists every video/image of a project and where it is kept — *working copy in this browser's storage* (with size), *linked to the original file* (desktop) or *not stored*. Browsers never reveal folder paths for privacy reasons, so moved or renamed files are found again with **Relink…**; on desktop you can also switch between **Copy to browser** and **Use original** (frees space)
+- Deleting a project removes only the copies no other project uses; original files are never touched
+- The single project of versions 0.2–0.5 is moved into the list automatically
+
+### Saving & restoring media
 - **Phones/tablets:** each video gets a **working copy** in the browser's private storage (OPFS) right after loading — after pre-trimming only the chosen part is copied, losslessly (no re-encoding). This keeps videos available after a reload and fixes Android revoking the picker's read permission after a while ("The requested file could not be read…")
 - **Desktop Chrome/Edge:** the app remembers the original files (File System Access API) instead of copying them; after a reload one click on *Allow access* reopens them
 - **Everywhere (fallback):** if a video is missing — no copy, storage cleared, or access lost while editing — a dialog lists it and you **select it again**. Files are matched automatically by size (and by length/resolution as a fallback), so renamed files are recognised; all cuts are kept. Clips of videos that can't be found can be removed instead
 - Working copies of videos no longer used anywhere (timeline, undo/redo, clipboard) are deleted automatically
-- **Settings → Project** shows how much space the project uses and lets you **delete** it
+- **Settings → Project** shows how much space the open project and all projects use and lets you **delete** the open project
+- Leftover working copies that no project refers to (e.g. after a crash) are cleaned up after a day
 - The saved format already supports several tracks, prepared for multiple timelines in a later version
 
 ### Crop, position, size & rotation (per clip)
@@ -112,7 +124,7 @@ Videcutto uses no third-party libraries — everything is vanilla HTML/CSS/JS, s
 
 - **`mp4.js`** — a small ISO-BMFF demuxer and muxer. The demuxer reads only the `moov` box and the exact byte ranges of the samples it needs (via `Blob.slice()` with an 8 MB read window), supporting H.264, HEVC, VP9 and AV1 video, AAC and Opus audio, rotation metadata and edit lists. The muxer writes a "fast start" MP4 (moov before mdat, interleaved in 0.5 s chunks, 64-bit offsets for files > 4 GB).
 - **`render.js`** — the export engine and the shared drawing code (`clipLayout` / `drawClip`: crop, size, anchor + offset, rotation and flip, used identically by preview and export). Each clip is decoded with **WebCodecs** (`VideoDecoder` / `AudioDecoder`, hardware-accelerated where available) starting at the nearest keyframe, every frame is drawn onto a canvas (rotation applied, fitted with black bars or a blurred background), and encoded with `VideoEncoder` / `AudioEncoder`. Audio is resampled to 48 kHz stereo; muted clips and clips without sound are filled with silence so audio and video stay in sync.
-- **`project.js`** — persistence: the project in IndexedDB, working copies in the Origin Private File System, file handles of originals on desktop. `mp4.js` provides the lossless range copy (`remuxRange`) used for trimmed working copies: it copies the samples from the keyframe before the in-point, keeps the original sample descriptions and rotation, and streams straight to storage without holding the video in memory.
+- **`project.js`** — persistence: the projects in IndexedDB (`project:<id>`), shared/duplicated working copies with reference checks, working copies in the Origin Private File System, file handles of originals on desktop. `mp4.js` provides the lossless range copy (`remuxRange`) used for trimmed working copies: it copies the samples from the keyframe before the in-point, keeps the original sample descriptions and rotation, and streams straight to storage without holding the video in memory.
 - **`app.js`** — the UI: file and clipboard loading, pre-trim dialog, timeline, canvas and export settings, clip panel, undo/redo and the preview. The preview draws onto a `<canvas>` with the same drawing code as the export; two `<video>` elements underneath supply frames and sound (the next video clip is always preloaded), images and color clips run on a wall clock.
 
 The preview uses the browser's native `<video>` decoding; the export uses WebCodecs, so what plays in the preview and what can be exported is decided by each browser's codec support.

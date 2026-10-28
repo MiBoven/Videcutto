@@ -1,5 +1,15 @@
 # Changelog
 
+### 0.6.0 — 2026-10-28 — Project library
+- Any number of projects: list on the start screen with cover, name, clips, length, last change and storage used; total storage and free space below
+- Open, rename, duplicate, delete projects; project name editable above the preview
+- Duplicate with shared video files (no extra space) or independent copies (space shown beforehand)
+- Files & storage dialog per project: where each file is kept, Relink…, Copy to browser / Use original (desktop)
+- Each project has its own address (#p=…); different projects can be edited in different tabs; the same project in a second tab asks first and the other tab stops editing (Web Locks)
+- Choosing media or an empty canvas on the start screen always creates a new project — nothing is discarded anymore
+- Working copies shared between projects are only deleted when no project needs them; orphaned copies are cleaned up after a day
+- The single project from 0.2–0.5 is migrated into the list automatically
+
 ### 0.5.0 — 2026-10-28 — Save a crop, export one clip
 - Crop tab: "Use as canvas" — canvas format and export resolution follow the crop (exact pixel size), the clip fills the canvas
 - Canvas format "Like a crop…" with clip selection; follows later crop changes and splits
