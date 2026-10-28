@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.0';
+  const VERSION = '0.5.0';
   const $ = (id) => document.getElementById(id);
 
   // ---------------------------------------------------------------------------
@@ -749,8 +749,18 @@
     clips = redoStack.pop();
     afterEdit();
   }
+  // The canvas follows the crop when its format is "Like a crop…".
+  function syncCropCanvas() {
+    if (canvasState.aspect !== 'crop') return;
+    const c = cropClip();
+    if (c) { canvasState.cropClipId = c.id; canvasState.cropSrcId = c.srcId; }
+    syncCanvasUI();
+    updateResolutionOptions();
+    updatePreviewAspect();
+  }
   function afterEdit() {
     if (selectedId && !clips.some((c) => c.id === selectedId)) selectedId = null;
+    syncCropCanvas();
     playhead = clamp(playhead, 0, totalDuration());
     renderTimeline();
     seek(playhead);
@@ -774,6 +784,7 @@
       const right = { ...c, id: newId(), in: c.in + offset };
       clips.splice(idx, 1, left, right);
       selectedId = right.id;
+      if (canvasState.cropClipId === c.id) canvasState.cropClipId = left.id;
     });
   }
   function deleteSelected() {
@@ -917,7 +928,11 @@
     $('redoBtn').classList.toggle('idle', !redoStack.length);
     $('splitBtn').disabled = !clips.length;
     $('pasteBtn').disabled = !clipboard;
-    $('exportBtn').disabled = !clips.length || exporting;
+    const hasSel = selectedIndex() >= 0;
+    $('copyBtn').disabled = !hasSel;
+    $('deleteBtn').disabled = !hasSel;
+    $('exportBtn').disabled = !exportClips().length || exporting;
+    if (exportState.scope === 'selected') updateEstimate();
     updateClipPanel();
   }
 
@@ -1382,10 +1397,30 @@
     const s = sources.get(canvasState.videoSrcId);
     return s && s.kind === 'video' ? s : videoSources()[0] || null;
   }
+  // Clip whose crop defines the canvas ("Like a crop…"). Clip ids change when a clip
+  // is split or an edit is undone, so fall back to a clip of the same media.
+  function cropClip() {
+    if (canvasState.aspect !== 'crop') return null;
+    const cands = clips.filter((c) => c.kind !== 'color');
+    return cands.find((c) => c.id === canvasState.cropClipId) || cands.find((c) => c.srcId === canvasState.cropSrcId) || cands[0] || null;
+  }
+  // Pixel size of a clip's crop (display space; 90° rotations swap width and height).
+  function cropPixels(c) {
+    const d = srcDims(c);
+    const t = Render.tfOf(c.tf);
+    let w = d.w * t.crop.w, h = d.h * t.crop.h;
+    if (Math.round(Math.abs(t.rot) / 90) % 2 === 1) [w, h] = [h, w];
+    return { w: Math.max(2, Math.round(w)), h: Math.max(2, Math.round(h)) };
+  }
   function canvasAspect() {
     const a = canvasState.aspect;
     if (ASPECTS[a]) return ASPECTS[a];
     if (a === 'custom') return clamp((canvasState.ratioW || 1) / (canvasState.ratioH || 1), 0.1, 10);
+    if (a === 'crop') {
+      const c = cropClip();
+      if (c) { const p = cropPixels(c); return p.w / p.h; }
+      return 16 / 9;
+    }
     const v = aspectVideo();
     if (v) { const d = Render.displaySize(v); return d.w / d.h; }
     return 16 / 9;
@@ -1395,6 +1430,16 @@
     $('aspectSel').value = canvasState.aspect;
     $('aspectCustomField').hidden = canvasState.aspect !== 'custom';
     $('aspectVideoField').hidden = canvasState.aspect !== 'video';
+    $('aspectCropField').hidden = canvasState.aspect !== 'crop';
+    const cc = cropClip();
+    const csel = $('aspectCropSel');
+    const cands = clips.map((c, i) => ({ c, i })).filter((x) => x.c.kind !== 'color');
+    csel.replaceChildren(...(cands.length ? cands.map(({ c, i }) => {
+      const p = cropPixels(c);
+      const s = srcOf(c);
+      return Object.assign(document.createElement('option'), { value: c.id, textContent: `Clip ${i + 1} · ${s ? s.name : ''} · ${even(p.w)}×${even(p.h)}` });
+    }) : [Object.assign(document.createElement('option'), { value: '', textContent: 'No video or image — using 16:9' })]));
+    if (cc) csel.value = cc.id;
     $('ratioW').value = canvasState.ratioW;
     $('ratioH').value = canvasState.ratioH;
     const vs = videoSources();
@@ -1426,9 +1471,20 @@
   $('aspectSel').addEventListener('change', (e) => {
     canvasState.aspect = e.target.value;
     if (canvasState.aspect === 'video' && !sources.get(canvasState.videoSrcId)) canvasState.videoSrcId = (videoSources()[0] || {}).id || null;
+    if (canvasState.aspect === 'crop') { setCropCanvas(selClip() && selClip().kind !== 'color' ? selClip() : cropClip()); exportState.res = 'crop'; }
     onCanvasChange();
   });
   $('aspectVideoSel').addEventListener('change', (e) => { canvasState.videoSrcId = e.target.value || null; onCanvasChange(); });
+  function setCropCanvas(c) {
+    canvasState.aspect = 'crop';
+    canvasState.cropClipId = c ? c.id : null;
+    canvasState.cropSrcId = c ? c.srcId : null;
+  }
+  $('aspectCropSel').addEventListener('change', (e) => {
+    setCropCanvas(clips.find((c) => c.id === e.target.value));
+    exportState.res = 'crop';
+    onCanvasChange();
+  });
   ['ratioW', 'ratioH'].forEach((id) => $(id).addEventListener('change', () => {
     canvasState.ratioW = clamp(parseFloat($('ratioW').value) || 1, 0.1, 100);
     canvasState.ratioH = clamp(parseFloat($('ratioH').value) || 1, 0.1, 100);
@@ -1598,6 +1654,8 @@
     while (undoStack.length > settings.undoSteps) undoStack.shift();
     redoStack = [];
     liveBefore = null;
+    syncCropCanvas();
+    updateEstimate();
     updateToolbar();
     scheduleSave();
   }
@@ -1722,6 +1780,18 @@
     const key = b.dataset.ratio;
     if (key === 'free') { setTf({ cropRatio: null }); return; }
     setTf({ crop: centeredCrop(c, ratioValue(key)), cropRatio: key });
+  });
+  $('cropAsCanvas').addEventListener('click', () => {
+    const c = selClip();
+    if (!c || c.kind === 'color') return;
+    setCropCanvas(c);
+    exportState.res = 'crop';
+    // Let the clip fill the new canvas exactly.
+    const t = Render.tfOf(c.tf);
+    if (t.fit !== 'fit' || t.anchor !== 'c' || t.dx || t.dy) setTf({ fit: 'fit', anchor: 'c', dx: 0, dy: 0 });
+    onCanvasChange();
+    const p = cropPixels(c);
+    toast(`Canvas set to the crop: ${even(p.w)}×${even(p.h)}.`);
   });
   $('cropReset').addEventListener('click', () => { ensureVisible(); setTf({ crop: { x: 0, y: 0, w: 1, h: 1 }, cropRatio: null }); });
 
@@ -1986,7 +2056,7 @@
   // ---------------------------------------------------------------------------
   // Export
   // ---------------------------------------------------------------------------
-  const exportDefaults = () => ({ res: '1080', resW: 1920, resH: 1080, quality: 'standard', bitrateMbps: 5, targetMB: 25, lockRes: false, fps: '30', codec: 'avc' });
+  const exportDefaults = () => ({ scope: 'all', res: '1080', resW: 1920, resH: 1080, quality: 'standard', bitrateMbps: 5, targetMB: 25, lockRes: false, fps: '30', codec: 'avc' });
   let exportState = Object.assign(exportDefaults(), store.get('export2', {}));
 
   function resolutionOptions() {
@@ -1994,6 +2064,10 @@
     const land = a >= 1;
     const dims = (short) => (land ? { w: even(short * a), h: short } : { w: short, h: even(short / a) });
     const opts = [];
+    if (canvasState.aspect === 'crop') {
+      const c = cropClip();
+      if (c) { const p = cropPixels(c); opts.push({ key: 'crop', label: `Crop size · ${even(p.w)}×${even(p.h)}`, w: even(p.w), h: even(p.h) }); }
+    }
     if (canvasState.aspect === 'video') {
       const v = aspectVideo();
       if (v) { const d = Render.displaySize(v); opts.push({ key: 'source', label: `Source · ${even(d.w)}×${even(d.h)}`, w: even(d.w), h: even(d.h) }); }
@@ -2046,6 +2120,7 @@
     $('lockRes').checked = !!exportState.lockRes;
     $('fpsSel').value = exportState.fps;
     if (!$('codecSel').querySelector(`option[value="${exportState.codec}"]`).disabled) $('codecSel').value = exportState.codec;
+    $('scopeToggle').querySelectorAll('.seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.scope === exportState.scope));
     $('bitrateField').hidden = exportState.quality !== 'custom';
     $('targetField').hidden = exportState.quality !== 'target';
     $('lockResField').hidden = exportState.quality !== 'target';
@@ -2075,6 +2150,16 @@
     scheduleSave();
   }
   ['qualitySel', 'bitrateMbps', 'targetMB', 'lockRes', 'fpsSel', 'codecSel'].forEach((id) => $(id).addEventListener('change', onExportChange));
+  $('scopeToggle').addEventListener('click', (e) => {
+    const b = e.target.closest('.seg-btn');
+    if (!b) return;
+    exportState.scope = b.dataset.scope;
+    store.set('export2', exportState);
+    syncExportUI();
+    updateEstimate();
+    updateToolbar();
+    scheduleSave();
+  });
   $('resSel').addEventListener('change', (e) => {
     exportState.res = e.target.value;
     if (exportState.res === 'custom') {
@@ -2108,22 +2193,30 @@
     }
   });
 
-  const usedSources = () => [...new Set(clips.map((c) => srcOf(c)).filter(Boolean))];
+  // Clips that go into the export: the whole timeline or only the selected clip.
+  function exportClips() {
+    if (exportState.scope !== 'selected') return clips;
+    const c = clips[selectedIndex()];
+    return c ? [c] : [];
+  }
+  const usedSources = () => [...new Set(exportClips().map((c) => srcOf(c)).filter(Boolean))];
 
   function sourceBytes() {
-    return clips.reduce((sum, c) => {
+    return exportClips().reduce((sum, c) => {
       const s = srcOf(c);
       return s && s.kind === 'video' && s.file ? sum + ((c.out - c.in) / Math.max(0.01, s.fileDuration)) * s.file.size : sum;
     }, 0);
   }
 
   function updateEstimate() {
+    if (exportState.scope === 'selected' && !exportClips().length) { $('estimate').textContent = 'Select a clip on the timeline to export only that clip.'; return; }
     if (!clips.length) { $('estimate').textContent = ''; return; }
     const s = getExportSettings();
     const used = usedSources();
-    const dur = totalDuration();
+    const list = exportClips();
+    const dur = list.reduce((sum, c) => sum + (c.out - c.in), 0);
     const out = Render.computeOutput(s, used, dur);
-    const withAudio = !muteAll && clips.some((c) => isVideoClip(c) && !c.muted && srcOf(c) && srcOf(c).audioDecodable);
+    const withAudio = !muteAll && list.some((c) => isVideoClip(c) && !c.muted && srcOf(c) && srcOf(c).audioDecodable);
     const est = Render.estimateSize(out, dur, withAudio);
     const srcBytes = sourceBytes();
     const onlyVideos = used.length && used.every((x) => x.kind === 'video');
@@ -2141,7 +2234,7 @@
   let wakeLock = null;
 
   async function doExport() {
-    if (!clips.length || exporting) return;
+    if (!exportClips().length || exporting) return;
     pause();
     const unreadable = await unreadableSources();
     if (unreadable.length) { lostAccess(unreadable); return; }
@@ -2156,7 +2249,8 @@
 
     const s = getExportSettings();
     // Clip times are in media time; the export reads the actual (possibly trimmed-copy) file.
-    const expClips = clips.map((c) => {
+    const scopeSelected = exportState.scope === 'selected';
+    const expClips = exportClips().map((c) => {
       if (isVideoClip(c)) { const src = srcOf(c); return { kind: 'video', source: src, in: c.in - src.base, out: c.out - src.base, muted: c.muted, tf: c.tf }; }
       return { kind: c.kind, source: srcOf(c) || null, in: c.in, out: c.out, muted: true, still: stillFor(c, s.width, s.height), tf: c.tf };
     });
@@ -2174,7 +2268,7 @@
           $('progressLabel').textContent = `${label}… ${Math.floor(f * 100)}%${eta !== null && stage !== 'finalizing' ? ' · ~' + fmtTime(eta, false) + ' left' : ''}`;
         },
       });
-      showResult(r);
+      showResult(r, scopeSelected);
     } catch (e) {
       if (e && e.name === 'AbortError') toast('Export cancelled.');
       else if (e && e.name === 'NotReadableError') { const u = await unreadableSources(); if (u.length) lostAccess(u); else toast('Export failed: a video couldn\'t be read.', 7000); }
@@ -2190,11 +2284,11 @@
   $('exportBtn').addEventListener('click', doExport);
   $('cancelExportBtn').addEventListener('click', () => { if (abortCtl) abortCtl.abort(); });
 
-  function showResult(r) {
+  function showResult(r, onlyClip) {
     if (resultUrl) URL.revokeObjectURL(resultUrl);
-    const first = clips.map((c) => srcOf(c)).find(Boolean);
+    const first = exportClips().map((c) => srcOf(c)).find(Boolean) || clips.map((c) => srcOf(c)).find(Boolean);
     const base = (first ? first.name : 'videcutto').replace(/\.[^.]+$/, '');
-    const name = `${base}_videcutto.mp4`;
+    const name = `${base}${onlyClip ? '_clip' : ''}_videcutto.mp4`;
     resultFile = new File([r.blob], name, { type: 'video/mp4' });
     resultUrl = URL.createObjectURL(resultFile);
     const link = $('downloadLink');

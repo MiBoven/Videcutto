@@ -31,8 +31,8 @@ A privacy-friendly video editor and compressor that runs entirely in your browse
 ### Editing
 - One timeline with thumbnail strips; the playhead stays fixed in the centre — scroll the timeline to scrub
 - Preview player with play/pause, frame-by-frame stepping and a time display
-- Toolbar: **Undo / Redo** (always visible on the left), **Cut** at the playhead, **Paste** at the playhead (splits a clip if necessary), **Add** (videos & images, or a color clip)
-- **Clip panel:** appears below the timeline while a clip is selected — **Copy**, **Mute** (videos), **Delete**, and for images/color clips the **duration**; for color clips also **color** and **size**
+- Toolbar: **Undo / Redo** fixed on the left, **Add** (videos & images, or a color clip) fixed on the right; in between **Cut** at the playhead (split icon — splits the clip), **Copy**, **Paste** at the playhead (splits a clip if necessary) and **Delete**. If space ever runs out, only the middle part scrolls
+- **Clip panel:** appears below the timeline while a clip is selected — **Mute** (videos), and for images/color clips the **duration**; for color clips also **color** and **size**
 - **Reorder** clips by dragging (on touch devices: tap to select, then drag the selected clip)
 - Mute all audio at once with the speaker button
 - **Undo / Redo** — 10 steps by default (adjustable in Settings, 1–100)
@@ -64,6 +64,7 @@ A privacy-friendly video editor and compressor that runs entirely in your browse
 ### Crop, position, size & rotation (per clip)
 The clip panel has four tabs — **Clip**, **Crop**, **Position**, **Rotate**. Opening a transform tab moves the playhead into the selected clip so it can be edited directly in the preview; on phones the preview then stays pinned at the top while you scroll the panel.
 - **Crop** (videos and images): drag the frame or its corners in the preview (the whole picture is shown, the cut-off part darkened). Presets *Free*, *Like canvas*, 16:9, 9:16, 1:1, 4:5, 4:3 keep their ratio while resizing; *Reset crop*
+- **Use as canvas** (in the Crop tab): the canvas takes the crop's aspect ratio and the export its exact pixel size, and the clip is fitted to fill it — together with *Selected clip only* this saves just that section of a video
 - **Position:** 3×3 anchor grid (as in JPG75's watermark position) — e.g. top left puts the clip's top-left corner into the canvas' top-left corner, bottom center its bottom edge centre onto the canvas' bottom centre; choosing an anchor removes any manual offset
 - **Move** the clip by dragging it in the preview (finger or mouse) — also beyond the canvas edges; parts outside are cut off, the canvas size never changes. A dashed frame shows where the clip lies. Fine-tune with the arrow pad (0.5 % per tap), ⊙ returns to the anchor
 - **Snap** to the canvas centre and edges while dragging (guide lines appear); switchable, hold Alt on desktop to move freely
@@ -73,13 +74,13 @@ The clip panel has four tabs — **Clip**, **Crop**, **Position**, **Rotate**. O
 - Color clips can be positioned, sized and rotated too (no crop)
 
 ### Canvas
-- **Format:** 16:9, 9:16, 1:1, 4:5 (Instagram portrait), 4:3, 3:4, 21:9, **Like a video…** (choose which one; by default the first loaded video) or **Custom** (any ratio, e.g. 3 : 2)
+- **Format:** 16:9, 9:16, 1:1, 4:5 (Instagram portrait), 4:3, 3:4, 21:9, **Like a video…** (choose which one; by default the first loaded video), **Like a crop…** (choose the clip; follows later changes of that crop, also after splitting the clip) or **Custom** (any ratio, e.g. 3 : 2)
 - A new project that starts with a video takes that video's format; an empty canvas starts as 16:9
 - **Background** for the space around videos and images that don't match the format: a **color** (default anthracite #293133) or a **blurred** copy of the visible video or image (color clips always use the color)
 - The preview draws the canvas exactly like the export and always keeps the canvas ratio
 
 ### Export & compression
-- **Resolution** — only sizes that fit the format, e.g. 16:9: HD 1280×720, Full HD 1920×1080 (default), UHD 3840×2160; 1:1: 1080×1080; 4:5: 1080×1350; *Like a video* adds *Source*; plus **Custom** (width and height stay linked to the format). A project that starts with a video smaller than 1080p uses its source size instead of upscaling
+- **Resolution** — only sizes that fit the format, e.g. 16:9: HD 1280×720, Full HD 1920×1080 (default), UHD 3840×2160; 1:1: 1080×1080; 4:5: 1080×1350; *Like a video* adds *Source*, *Like a crop* adds *Crop size* (the crop's own pixels, no scaling); plus **Custom** (width and height stay linked to the format). A project that starts with a video smaller than 1080p uses its source size instead of upscaling
 - **Quality:** Small / Standard (default) / High — about 0.05 / 0.08 / 0.14 bits per pixel, the resulting Mbit/s are shown in the list (e.g. Standard at Full HD 30 fps ≈ 5 Mbit/s); **Custom bitrate** in Mbit/s; or **Max. file size** in MB
 - With *Max. file size*, the resolution is lowered automatically when the bitrate would be too low for it (a smaller sharp picture looks better than a large blocky one) — tick **Keep resolution** to prevent this; the estimate says when it happens
 - Phone recordings typically shrink by 70–95 %, similar to what messengers do, but you choose the quality
@@ -89,7 +90,8 @@ The clip panel has four tabs — **Clip**, **Crop**, **Position**, **Rotate**. O
 - Estimated output size is shown before exporting; progress with time remaining and a **Cancel** button during export
 - **Never uses a higher bitrate than the source** (quality presets and max. file size, timelines with videos only): the video bitrate is capped at ~75 % of the source's (scaled to the output resolution and frame rate), and the audio bitrate at the source's. Already strongly compressed videos (e.g. from Instagram or WhatsApp) no longer get bigger — the estimate and the result show a note when exporting won't make a video noticeably smaller. A custom bitrate is used as entered
 - Keeps the screen awake while exporting (Wake Lock API, where supported)
-- **Save** the result, or **Share** it directly (e.g. to a messenger) on devices that support sharing files
+- **Whole timeline** or **Selected clip only** — export just one clip without deleting the others (prepared for special exports such as GIF or audio-only later)
+- **Create video** starts the export; **Download** the result, or **Share** it directly (e.g. to a messenger) on devices that support sharing files
 
 ### General
 - Dark mode by default, light mode via the menu

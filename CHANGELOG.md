@@ -1,5 +1,14 @@
 # Changelog
 
+### 0.5.0 — 2026-10-28 — Save a crop, export one clip
+- Crop tab: "Use as canvas" — canvas format and export resolution follow the crop (exact pixel size), the clip fills the canvas
+- Canvas format "Like a crop…" with clip selection; follows later crop changes and splits
+- Resolution option "Crop size" (no scaling)
+- Export: "Whole timeline" or "Selected clip only"
+- Toolbar: Undo/Redo fixed left, Add fixed right, Cut, Copy, Paste and Delete in between (only the middle part scrolls if needed); Copy and Delete moved out of the clip panel
+- Cut now uses a split icon instead of scissors
+- Buttons renamed: "Export video" → "Create video", "Save" → "Download"
+
 ### 0.4.0 — 2026-10-28 — Crop, position, size & rotation
 - Clip panel tabs: Clip, Crop, Position, Rotate (opening one moves the playhead into the selected clip)
 - Crop per clip with handles in the preview and presets (Free, Like canvas, 16:9, 9:16, 1:1, 4:5, 4:3), ratio kept while resizing

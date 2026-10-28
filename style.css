@@ -316,7 +316,8 @@ footer { text-align: center; color: var(--text-secondary); font-size: 12px; marg
 .toolbar { overflow: visible; }
 .tool-group { display: flex; gap: 2px; }
 .tool-group.fixed { flex-shrink: 0; }
-.tool-group.scroll { flex: 1; min-width: 0; }
+.tool-group.scroll { flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.tool-group.scroll::-webkit-scrollbar { display: none; }
 .add-wrap { flex: 1 1 0; display: flex; }
 .add-wrap .tool { flex: 1; }
 .add-wrap .dropdown { top: 52px; }
@@ -370,3 +371,5 @@ input[type=color] { width: 44px; height: 36px; padding: 2px; border: 1px solid v
   body.transforming .preview-wrap { position: sticky; top: 0; z-index: 25; box-shadow: 0 8px 18px rgba(0,0,0,.55); }
   body.transforming .preview { --pv-h: 36vh; }
 }
+.scope { margin-bottom: 12px; }
+.add-wrap { flex: 0 0 auto; min-width: 52px; }

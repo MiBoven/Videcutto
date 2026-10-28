@@ -125,8 +125,13 @@
     </div>
     <span class="tool-sep"></span>
     <div class="tool-group scroll">
-      <button class="tool" id="splitBtn" title="Cut at playhead (C / S)"><svg viewBox="0 0 24 24"><circle cx="6" cy="18" r="3"/><circle cx="18" cy="18" r="3"/><path d="M8.2 16L19 4M15.8 16L5 4"/></svg><span>Cut</span></button>
+      <button class="tool" id="splitBtn" title="Cut at playhead — split the clip (C / S)"><svg viewBox="0 0 24 24"><rect x="2.5" y="7" width="7" height="10" rx="1.5"/><rect x="14.5" y="7" width="7" height="10" rx="1.5"/><path d="M12 3v18"/></svg><span>Cut</span></button>
+      <button class="tool" id="copyBtn" title="Copy clip (Ctrl+C)"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 012-2h9"/></svg><span>Copy</span></button>
       <button class="tool" id="pasteBtn" title="Paste at playhead (Ctrl+V)"><svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="16" rx="2"/><path d="M9 5V3h6v2"/><path d="M9 12h6M9 16h4"/></svg><span>Paste</span></button>
+      <button class="tool" id="deleteBtn" title="Delete clip (Del)"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg><span>Delete</span></button>
+    </div>
+    <span class="tool-sep"></span>
+    <div class="tool-group fixed">
       <div class="menu-wrap add-wrap">
         <button class="tool" id="addBtn" title="Add" aria-haspopup="true"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>Add</span></button>
         <div class="dropdown" id="addMenu" style="display:none" role="menu">
@@ -171,9 +176,7 @@
     <!-- Clip -->
     <div class="cp-pane" data-pane="clip">
       <div class="cp-actions">
-        <button class="tool" id="copyBtn" title="Copy clip (Ctrl+C)"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 012-2h9"/></svg><span>Copy</span></button>
         <button class="tool" id="muteClipBtn" title="Mute clip (M)"><svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg><span>Mute</span></button>
-        <button class="tool" id="deleteBtn" title="Delete clip (Del)"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg><span>Delete</span></button>
       </div>
       <div class="field" id="cpDurField">
         <label for="cpDuration">Duration</label>
@@ -214,7 +217,10 @@
         <button type="button" class="btn-chip" data-ratio="4:3">4:3</button>
       </div>
       <p class="hint">Drag the frame or its corners in the preview. Presets keep their aspect ratio while you resize.</p>
-      <button type="button" class="btn-secondary wide" id="cropReset">Reset crop</button>
+      <div class="btn-row">
+        <button type="button" class="btn-secondary" id="cropReset">Reset crop</button>
+        <button type="button" class="btn-primary" id="cropAsCanvas" title="Canvas format and resolution follow this crop">Use as canvas</button>
+      </div>
     </div>
 
     <!-- Position & size -->
@@ -288,12 +294,17 @@
         <option value="3:4">3:4</option>
         <option value="21:9">21:9 · cinema</option>
         <option value="video">Like a video…</option>
+        <option value="crop">Like a crop…</option>
         <option value="custom">Custom…</option>
       </select>
     </div>
     <div class="field" id="aspectVideoField" hidden>
       <label for="aspectVideoSel">Video</label>
       <select id="aspectVideoSel"></select>
+    </div>
+    <div class="field" id="aspectCropField" hidden>
+      <label for="aspectCropSel">Clip</label>
+      <select id="aspectCropSel"></select>
     </div>
     <div class="field" id="aspectCustomField" hidden>
       <label>Ratio</label>
@@ -315,6 +326,10 @@
   <!-- Export -->
   <section class="card export-card" id="exportCard">
     <h2>Export</h2>
+    <div class="segment small scope" id="scopeToggle">
+      <button type="button" class="seg-btn active" data-scope="all">Whole timeline</button>
+      <button type="button" class="seg-btn" data-scope="selected">Selected clip only</button>
+    </div>
     <div class="field">
       <label for="resSel">Resolution</label>
       <select id="resSel"></select>
@@ -361,7 +376,7 @@
       </select>
     </div>
     <p class="estimate" id="estimate"></p>
-    <button class="btn-primary wide" id="exportBtn">Export video</button>
+    <button class="btn-primary wide" id="exportBtn">Create video</button>
 
     <div class="progress" id="progressBox" hidden>
       <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
@@ -373,7 +388,7 @@
       <p class="result-sizes" id="resultSizes"></p>
       <ul class="warnings" id="resultWarnings"></ul>
       <div class="btn-row">
-        <a class="btn-primary" id="downloadLink" download="video.mp4" href="#">Save</a>
+        <a class="btn-primary" id="downloadLink" download="video.mp4" href="#">Download</a>
         <button class="btn-secondary" id="shareBtn" hidden>Share</button>
       </div>
     </div>
