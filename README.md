@@ -64,6 +64,14 @@ A privacy-friendly video editor and compressor that runs entirely in your browse
 - Deleting a project removes only the copies no other project uses; original files are never touched
 - The single project of versions 0.2–0.5 is moved into the list automatically
 
+### Project files (.videcutto) — other devices & backups
+- **Export project** (⇪ next to the project name, or on a project card) creates a `.videcutto` file:
+  - **Project only** — cuts, canvas and settings, a few KB. On the other device the videos and images are selected again and recognised automatically (by file size)
+  - **Project with all files** — everything included (trimmed working copies only contain the chosen part); the size is shown beforehand. Opens on the other device without selecting anything
+- **Download** or **Share** the file (cloud, USB stick, messenger, e-mail …)
+- **Import** with *Import a project file (.videcutto)…* on the start screen, or drop/paste the file anywhere. It becomes a new project (the name gets "(2)" if it already exists); included files are stored as working copies
+- The file is a standard ZIP archive (uncompressed, ZIP64 for files over 4 GB) with `project.json` and a `media/` folder. It is built as a Blob of references to the original files, so even very large projects are never loaded into memory — each file is only read once to compute its checksum
+
 ### Saving & restoring media
 - **Phones/tablets:** each video gets a **working copy** in the browser's private storage (OPFS) right after loading — after pre-trimming only the chosen part is copied, losslessly (no re-encoding). This keeps videos available after a reload and fixes Android revoking the picker's read permission after a while ("The requested file could not be read…")
 - **Desktop Chrome/Edge:** the app remembers the original files (File System Access API) instead of copying them; after a reload one click on *Allow access* reopens them
@@ -137,6 +145,7 @@ The preview uses the browser's native `<video>` decoding; the export uses WebCod
 - `mp4.js` — MP4/MOV demuxer and muxer
 - `render.js` — WebCodecs export engine
 - `project.js` — autosave, working copies and file handles
+- `zip.js` — streaming ZIP writer/reader for project files
 - `sw.js` — service worker (offline, stale-while-revalidate)
 - `manifest.json` — PWA manifest
 - `netlify.toml` — security headers (no `Permissions-Policy` on purpose)

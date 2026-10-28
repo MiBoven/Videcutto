@@ -1,5 +1,11 @@
 # Changelog
 
+### 0.7.0 — 2026-10-28 — Project files for other devices
+- Export a project as a `.videcutto` file: project only (a few KB, files are selected again on the other device) or with all files (size shown beforehand)
+- Download or share the file; import it via the start screen, drag & drop or paste — it becomes a new project
+- Included files are stored as working copies on import; trimmed copies keep their timing
+- Streaming ZIP writer/reader (`zip.js`, ZIP64 for large files) — big projects aren't loaded into memory
+
 ### 0.6.0 — 2026-10-28 — Project library
 - Any number of projects: list on the start screen with cover, name, clips, length, last change and storage used; total storage and free space below
 - Open, rename, duplicate, delete projects; project name editable above the preview

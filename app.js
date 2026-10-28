@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.6.0';
+  const VERSION = '0.7.0';
   const $ = (id) => document.getElementById(id);
 
   // ---------------------------------------------------------------------------
@@ -282,7 +282,14 @@
 
   let loadingQueue = Promise.resolve();
   function handleFiles(list) {
-    const entries = [...list].map((x) => (x instanceof File ? { file: x } : x));
+    let entries = [...list].map((x) => (x instanceof File ? { file: x } : x));
+    // Project files are imported as new projects.
+    const projFiles = entries.filter((x) => /\.videcutto$/i.test(x.file.name));
+    if (projFiles.length) {
+      loadingQueue = loadingQueue.then(async () => { for (const pf of projFiles) await importProjectFile(pf.file); }).catch(() => {});
+      entries = entries.filter((x) => !projFiles.includes(x));
+      if (!entries.length) return;
+    }
     const media = entries.filter((x) => isVideoFile(x.file) || isImageFile(x.file));
     if (!media.length) { if (entries.length) toast('Please choose videos (MP4, MOV, M4V) or images (JPG, PNG, WebP).'); return; }
     if (media.length < entries.length) toast('Some files were skipped because they are neither videos nor images.');
@@ -2843,6 +2850,7 @@
     duplicate: '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 012-2h9"/></svg>',
     files: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6"/><path class="fill" d="M12 6.6a1.2 1.2 0 110 2.4 1.2 1.2 0 010-2.4z"/></svg>',
     remove: '<svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>',
+    export: '<svg viewBox="0 0 24 24"><path d="M12 3v12M7 8l5-5 5 5"/><path d="M5 13v6a2 2 0 002 2h10a2 2 0 002-2v-6"/></svg>',
   };
 
   let listRendering = null;
@@ -2920,6 +2928,7 @@
     };
     act('rename', 'Rename', () => renameProject(d));
     act('duplicate', 'Duplicate', () => openDuplicate(d));
+    act('export', 'Export project file', async () => { await openProject(d.id); if (projectId === d.id) openProjectExport(); });
     act('files', 'Files & storage', () => openFilesModal(d));
     act('remove', 'Delete', () => deleteProject(d));
     card.append(open, actions);
@@ -3103,6 +3112,159 @@
     await deleteProject({ id: projectId, name: projectName });
     showStart();
   });
+
+  // ---------------------------------------------------------------------------
+  // Project files (.videcutto): export and import, e.g. to move to another device
+  // ---------------------------------------------------------------------------
+  const PROJECT_FORMAT = 'videcutto-project';
+  const safeFileName = (n) => (String(n || 'project').replace(/[\\/:*?"<>|]+/g, '_').trim() || 'project');
+  let pxUrl = null;
+  let pxFile = null;
+  let pxAbort = null;
+
+  async function packableSources() {
+    const out = [];
+    for (const src of sources.values()) {
+      if (!src.missing && src.file && (await isReadable(src))) out.push(src);
+    }
+    return out;
+  }
+
+  async function openProjectExport() {
+    if (!projectId) return;
+    pause();
+    await saveNow();
+    const all = [...sources.values()];
+    const ok = await packableSources();
+    const bytes = ok.reduce((s, x) => s + x.file.size, 0);
+    const missing = all.length - ok.length;
+    $('pxFullNote').textContent = `Everything included — opens on the other device without selecting files again · ≈ ${fmtSize(bytes + 4096)}` +
+      (missing ? `. ${missing} file${missing === 1 ? ' is' : 's are'} missing here and can't be included.` : '');
+    $('pxResult').hidden = true;
+    $('pxProgress').hidden = true;
+    $('pxChoices').hidden = false;
+    openModal('projExportModal');
+  }
+
+  async function exportProjectFile(withFiles) {
+    const doc = await Project.loadProject(projectId);
+    if (!doc) { toast('Add something to the project first.'); return; }
+    const pkg = JSON.parse(JSON.stringify(doc));
+    pkg.format = PROJECT_FORMAT;
+    pkg.formatVersion = 1;
+    const entries = [];
+    const ok = withFiles ? await packableSources() : [];
+    for (const m of pkg.media || []) {
+      delete m.copyName;
+      const src = ok.find((s) => s.id === m.id);
+      if (!src) { m.pack = null; continue; }
+      const ext = (/\.[a-z0-9]{1,5}$/i.exec(src.name || '') || [m.kind === 'image' ? '.img' : '.mp4'])[0];
+      m.pack = `media/${m.id}${ext.toLowerCase()}`;
+      m.packBase = src.base || 0; // a trimmed working copy starts later than the original
+      entries.push({ name: m.pack, blob: src.file });
+    }
+    entries.unshift({ name: 'project.json', blob: new Blob([JSON.stringify(pkg)], { type: 'application/json' }) });
+    $('pxChoices').hidden = true;
+    $('pxProgress').hidden = false;
+    $('pxFill').style.width = '0%';
+    pxAbort = new AbortController();
+    try {
+      const blob = await Zip.createZip(entries, {
+        signal: pxAbort.signal,
+        onProgress: (f) => { $('pxFill').style.width = (f * 100).toFixed(1) + '%'; },
+      });
+      if (pxUrl) URL.revokeObjectURL(pxUrl);
+      const name = `${safeFileName(projectName)}${withFiles ? '' : '_project-only'}.videcutto`;
+      pxFile = new File([blob], name, { type: 'application/zip' });
+      pxUrl = URL.createObjectURL(pxFile);
+      $('pxDownload').href = pxUrl;
+      $('pxDownload').download = name;
+      $('pxResultText').textContent = `${name} · ${fmtSize(pxFile.size)}`;
+      let canShare = false;
+      try { canShare = !!(navigator.canShare && navigator.canShare({ files: [pxFile] })); } catch (e) { canShare = false; }
+      $('pxShare').hidden = !canShare;
+      $('pxResult').hidden = false;
+    } catch (e) {
+      if (e && e.name === 'AbortError') toast('Export cancelled.');
+      else toast('Couldn\'t create the project file: ' + (e.message || e), 6000);
+      $('pxChoices').hidden = false;
+    } finally {
+      $('pxProgress').hidden = true;
+      pxAbort = null;
+    }
+  }
+  $('pxSmallBtn').addEventListener('click', () => exportProjectFile(false));
+  $('pxFullBtn').addEventListener('click', () => exportProjectFile(true));
+  $('pxCancel').addEventListener('click', () => { if (pxAbort) pxAbort.abort(); });
+  $('pxShare').addEventListener('click', () => { if (pxFile) navigator.share({ files: [pxFile], title: pxFile.name }).catch(() => {}); });
+  $('pxClose').addEventListener('click', () => { if (pxAbort) pxAbort.abort(); closeModal('projExportModal'); });
+  $('projectExportBtn').addEventListener('click', openProjectExport);
+
+  async function importProjectFile(file) {
+    showBusy('Importing project…', file.name);
+    try {
+      let toc;
+      try { toc = await Zip.readZip(file); } catch (e) { throw new Error('This is not a Videcutto project file.'); }
+      const pj = toc.get('project.json');
+      if (!pj) throw new Error('This is not a Videcutto project file.');
+      const doc = JSON.parse(await file.slice(pj.offset, pj.offset + pj.size).text());
+      if (doc.format !== PROJECT_FORMAT) throw new Error('This is not a Videcutto project file.');
+      const packed = (doc.media || []).filter((m) => m.pack && toc.has(m.pack));
+      const bytes = packed.reduce((s, m) => s + toc.get(m.pack).size, 0);
+      const canStore = Project.canCopy();
+      if (packed.length && canStore && (await Project.freeSpace()) < bytes * 1.1) throw new Error(`Not enough free storage (needs ${fmtSize(bytes)}).`);
+      if (packed.length && !canStore) toast('This browser can\'t store the included files — select them again when opening the project.', 6000);
+      // New id; keep the name but avoid duplicates in the list.
+      const names = new Set((await Project.listProjects()).map((d) => d.name));
+      let name = doc.name || 'Imported project';
+      if (names.has(name)) { let k = 2; while (names.has(`${name} (${k})`)) k++; name = `${name} (${k})`; }
+      doc.id = Project.newId();
+      doc.name = name;
+      doc.createdAt = doc.savedAt = Date.now();
+      let copied = 0;
+      for (const m of doc.media || []) {
+        const e = m.pack && toc.get(m.pack);
+        if (e && canStore) {
+          const ext = (/\.[a-z0-9]{1,5}$/i.exec(m.pack) || ['.bin'])[0];
+          const cname = `${m.id}-${Date.now().toString(36)}-i${++copyCounter}${ext}`;
+          const base = copied;
+          await Project.copyWhole(cname, file.slice(e.offset, e.offset + e.size), (f) => busyProgress(bytes ? (base + f * e.size) / bytes : 1));
+          copied += e.size;
+          m.storage = 'opfs';
+          m.copyName = cname;
+          m.base = m.packBase || 0;
+        } else {
+          m.storage = 'none';
+          m.copyName = null;
+        }
+        delete m.pack;
+        delete m.packBase;
+      }
+      delete doc.format;
+      delete doc.formatVersion;
+      await Project.saveProject(doc);
+      Project.requestPersist();
+      if (bc) bc.postMessage({ type: 'changed' });
+      hideBusy();
+      toast(`Imported "${name}".`);
+      await openProject(doc.id);
+    } catch (e) {
+      toast('Import failed: ' + (e.message || e), 6000);
+    } finally {
+      hideBusy();
+      renderProjectList();
+    }
+  }
+
+  function pickProjectFile() {
+    const inp = document.createElement('input');
+    inp.type = 'file';
+    // Android pickers grey out unknown extensions, so allow everything there.
+    inp.accept = isCoarse ? '*/*' : '.videcutto,application/zip';
+    inp.addEventListener('change', () => { const f = inp.files[0]; if (f) handleFiles([f]); });
+    inp.click();
+  }
+  $('importProjectBtn').addEventListener('click', pickProjectFile);
 
   // On start: migrate the single project of 0.2–0.5, open the project in the URL.
   (async () => {

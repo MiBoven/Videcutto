@@ -76,6 +76,7 @@
   <button class="btn-secondary wide" id="emptyCanvasBtn">
     <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M12 9v6M9 12h6"/></svg>Start with an empty canvas
   </button>
+  <button class="link-btn center import-btn" id="importProjectBtn">Import a project file (.videcutto)…</button>
 
 
   <div class="card info-card">
@@ -89,6 +90,7 @@
 <main id="editorScreen" hidden>
   <div class="project-bar">
     <input type="text" id="projectName" class="project-name" maxlength="80" aria-label="Project name" title="Rename project" spellcheck="false">
+    <button class="icon small" id="projectExportBtn" title="Export project file" aria-label="Export project file"><svg viewBox="0 0 24 24"><path d="M12 3v12M7 8l5-5 5 5"/><path d="M5 13v6a2 2 0 002 2h10a2 2 0 002-2v-6"/></svg></button>
     <button class="icon small" id="projectFilesBtn" title="Files &amp; storage" aria-label="Files and storage"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6"/><path class="fill" d="M12 6.6a1.2 1.2 0 110 2.4 1.2 1.2 0 010-2.4z"/></svg></button>
   </div>
   <div class="preview-wrap">
@@ -519,6 +521,36 @@
   </div>
 </div>
 
+<!-- ===================== Export project file ===================== -->
+<div class="modal-bg" id="projExportModal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="pxTitle">
+    <h2 id="pxTitle">Export project</h2>
+    <p class="modal-sub">Saves the project as a .videcutto file — to continue on another device or as a backup. Open it there with "Import a project file" on the start screen, or simply drop it onto Videcutto.</p>
+    <div id="pxChoices">
+      <button class="choice" id="pxSmallBtn">
+        <strong>Project only</strong>
+        <span>Cuts, canvas and settings · a few KB. On the other device you select the videos and images again — they're recognised automatically.</span>
+      </button>
+      <button class="choice" id="pxFullBtn">
+        <strong>Project with all files</strong>
+        <span id="pxFullNote"></span>
+      </button>
+    </div>
+    <div class="progress" id="pxProgress" hidden>
+      <div class="progress-bar"><div class="progress-fill" id="pxFill"></div></div>
+      <div class="progress-row"><span>Preparing file…</span><button class="link-btn" id="pxCancel">Cancel</button></div>
+    </div>
+    <div class="result" id="pxResult" hidden>
+      <p class="result-sizes" id="pxResultText"></p>
+      <div class="btn-row">
+        <a class="btn-primary" id="pxDownload" href="#" download="project.videcutto">Download</a>
+        <button class="btn-secondary" id="pxShare" hidden>Share</button>
+      </div>
+    </div>
+    <button class="link-btn center" id="pxClose">Close</button>
+  </div>
+</div>
+
 <!-- ===================== Busy ===================== -->
 <div class="modal-bg" id="busyModal" hidden>
   <div class="modal busy" role="dialog" aria-modal="true" aria-labelledby="busyTitle">
@@ -533,6 +565,7 @@
 <script src="mp4.js"></script>
 <script src="render.js"></script>
 <script src="project.js"></script>
+<script src="zip.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

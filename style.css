@@ -382,7 +382,7 @@ input[type=color] { width: 44px; height: 36px; padding: 2px; border: 1px solid v
 .pc-info span { color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pc-info .pc-badge { color: var(--accent); font-weight: 700; font-size: 11.5px; }
 .pc-info .pc-badge.other { color: var(--warn-text); }
-.pc-actions { display: grid; grid-template-columns: repeat(2, 30px); grid-auto-rows: 30px; gap: 4px; align-content: center; }
+.pc-actions { display: grid; grid-template-columns: repeat(3, 30px); grid-auto-rows: 30px; gap: 4px; align-content: center; }
 .hint.warn-text { color: var(--warn-text); }
 .project-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .project-name { flex: 1; min-width: 0; background: transparent; border: 1px solid transparent; border-radius: 8px; color: var(--text); font: inherit; font-size: 15px; font-weight: 700; padding: 6px 8px; }
@@ -394,3 +394,5 @@ input[type=color] { width: 44px; height: 36px; padding: 2px; border: 1px solid v
 .files-list li { flex-wrap: wrap; }
 .files-list .m-meta { white-space: normal; }
 .m-btns { display: flex; gap: 6px; flex-wrap: wrap; width: 100%; }
+.import-btn { margin: -4px auto 16px; }
+@media (max-width: 420px) { .pc-thumb { width: 64px; height: 48px; } }
