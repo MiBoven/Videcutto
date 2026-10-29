@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.8.1';
+  const VERSION = '0.8.2';
   const $ = (id) => document.getElementById(id);
 
   // ---------------------------------------------------------------------------
@@ -92,6 +92,35 @@
   $('themeItem').addEventListener('click', () => { setTheme(root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark'); closeMenu(); });
   $('settingsItem').addEventListener('click', () => { closeMenu(); openModal('settingsModal'); });
   $('aboutItem').addEventListener('click', () => { closeMenu(); openModal('aboutModal'); });
+
+  // Help: short guide with sections; ? links in panels open the matching one.
+  if (isCoarse) document.body.classList.add('coarse');
+  function openHelp(section) {
+    const modal = $('helpModal');
+    const target = section ? $('help-' + section) : null;
+    if (target) {
+      modal.querySelectorAll('details').forEach((d) => { d.open = d === target; });
+      target.classList.add('flash');
+      setTimeout(() => target.classList.remove('flash'), 1200);
+    }
+    openModal('helpModal');
+    if (target) requestAnimationFrame(() => target.scrollIntoView({ block: 'start' }));
+    else modal.querySelector('.modal').scrollTop = 0;
+  }
+  $('helpItem').addEventListener('click', () => { closeMenu(); openHelp(); });
+  $('helpCloseBtn').addEventListener('click', () => closeModal('helpModal'));
+  $('helpModal').addEventListener('click', (e) => { if (e.target.id === 'helpModal') closeModal('helpModal'); });
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('.help-link');
+    if (b) { e.stopPropagation(); openHelp(b.dataset.help); }
+  }, true);
+  // Escape closes the help first (it can lie on top of another window); ? opens it.
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !$('helpModal').hidden) { e.stopImmediatePropagation(); closeModal('helpModal'); return; }
+    const tag = (e.target.tagName || '').toLowerCase();
+    if (e.key === '?' && !e.ctrlKey && !e.metaKey && tag !== 'input' && tag !== 'textarea' && tag !== 'select'
+      && !document.querySelector('.modal-bg:not([hidden])')) { e.preventDefault(); openHelp(); }
+  }, true);
 
   function openModal(id) { $(id).hidden = false; }
   function closeModal(id) { $(id).hidden = true; }

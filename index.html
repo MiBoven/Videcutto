@@ -42,6 +42,7 @@
       <div class="dropdown" id="menu" style="display:none" role="menu">
         <button type="button" role="menuitem" id="themeItem"><span class="mi-icon">◐</span><span id="themeLabel">Light mode</span></button>
         <button type="button" role="menuitem" id="settingsItem"><span class="mi-icon">⚙</span>Settings</button>
+        <button type="button" role="menuitem" id="helpItem"><span class="mi-icon">?</span>Help &amp; shortcuts</button>
         <button type="button" role="menuitem" id="aboutItem"><span class="mi-icon">ⓘ</span>About</button>
       </div>
     </div>
@@ -172,6 +173,7 @@
     <div class="cp-head">
       <span class="cp-kind">Track</span>
       <strong class="cp-title" id="tpTitle"></strong>
+      <button class="icon small help-link" data-help="tracks" title="Help: tracks" aria-label="Help: tracks"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.3a2.5 2.5 0 014.8.9c0 1.7-2.4 2-2.4 3.6"/><path d="M12 17.2v.1"/></svg></button>
       <button class="icon small" id="tpClose" title="Close" aria-label="Close track settings"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
     <span class="mini-label">Opacity</span>
@@ -199,6 +201,7 @@
     <div class="cp-head">
       <span class="cp-kind" id="cpKind"></span>
       <strong class="cp-title" id="cpTitle"></strong>
+      <button class="icon small help-link" data-help="transform" title="Help: crop, position & rotate" aria-label="Help: crop, position & rotate"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.3a2.5 2.5 0 014.8.9c0 1.7-2.4 2-2.4 3.6"/><path d="M12 17.2v.1"/></svg></button>
       <button class="icon small" id="cpClose" title="Deselect" aria-label="Deselect clip"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
     <div class="segment small cp-tabs" id="cpTabs" role="tablist">
@@ -372,6 +375,8 @@
   <div class="modal export-modal" role="dialog" aria-modal="true" aria-labelledby="exportTitle">
     <div class="modal-head">
       <h2 id="exportTitle">Create video</h2>
+      <span class="head-spacer"></span>
+      <button class="icon small help-link" data-help="export" title="Help: create video" aria-label="Help: create video"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.3a2.5 2.5 0 014.8.9c0 1.7-2.4 2-2.4 3.6"/><path d="M12 17.2v.1"/></svg></button>
       <button class="icon small" id="exportCloseBtn" title="Close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
     <div class="field">
@@ -616,6 +621,102 @@
 </div>
 
 <div class="toast" id="toast" hidden></div>
+
+<!-- ===================== Help ===================== -->
+<div class="modal-bg" id="helpModal" hidden>
+  <div class="modal help" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
+    <div class="modal-head">
+      <h2 id="helpTitle">Help &amp; shortcuts</h2>
+      <button class="icon small" id="helpCloseBtn" title="Close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+
+    <details id="help-start" open>
+      <summary>Getting started</summary>
+      <ul>
+        <li>Choose, drop or paste (Ctrl+V) videos and images on the start screen — each choice starts a <strong>new project</strong>. <em>Start with an empty canvas</em> begins with a color clip.</li>
+        <li>Phones: <strong>Gallery</strong> is quick, <strong>Files</strong> keeps the original file names.</li>
+        <li>Big videos can be <strong>pre-trimmed</strong> first — only the chosen part goes onto the timeline.</li>
+        <li>Projects are <strong>saved automatically</strong>. Tap the logo to get back to the project list.</li>
+      </ul>
+    </details>
+
+    <details id="help-timeline">
+      <summary>Timeline &amp; editing</summary>
+      <ul>
+        <li>The <strong>playhead stays in the middle</strong> — scroll the timeline to move through the video.</li>
+        <li>Zoom with the 🔍 buttons, two fingers (pinch) or Ctrl + mouse wheel.</li>
+        <li><strong>Tap a clip to select it, then drag it.</strong> Unselected clips never move, so scrolling is safe.</li>
+        <li><strong>Cut</strong> splits the selected clip at the playhead (or the main track's clip under it).</li>
+        <li><strong>Paste</strong> inserts at the playhead — into the main track if copied from there, otherwise as an overlay.</li>
+        <li>The speaker next to the time mutes everything; <em>Mute</em> in the clip panel mutes one clip.</li>
+        <li><strong>Undo / Redo</strong> keep 10 steps (adjustable in Settings).</li>
+      </ul>
+    </details>
+
+    <details id="help-tracks">
+      <summary>Tracks &amp; overlays</summary>
+      <ul>
+        <li>The <strong>main track</strong> is at the bottom and <strong>magnetic</strong>: clips follow each other without gaps. Switch the magnet off in its track settings to place clips freely.</li>
+        <li><strong>Add → As overlay</strong> puts a video, image or color clip at the playhead on a track above — half size, centred. Higher tracks cover lower ones.</li>
+        <li>Drag a selected clip <strong>up or down</strong> to another track. No room there, or dropped above the top track? A new track is created.</li>
+        <li>Left of each track: 👁 <strong>hide</strong>, 🔊 <strong>mute</strong>. <strong>Tap the track's left edge</strong> for opacity, volume, order and delete.</li>
+        <li>Empty overlay tracks disappear by themselves. Settings → how many tracks are visible before the timeline scrolls.</li>
+      </ul>
+    </details>
+
+    <details id="help-transform">
+      <summary>Crop, position &amp; rotate</summary>
+      <ul>
+        <li>Select a clip and open a tab — the playhead jumps into the clip and you edit <strong>directly in the preview</strong>.</li>
+        <li><strong>Crop:</strong> drag the frame or its corners. <em>Use as canvas</em> makes the crop the video format — with <em>Selected clip only</em> you save just that section.</li>
+        <li><strong>Position:</strong> drag the picture (also beyond the edges), use the 3×3 grid or the arrow pad. It snaps to centre and edges — hold <strong>Alt</strong> to move freely.</li>
+        <li><strong>Size:</strong> Fit, Fill or Free — pinch or scroll the mouse wheel over the preview.</li>
+        <li>Each drag or slider move is <strong>one undo step</strong>.</li>
+      </ul>
+    </details>
+
+    <details id="help-export">
+      <summary>Canvas &amp; creating the video</summary>
+      <ul>
+        <li><strong>Canvas</strong> sets the format and what fills empty space: a color or a blurred copy of the main track.</li>
+        <li><strong>Create video…</strong> opens the export window: file name, whole timeline or <em>Selected clip only</em> (needs a selected clip), resolution, quality, frame rate, codec.</li>
+        <li><em>Max. file size</em> may lower the resolution — tick <em>Keep resolution</em> to prevent it. Videos never get a higher bitrate than their source.</li>
+        <li>You can <strong>close the window while it's working</strong> — the button shows the progress and then <em>Video ready</em>.</li>
+        <li>The preview may stutter with many videos at once — the created video doesn't.</li>
+      </ul>
+    </details>
+
+    <details id="help-saving">
+      <summary>Saving &amp; other devices</summary>
+      <ul>
+        <li>Phones keep a <strong>working copy</strong> of each video in the browser; desktop Chrome/Edge remembers the original file (one click on <em>Allow access</em> after a reload).</li>
+        <li>Missing file? <strong>Relink</strong> it — renamed files are recognised by their size, all cuts are kept.</li>
+        <li><strong>ⓘ next to the project name</strong> shows where each file is kept and how much space it uses.</li>
+        <li><strong>⇪ Save project file</strong> moves a project to another device or makes a backup — with or without the video files.</li>
+      </ul>
+    </details>
+
+    <details id="help-keys" class="desktop-only">
+      <summary>Keyboard shortcuts</summary>
+      <table class="keys">
+        <tr><td><kbd>Space</kbd></td><td>Play / pause</td></tr>
+        <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>Previous / next frame</td></tr>
+        <tr><td><kbd>Shift</kbd> + <kbd>←</kbd> <kbd>→</kbd></td><td>Jump 1 second</td></tr>
+        <tr><td><kbd>Home</kbd> / <kbd>End</kbd></td><td>Start / end</td></tr>
+        <tr><td><kbd>C</kbd> or <kbd>S</kbd></td><td>Cut at playhead</td></tr>
+        <tr><td><kbd>M</kbd></td><td>Mute / unmute clip</td></tr>
+        <tr><td><kbd>Del</kbd> / <kbd>Backspace</kbd></td><td>Delete selected clip</td></tr>
+        <tr><td><kbd>Esc</kbd></td><td>Deselect clip / close window</td></tr>
+        <tr><td><kbd>Ctrl</kbd> + <kbd>C</kbd> / <kbd>V</kbd></td><td>Copy clip / paste clip or files</td></tr>
+        <tr><td><kbd>Ctrl</kbd> + <kbd>Z</kbd> / <kbd>Y</kbd></td><td>Undo / redo</td></tr>
+        <tr><td><kbd>Ctrl</kbd> + <kbd>E</kbd></td><td>Create video…</td></tr>
+        <tr><td><kbd>Alt</kbd> while dragging</td><td>Move without snapping</td></tr>
+        <tr><td><kbd>Ctrl</kbd> + wheel</td><td>Zoom the timeline</td></tr>
+        <tr><td><kbd>?</kbd></td><td>This help</td></tr>
+      </table>
+    </details>
+  </div>
+</div>
 
 <script src="mp4.js"></script>
 <script src="render.js"></script>

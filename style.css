@@ -425,3 +425,21 @@ input[type=color] { width: 44px; height: 36px; padding: 2px; border: 1px solid v
 .m-btns { display: flex; gap: 6px; flex-wrap: wrap; width: 100%; }
 .import-btn { margin: -4px auto 16px; }
 @media (max-width: 420px) { .pc-thumb { width: 64px; height: 48px; } }
+
+/* ---------- Help ---------- */
+.help details { border-top: 1px solid var(--border); }
+.help details:last-of-type { border-bottom: 1px solid var(--border); }
+.help summary { cursor: pointer; padding: 12px 2px; font-weight: 600; font-size: 15px; list-style: none; display: flex; justify-content: space-between; align-items: center; }
+.help summary::-webkit-details-marker { display: none; }
+.help summary::after { content: "+"; color: var(--text-secondary); font-size: 18px; font-weight: 400; }
+.help details[open] summary::after { content: "−"; }
+.help ul { margin: 0 0 12px; padding-left: 18px; font-size: 13.5px; line-height: 1.5; }
+.help li { margin-bottom: 5px; }
+.help details.flash summary { color: var(--accent); }
+.keys { width: 100%; border-collapse: collapse; font-size: 13.5px; margin-bottom: 12px; }
+.keys td { padding: 5px 4px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.keys td:first-child { white-space: nowrap; width: 1%; padding-right: 14px; }
+kbd { display: inline-block; min-width: 1.4em; text-align: center; font-family: inherit; font-size: 12px; padding: 1px 6px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 5px; background: var(--surface-2); }
+.help-link { color: var(--text-secondary); flex-shrink: 0; }
+.head-spacer { flex: 1; }
+body.coarse .desktop-only { display: none; }

@@ -1,5 +1,10 @@
 # Changelog
 
+### 0.8.2 — 2026-10-29 — Help & shortcuts
+- New menu item **Help & shortcuts**: a short guide in collapsible sections, including the keyboard shortcuts (shown on desktop only)
+- **?** buttons in the track settings, the clip panel and the *Create video* window open the matching section
+- `?` opens the help on desktop; Escape closes it first when it lies on top of another window
+
 ### 0.8.1 — 2026-10-29 — Export window & file name
 - Export settings moved into their own window; the editor only shows a **Create video…** button (also `Ctrl` + `E`)
 - File name field, prefilled with the project name (`_clip` for *Selected clip only*), remembered per project; characters and names not allowed on Windows, macOS, Linux or Android are cleaned up automatically

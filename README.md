@@ -64,6 +64,7 @@ A privacy-friendly video editor and compressor that runs entirely in your browse
   | `Ctrl` + `Z` / `Y` | Undo / redo |
   | `Home` / `End` | Jump to start / end |
   | `Ctrl` + `E` | Open the *Create video* window |
+  | `?` | Help & shortcuts |
 
 ### Projects
 - **Any number of projects**, each saved automatically after every change (clips, canvas, export settings, name)
@@ -131,7 +132,8 @@ The clip panel has four tabs — **Clip**, **Crop**, **Position**, **Rotate**. O
 
 ### General
 - Dark mode by default, light mode via the menu
-- Menu with theme toggle, Settings and About; fullscreen toggle in the header
+- Menu with theme toggle, Settings, **Help & shortcuts** and About; fullscreen toggle in the header
+- **Help & shortcuts:** a short guide in collapsible sections — getting started, timeline & editing, tracks & overlays, crop/position/rotate, canvas & creating the video, saving & other devices, and (desktop only) the keyboard shortcuts. Small **?** buttons in the track settings, the clip panel and the *Create video* window open the matching section; `?` opens it on desktop
 - Mobile-first layout; the editor gets more width on desktop screens
 - Installable as an app (PWA) and works offline after the first visit
 - You're warned before a reload throws away your timeline
