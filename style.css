@@ -443,3 +443,16 @@ kbd { display: inline-block; min-width: 1.4em; text-align: center; font-family: 
 .help-link { color: var(--text-secondary); flex-shrink: 0; }
 .head-spacer { flex: 1; }
 body.coarse .desktop-only { display: none; }
+
+/* ---------- Audio ---------- */
+.clip.audio-clip { background: #1f5a4a; align-items: center; }
+.clip.audio-clip .wave { display: block; pointer-events: none; }
+.tl-row.audio { background: rgba(63, 191, 111, .04); }
+.tl-row.main + .tl-row.audio, .track-head.main + .track-head.audio { border-top: 2px solid var(--border); }
+.clip-fade { position: absolute; top: 0; bottom: 0; background: rgba(0, 0, 0, .45); pointer-events: none; }
+.clip-fade.fade-in { left: 0; clip-path: polygon(0 0, 100% 0, 0 100%); }
+.clip-fade.fade-out { right: 0; clip-path: polygon(0 0, 100% 0, 100% 100%); }
+.clip .clip-vol { position: absolute; right: 4px; bottom: 3px; font-size: 10px; color: #fff; background: rgba(0,0,0,.55); padding: 1px 4px; border-radius: 4px; pointer-events: none; }
+.clip.audio-clip .clip-label { top: 3px; bottom: auto; }
+.snap-btn { opacity: .55; }
+.snap-btn.on { opacity: 1; color: var(--accent); border-color: var(--accent); }

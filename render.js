@@ -83,7 +83,7 @@
     let capped = false;
     if (settings.quality !== 'custom') {
       const withRate = vids.filter((s) => s.videoBitrate > 0);
-      const onlyVideos = withRate.length && withRate.length === sources.length;
+      const onlyVideos = withRate.length && withRate.length === sources.filter((x) => x.kind !== 'audio').length;
       if (onlyVideos) {
         const cap = Math.max(...withRate.map((s) => {
           const d = displaySize(s);
@@ -95,7 +95,7 @@
       }
     }
     const srcAudio = Math.max(0, ...vids.map((s) => s.audioBitrate || 0));
-    if (srcAudio > 0) audioBitrate = Math.min(audioBitrate, Math.max(64_000, Math.ceil(srcAudio / 32_000) * 32_000));
+    if (srcAudio > 0 && !sources.some((x) => x.kind === 'audio')) audioBitrate = Math.min(audioBitrate, Math.max(64_000, Math.ceil(srcAudio / 32_000) * 32_000));
 
     return { width: w, height: h, fps, bitrate, audioBitrate, capped, scaled };
   }
@@ -490,9 +490,47 @@
     }
   }
 
+  /** Reads an audio file that was decoded beforehand (48 kHz stereo PCM in source.pcm). */
+  class PcmReader {
+    constructor(clip) {
+      this.pcm = clip.source.pcm;
+      this.pos = Math.max(0, Math.round(clip.in * OUT_RATE));
+    }
+    async mixInto(L, R, off, n, gain) {
+      const [pl, pr] = this.pcm;
+      const end = Math.min(n, pl.length - this.pos);
+      for (let i = 0; i < end; i++) { L[off + i] += pl[this.pos + i] * gain; R[off + i] += pr[this.pos + i] * gain; }
+      this.pos += n;
+    }
+    close() {}
+  }
+
+  // Smooth fade curve (0 → 1).
+  const fadeCurve = (u) => (u <= 0 ? 0 : u >= 1 ? 1 : (1 - Math.cos(Math.PI * u)) / 2);
+  /** Gain of a clip at local time x (seconds since the clip starts): volume × fades. */
+  function clipGain(c, x) {
+    const len = c.out - c.in;
+    let g = c.volume == null ? 1 : c.volume;
+    if (c.fadeIn > 0 && x < c.fadeIn) g *= fadeCurve(x / c.fadeIn);
+    if (c.fadeOut > 0 && x > len - c.fadeOut) g *= fadeCurve((len - x) / c.fadeOut);
+    return g;
+  }
+  // Soft limiter: quiet signals pass unchanged, peaks above 0.9 are bent smoothly towards 1.
+  const limit = (x) => {
+    const a = Math.abs(x);
+    if (a <= 0.9) return x;
+    return Math.sign(x) * (0.9 + 0.1 * Math.tanh((a - 0.9) / 0.1));
+  };
+  // Does a clip contribute sound?
+  const hasSound = (c) => !c.muted && c.source && (c.volume == null || c.volume > 0) && (
+    (c.source.kind === 'audio' && !!c.source.pcm) ||
+    (c.source.kind === 'video' && c.source.audioDecodable && !!c.source.demux.audio));
+
   /**
    * @param opts {
-   *   tracks: [{ hidden, opacity, muted, volume, clips: [{ kind, source, start, in, out, muted, tf, still }] }]
+   *   tracks: [{ kind ('video'|'audio'), hidden, opacity, muted, volume, clips: [{ kind, source, start, in, out, muted, volume, fadeIn, fadeOut, tf, still }] }]
+   *     — visual tracks first (main track first), audio tracks after them. Audio-file sources carry
+   *     their decoded sound in source.pcm ([L, R] at 48 kHz).
    *     — bottom (main) track first; clip in/out are in the file's time, start in timeline time
    *   duration, settings: { width, height, fps, quality, …, codec, muteAll, fit, bg },
    *   onProgress(fraction, label), signal
@@ -520,7 +558,7 @@
     if (!vcfg) throw new Error(`No video encoder available for ${out.width}×${out.height}.`);
 
     const audible = (t) => !settings.muteAll && !t.muted && (t.volume == null || t.volume > 0);
-    const anyAudio = tracks.some((t) => audible(t) && t.clips.some((c) => c.kind === 'video' && !c.muted && c.source.audioDecodable));
+    const anyAudio = tracks.some((t) => audible(t) && t.clips.some(hasSound));
     let acfg = null;
     if (anyAudio) {
       acfg = await pickAudioEncoder(out.audioBitrate);
@@ -572,7 +610,7 @@
         const layers = [];
         for (let ti = 0; ti < tracks.length; ti++) {
           const tr = tracks[ti];
-          if (tr.hidden || tr.opacity === 0) continue;
+          if (tr.kind === 'audio' || tr.hidden || tr.opacity === 0) continue;
           const c = clipAtTime(tr.clips, t);
           if (!c) continue;
           const base = { tf: c.tf, opacity: tr.opacity == null ? 1 : tr.opacity, isMain: ti === 0 };
@@ -625,7 +663,7 @@
       if (!audible(tr)) continue;
       const gain = tr.volume == null ? 1 : tr.volume;
       for (const c of tr.clips) {
-        if (c.kind !== 'video' || c.muted || !c.source || !c.source.audioDecodable || !c.source.demux.audio) continue;
+        if (!(c.kind === 'video' || c.kind === 'audio') || !hasSound(c)) continue;
         items.push({ c, gain, s0: Math.round(c.start * OUT_RATE), s1: Math.round((c.start + (c.out - c.in)) * OUT_RATE) });
       }
     }
@@ -640,14 +678,22 @@
           const from = Math.max(b, it.s0), to = Math.min(b + n, it.s1);
           if (to <= from) continue;
           let r = readers.get(it.c);
-          if (!r) { r = new AudioReader(it.c); readers.set(it.c, r); }
-          await r.mixInto(L, R, from - b, to - from, it.gain, signal);
+          if (!r) { r = it.c.source.kind === 'audio' ? new PcmReader(it.c) : new AudioReader(it.c); readers.set(it.c, r); }
+          const m = to - from;
+          const tl = new Float32Array(m), tr2 = new Float32Array(m);
+          await r.mixInto(tl, tr2, 0, m, 1, signal);
+          // Volume and fades, evaluated every 64 samples (smooth enough, cheap).
+          for (let i = 0; i < m; i += 64) {
+            const g = it.gain * clipGain(it.c, (from + i - it.s0) / OUT_RATE);
+            const e = Math.min(m, i + 64);
+            for (let j = i; j < e; j++) { L[from - b + j] += tl[j] * g; R[from - b + j] += tr2[j] * g; }
+          }
           if (to >= it.s1) { r.close(); readers.delete(it.c); }
         }
         const data = new Float32Array(n * OUT_CHANNELS);
         for (let i = 0; i < n; i++) {
-          data[i] = Math.max(-1, Math.min(1, L[i]));
-          data[n + i] = Math.max(-1, Math.min(1, R[i]));
+          data[i] = limit(L[i]);
+          data[n + i] = limit(R[i]);
         }
         const ad = new AudioData({ format: 'f32-planar', sampleRate: OUT_RATE, numberOfFrames: n, numberOfChannels: OUT_CHANNELS, timestamp: Math.round((b / OUT_RATE) * 1e6), data });
         await waitFor(() => encoder.encodeQueueSize < 10, signal);
@@ -664,8 +710,31 @@
     onProgress(1);
   }
 
+  /**
+   * Loudness overview of a video's sound for the waveform display: `perSec`
+   * peak values (0–255) per second between the file times inT and outT.
+   */
+  async function audioPeaks(source, inT, outT, perSec, signal) {
+    const r = new AudioReader({ source, in: inT, out: outT });
+    const step = Math.round(OUT_RATE / perSec);
+    const n = Math.max(1, Math.ceil((outT - inT) * perSec));
+    const peaks = new Uint8Array(n);
+    try {
+      const L = new Float32Array(step), R = new Float32Array(step);
+      for (let k = 0; k < n; k++) {
+        if (signal && signal.aborted) throw new DOMException('Aborted', 'AbortError');
+        L.fill(0); R.fill(0);
+        await r.mixInto(L, R, 0, step, 1, signal);
+        let m = 0;
+        for (let i = 0; i < step; i++) { const a = Math.max(Math.abs(L[i]), Math.abs(R[i])); if (a > m) m = a; }
+        peaks[k] = Math.min(255, Math.round(m * 255));
+      }
+    } finally { r.close(); }
+    return peaks;
+  }
+
   global.Render = {
     QUALITY, presetBitrate, computeOutput, estimateSize, drawClip, composite, clipAtTime, clipLayout, tfOf, DEFAULT_TF, ANCHORS, displaySize,
-    hasWebCodecs, canDecodeVideo, canDecodeAudio, canEncodeHevc, exportTimeline,
+    hasWebCodecs, canDecodeVideo, canDecodeAudio, canEncodeHevc, exportTimeline, audioPeaks, clipGain,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

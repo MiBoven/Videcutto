@@ -1,5 +1,18 @@
 # Changelog
 
+### 0.9.0 — 2026-10-29 — Audio
+- Audio files (MP3, M4A/AAC, WAV, FLAC, OGG/Opus) via Add → Audio, drag & drop or paste; placed at the playhead on audio tracks below the main track
+- Audio tracks: sound only, free placement, header with mute, track settings with volume, order and delete
+- Snapping to the start/end of all clips and to the playhead while dragging on free tracks — switchable with the magnet button below the timeline, Alt moves freely
+- Detach audio: a video's sound becomes its own audio clip, the video is muted
+- New Audio tab: clip volume 0–200 % with soft limiter, fade in / fade out
+- Waveforms on audio clips (also for detached video sound), saved with the project
+- Fades and changed volume are shown on the clips
+- Preview plays audio clips and applies volume and fades live (Web Audio for volumes above 100 %)
+- Export mixes video sound and audio files with volume, fades and track volume
+- Audio-only projects possible (the video shows the background)
+- Help: new section "Audio, volume & fades"
+
 ### 0.8.2 — 2026-10-29 — Help & shortcuts
 - New menu item **Help & shortcuts**: a short guide in collapsible sections, including the keyboard shortcuts (shown on desktop only)
 - **?** buttons in the track settings, the clip panel and the *Create video* window open the matching section

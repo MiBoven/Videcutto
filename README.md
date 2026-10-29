@@ -9,7 +9,7 @@ A privacy-friendly video editor and compressor that runs entirely in your browse
 ## Features
 
 ### Loading
-- Select, drag & drop or **paste** (Ctrl+V, as in JPG75 is Enough) one or several **videos** (MP4, MOV, M4V — what phones and cameras record) and **images** (JPG, PNG, WebP, GIF, AVIF; HEIC where the browser supports it)
+- Select, drag & drop or **paste** (Ctrl+V, as in JPG75 is Enough) one or several **videos** (MP4, MOV, M4V — what phones and cameras record), **images** (JPG, PNG, WebP, GIF, AVIF; HEIC where the browser supports it) and **audio files** (MP3, M4A, WAV, FLAC, OGG)
 - **Gallery / Files** toggle above the picker on phones and tablets (hidden on desktop, where it makes no difference):
   - **Gallery** uses the OS media picker — quick, but Android doesn't preserve the original file name
   - **Files** opens the regular file browser and keeps real file names
@@ -28,6 +28,18 @@ A privacy-friendly video editor and compressor that runs entirely in your browse
 - Pre-trimming is instant — nothing is re-encoded; it simply limits which part of the file goes onto the timeline
 - Configurable in **Settings**: offer for large videos (default), for every video, or never
 
+### Audio
+- **Audio files** — MP3, M4A/AAC, WAV, FLAC, OGG/Opus (whatever the browser can decode; Safari has no OGG) — via *Add → Audio*, drag & drop or paste. They land at the playhead on the topmost **audio track** with room, or on a new one
+- **Audio tracks** lie below the main track; they hold sound only (pictures can't be dragged onto them and vice versa). Clips sit freely in time, gaps are silent. Track header: 🔊 mute; tap it for volume, order and delete
+- **Snapping:** while dragging, clips on free tracks (audio and overlays) snap to the start and end of all other clips and to the playhead (index points will follow). The magnet button below the timeline turns snapping off (remembered); hold Alt to move freely for a moment
+- **Detach audio** (clip panel of a video): the sound becomes an audio clip right below, the video is muted. Both are independent afterwards (gluing comes later); undo reverts it
+- **Audio tab** for videos and audio clips: **volume** 0–200 % (amplified above 100 %, a soft limiter prevents clipping) and **fade in / fade out** in seconds (smooth curve). Fades show as dark ramps, a changed volume as a badge on the clip
+- **Waveform** on audio clips — computed once (also for detached video sound, in the background) and saved with the project
+- Track volume × clip volume; all audible clips are mixed
+- Preview: `<audio>` elements play the sound; volumes above 100 % use Web Audio (switched on with the first play that needs it)
+- Exporting decodes audio files completely (48 kHz stereo) — fine for songs; a note appears for files longer than 30 min on phones / 2 h on desktop. Storage like videos: working copy on phones, linked original on desktop
+- A project can consist of sound only — the video then shows the canvas background (audio-only export follows in a later version)
+
 ### Tracks (multiple timelines)
 - The **main track** is at the bottom, under all others. It is **magnetic**: clips follow each other without gaps and are reordered by dragging. In its track settings the magnet can be switched off ("released") to place clips freely in time — gaps show the canvas background; switching it back on closes the gaps in the current order
 - **Overlay tracks** above it are free: clips sit at any time, empty space is transparent, so the tracks below show through. Higher tracks are drawn on top
@@ -36,7 +48,7 @@ A privacy-friendly video editor and compressor that runs entirely in your browse
 - **Track header** (left of each track): 👁 **hide** and 🔊 **mute** the track. Tap the header for the **track settings**: **opacity** 0–100 %, **volume** 0–100 %, move the track **up/down**, **delete** the track (overlay tracks), and *Magnetic* for the main track
 - Empty overlay tracks disappear automatically
 - The timeline grows with the tracks up to a limit, then scrolls vertically; how many tracks are visible before it scrolls is set in **Settings** (default 3 on phones, 5 on desktop). On phones the main track is taller, overlay tracks are flatter
-- All audible clips are mixed (a video's sound stays with its clip); hidden tracks keep their sound, muted tracks stay silent
+- All audible clips are mixed; hidden tracks keep their sound, muted tracks stay silent
 - **Background blur** uses the picture of the main track only
 - A hint appears when three or more videos play at the same time — the preview may stutter on slower devices, the export is not affected
 

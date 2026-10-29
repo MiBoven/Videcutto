@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.8.2';
+  const VERSION = '0.9.0';
   const $ = (id) => document.getElementById(id);
 
   // ---------------------------------------------------------------------------
@@ -144,6 +144,7 @@
     trimMode: store.get('trimMode', 'auto'),
     undoSteps: store.get('undoSteps', 10),
     rows: store.get('tlRows', isCoarse ? 3 : 5),
+    snap: store.get('snap', true),
   };
   const THRESH = isCoarse ? { bytes: 150 * 1024 * 1024, secs: 180 } : { bytes: 1024 * 1024 * 1024, secs: 900 };
   $('trimModeSel').value = settings.trimMode;
@@ -168,9 +169,11 @@
   // ---------------------------------------------------------------------------
   // State
   // ---------------------------------------------------------------------------
-  // Tracks are stored bottom first: tracks[0] is the main track (under all
-  // others). Every clip has a `start` on the timeline; on a magnetic track the
-  // starts follow from the order (no gaps).
+  // Visual tracks are stored bottom first: tracks[0] is the main track (under
+  // all others). Audio tracks (kind 'audio') follow after the visual ones, in
+  // display order (the first one sits right below the main track). Every clip
+  // has a `start` on the timeline; on a magnetic track the starts follow from
+  // the order (no gaps).
   const sources = new Map(); // id -> source
   let tracks = [];
   let clips = [];            // the main track's clips (alias of tracks[0].clips)
@@ -186,7 +189,11 @@
   let exporting = false;
   let saveEnabled = false;     // true while a project is open in this tab and may be saved
 
-  const newTrack = (main) => ({ id: 't' + (++uid), main: !!main, magnetic: !!main, hidden: false, opacity: 1, muted: false, volume: 1, clips: [] });
+  const newTrack = (main, kind = 'video') => ({ id: 't' + (++uid), kind, main: !!main, magnetic: !!main, hidden: false, opacity: 1, muted: false, volume: 1, clips: [] });
+  const isAudioTrack = (t) => !!t && t.kind === 'audio';
+  const audioTracks = () => tracks.filter(isAudioTrack);
+  const firstAudioIndex = () => { const i = tracks.findIndex(isAudioTrack); return i < 0 ? tracks.length : i; };
+  const isSoundClip = (c) => !!c && (c.kind === 'video' || c.kind === 'audio');
   const clipLen = (c) => c.out - c.in;
   const clipEnd = (c) => c.start + clipLen(c);
   const allClips = () => tracks.flatMap((t) => t.clips);
@@ -201,7 +208,7 @@
   }
   const relayout = () => tracks.forEach(layoutTrack);
   function setTracks(t) {
-    tracks = t;
+    tracks = [...t.filter((x) => !isAudioTrack(x)), ...t.filter(isAudioTrack)];
     if (!tracks.length || !tracks[0].main) tracks.unshift(newTrack(true));
     clips = tracks[0].clips;
     relayout();
@@ -273,7 +280,7 @@
   };
   function setSourceMode(mode) {
     $('sourceToggle').querySelectorAll('.seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.mode === mode));
-    fileInput.accept = mode === 'files' ? '*/*' : 'video/*,image/*';
+    fileInput.accept = mode === 'files' ? '*/*' : 'video/*,image/*,audio/*';
     $('sourceHint').textContent = hints[mode];
     store.set('sourceMode', mode);
   }
@@ -292,16 +299,18 @@
   // Desktop Chrome/Edge: the file picker returns handles, so the original files
   // can be reopened after a reload without copying them.
   const useHandlePicker = () => !isCoarse && Project.canUseHandles();
+  const AUDIO_EXTS = ['.mp3', '.m4a', '.aac', '.wav', '.flac', '.ogg', '.oga', '.opus', '.weba'];
   const PICKER_TYPES = [{
     description: 'Videos and images',
-    accept: { 'video/*': ['.mp4', '.mov', '.m4v', '.3gp'], 'image/*': ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.avif', '.heic'] },
+    accept: { 'video/*': ['.mp4', '.mov', '.m4v', '.3gp'], 'image/*': ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.avif', '.heic'], 'audio/*': AUDIO_EXTS },
   }];
+  const AUDIO_PICKER_TYPES = [{ description: 'Audio', accept: { 'audio/*': AUDIO_EXTS } }];
 
   /** @returns {Promise<{file: File, handle?: FileSystemFileHandle}[]>} */
-  async function pickFiles(multiple) {
+  async function pickFiles(multiple, audioOnly) {
     if (useHandlePicker()) {
       try {
-        const hs = await window.showOpenFilePicker({ multiple, types: PICKER_TYPES });
+        const hs = await window.showOpenFilePicker({ multiple, types: audioOnly ? AUDIO_PICKER_TYPES : PICKER_TYPES });
         return Promise.all(hs.map(async (h) => ({ file: await h.getFile(), handle: h })));
       } catch (e) {
         if (e && e.name === 'AbortError') return [];
@@ -311,7 +320,7 @@
     return new Promise((resolve) => {
       const inp = document.createElement('input');
       inp.type = 'file';
-      inp.accept = fileInput.accept;
+      inp.accept = audioOnly ? (isCoarse && fileInput.accept === '*/*' ? '*/*' : 'audio/*,' + AUDIO_EXTS.join(',')) : fileInput.accept;
       inp.multiple = multiple;
       inp.addEventListener('change', () => resolve([...inp.files].map((file) => ({ file }))));
       inp.addEventListener('cancel', () => resolve([]));
@@ -342,6 +351,11 @@
   $('addColorItem').addEventListener('click', () => { closeAddMenu(); addColorClip(); });
   $('addOverlayMediaItem').addEventListener('click', () => { closeAddMenu(); pickAndAdd(true); });
   $('addOverlayColorItem').addEventListener('click', () => { closeAddMenu(); addColorClip(true); });
+  $('addAudioItem').addEventListener('click', async () => {
+    closeAddMenu();
+    const list = await pickFiles(true, true);
+    if (list.length) handleFiles(list);
+  });
 
   // Dropping files anywhere in the editor adds them too
   document.addEventListener('dragover', (e) => { if (!$('editorScreen').hidden) e.preventDefault(); });
@@ -353,6 +367,7 @@
 
   const isVideoFile = (f) => f.type.startsWith('video/') || /\.(mp4|m4v|mov|3gp)$/i.test(f.name);
   const isImageFile = (f) => f.type.startsWith('image/') || /\.(jpe?g|png|webp|gif|bmp|avif|heic|heif)$/i.test(f.name);
+  const isAudioFile = (f) => (f.type.startsWith('audio/') || /\.(mp3|m4a|aac|wav|wave|flac|ogg|oga|opus|weba)$/i.test(f.name)) && !/\.(mp4|m4v|mov|3gp)$/i.test(f.name);
 
   let loadingQueue = Promise.resolve();
   function handleFiles(list, opts = {}) {
@@ -364,16 +379,17 @@
       entries = entries.filter((x) => !projFiles.includes(x));
       if (!entries.length) return;
     }
-    const media = entries.filter((x) => isVideoFile(x.file) || isImageFile(x.file));
-    if (!media.length) { if (entries.length) toast('Please choose videos (MP4, MOV, M4V) or images (JPG, PNG, WebP).'); return; }
-    if (media.length < entries.length) toast('Some files were skipped because they are neither videos nor images.');
+    const media = entries.filter((x) => isVideoFile(x.file) || isImageFile(x.file) || isAudioFile(x.file));
+    if (!media.length) { if (entries.length) toast('Please choose videos (MP4, MOV, M4V), images (JPG, PNG, WebP) or audio (MP3, M4A, WAV, …).'); return; }
+    if (media.length < entries.length) toast('Some files were skipped because they are neither videos, images nor audio.');
     // From the start screen, media always start a new project; in the editor they are added.
     const fresh = !$('startScreen').hidden || !projectId;
     loadingQueue = loadingQueue.then(async () => {
       if (fresh) await createProject(baseName(media[0].file.name) || '');
       for (const m of media) {
         const overlay = !!opts.overlay && !fresh;
-        if (isImageFile(m.file) && !isVideoFile(m.file)) await addImage(m.file, m.handle, m.pasted, overlay);
+        if (isAudioFile(m.file)) await addAudio(m.file, m.handle, m.pasted);
+        else if (isImageFile(m.file) && !isVideoFile(m.file)) await addImage(m.file, m.handle, m.pasted, overlay);
         else await addFile(m.file, m.handle, m.pasted, overlay);
       }
     }).catch((e) => { console.error(e); hideBusy(); });
@@ -455,12 +471,18 @@
   }
 
   function mediaMeta(src) {
-    return {
+    const m = {
       id: src.id, kind: src.kind, name: src.name, origSize: src.origSize, origLastModified: src.origLastModified,
       base: src.base, start: src.start, duration: src.duration, rangeIn: src.rangeIn, rangeOut: src.rangeOut,
       width: src.width, height: src.height, rotation: src.rotation, storage: src.storage, copyName: src.copyName,
     };
+    // Waveform overview, so it doesn't have to be computed again after a reload.
+    if (src.peaks && src.peaks.length) { m.peaks = toB64(src.peaks); m.peaksRate = src.peaksRate; m.peaksFrom = src.peaksFrom || 0; }
+    return m;
   }
+  function toB64(u8) { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); }
+  function fromB64(b) { try { const s = atob(b); const u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u; } catch (e) { return null; } }
+  const peaksFromMeta = (m) => (m.peaks ? { peaks: fromB64(m.peaks), peaksRate: m.peaksRate || PEAK_RATE, peaksFrom: m.peaksFrom || 0 } : {});
 
   // Busy overlay with progress
   function showBusy(title, text) {
@@ -518,7 +540,11 @@
   async function addFile(file, handle, pasted, overlay) {
     if (!Render.hasWebCodecs()) { toast('This browser can\'t process videos (no WebCodecs support).', 5000); return; }
     let probed;
-    try { probed = await probe(file); } catch (e) { toast(e.message, 7000); return; }
+    try { probed = await probe(file); } catch (e) {
+      if (/No video track/.test(e.message)) return addAudio(file, handle, pasted); // e.g. an .mp4 with sound only
+      toast(e.message, 7000);
+      return;
+    }
     const v = probed.demux.video;
     const start = Math.max(0, v.start);
     const meta = {
@@ -559,6 +585,102 @@
     if (wasEmpty) { playhead = 0; onCanvasChange(); }
     showEditor();
     queueThumbs(src);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Audio files: decoded once for length and waveform; played by <audio>
+  // elements in the preview and decoded again (48 kHz stereo) when exporting.
+  // ---------------------------------------------------------------------------
+  const PEAK_RATE = 50; // waveform values per second
+
+  async function decodeAudioFile(file) {
+    const buf = await file.arrayBuffer();
+    const C = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    const ctx = new C(2, 1, 48000);
+    return await ctx.decodeAudioData(buf);
+  }
+  function peaksOf(ab) {
+    const step = Math.max(1, Math.round(ab.sampleRate / PEAK_RATE));
+    const n = Math.ceil(ab.length / step);
+    const chans = [];
+    for (let c = 0; c < Math.min(2, ab.numberOfChannels); c++) chans.push(ab.getChannelData(c));
+    const out = new Uint8Array(n);
+    for (let k = 0; k < n; k++) {
+      let m = 0;
+      const e = Math.min(ab.length, (k + 1) * step);
+      for (const d of chans) for (let i = k * step; i < e; i++) { const a = d[i] < 0 ? -d[i] : d[i]; if (a > m) m = a; }
+      out[k] = Math.min(255, Math.round(m * 255));
+    }
+    return out;
+  }
+  /** Stereo PCM at 48 kHz for the export (mono is copied to both sides). */
+  async function pcmOf(src) {
+    const ab = await decodeAudioFile(src.file);
+    const L = ab.getChannelData(0);
+    const R = ab.numberOfChannels > 1 ? ab.getChannelData(1) : L;
+    return [L, R];
+  }
+
+  function makeAudioSource(meta, file) {
+    return {
+      id: meta.id, kind: 'audio', name: meta.name, origSize: meta.origSize, origLastModified: meta.origLastModified,
+      file, url: URL.createObjectURL(file), demux: null, base: 0, width: 0, height: 0, rotation: 0, frameRate: 30,
+      fileDuration: meta.duration, start: 0, duration: meta.duration, hasAudio: true, audioDecodable: true, videoBitrate: 0, audioBitrate: 0,
+      rangeIn: 0, rangeOut: meta.duration, storage: meta.storage || 'none', copyName: meta.copyName || null,
+      thumbs: [], thumbStep: Infinity, missing: false, ...peaksFromMeta(meta),
+    };
+  }
+
+  async function addAudio(file, handle, pasted) {
+    showBusy('Reading audio…', `"${file.name || 'Audio'}"`);
+    let ab;
+    try { ab = await decodeAudioFile(file); } catch (e) {
+      hideBusy();
+      toast(`"${file.name}" couldn't be read as audio in this browser.`, 6000);
+      return;
+    }
+    const duration = ab.duration;
+    const peaks = peaksOf(ab);
+    ab = null;
+    if (duration > (isCoarse ? 1800 : 7200)) toast(`"${file.name}" is very long — creating the video needs a lot of memory for its sound on this device.`, 7000);
+    const meta = { id: nextSrcId(), name: file.name || 'Pasted audio', origSize: file.size, origLastModified: file.lastModified, duration };
+    const src = makeAudioSource(meta, file);
+    src.peaks = peaks; src.peaksRate = PEAK_RATE; src.peaksFrom = 0;
+    // Phones (and files without a handle) keep a copy; desktop links the original.
+    if ((isCoarse || pasted || !handle) && Project.canCopy()) {
+      const name = `${src.id}-${Date.now().toString(36)}-${++copyCounter}${(/\.[a-z0-9]+$/i.exec(file.name || '') || ['.audio'])[0]}`;
+      showBusy('Preparing audio…', `Saving a working copy of "${src.name}" on this device.`);
+      try {
+        src.file = await Project.copyWhole(name, file, busyProgress);
+        URL.revokeObjectURL(src.url);
+        src.url = URL.createObjectURL(src.file);
+        src.storage = 'opfs'; src.copyName = name; Project.requestPersist();
+      } catch (e) { await Project.removeCopy(name); }
+    }
+    hideBusy();
+    if (src.storage === 'none' && handle) { src.storage = 'handle'; await Project.saveHandle(src.id, handle); }
+    const wasEmpty = allClips().length === 0;
+    sources.set(src.id, src);
+    saveEnabled = true;
+    commit(() => { addClipToTimeline({ id: newId(), kind: 'audio', srcId: src.id, in: 0, out: duration, muted: false, volume: 1, fadeIn: 0, fadeOut: 0 }); });
+    if (wasEmpty) { playhead = 0; onCanvasChange(); }
+    showEditor();
+  }
+
+  // Waveform of a video's sound (for detached audio), computed in the background.
+  let peakQueue = Promise.resolve();
+  function queuePeaks(src) {
+    if (!src || src.peaks || src.kind !== 'video' || !src.audioDecodable || src.peaksPending) return;
+    src.peaksPending = true;
+    peakQueue = peakQueue.then(async () => {
+      try {
+        const p = await Render.audioPeaks(src, src.rangeIn - src.base, src.rangeOut - src.base, PEAK_RATE);
+        src.peaks = p; src.peaksRate = PEAK_RATE; src.peaksFrom = src.rangeIn;
+        renderClips();
+        scheduleSave();
+      } catch (e) { console.warn('waveform', e); }
+      src.peaksPending = false;
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -641,6 +763,7 @@
   function queueThumbs(src) { thumbQueue = thumbQueue.then(() => makeThumbs(src)).catch(() => {}); }
 
   async function makeThumbs(src) {
+    if (src.kind === 'audio') return;
     if (src.kind === 'image') {
       if (!src.bitmap) return;
       const th = 72, tw = Math.round(clamp(th * src.width / src.height, 40, 128));
@@ -872,8 +995,17 @@
   /** Put a clip on the lowest overlay track that has room at `start`, or on a new track on top. */
   function placeOverlay(clip, start) {
     clip.start = Math.max(0, start);
-    let tr = tracks.slice(1).find((t) => !t.magnetic && !overlaps(t, clip.start, clipLen(clip)));
-    if (!tr) { tr = newTrack(false); tracks.push(tr); }
+    let tr = tracks.slice(1).find((t) => !isAudioTrack(t) && !t.magnetic && !overlaps(t, clip.start, clipLen(clip)));
+    if (!tr) { tr = newTrack(false); tracks.splice(firstAudioIndex(), 0, tr); }
+    tr.clips.push(clip);
+    layoutTrack(tr);
+    return tr;
+  }
+  /** Put an audio clip on the topmost audio track that has room at `start`, or on a new one below. */
+  function placeAudio(clip, start) {
+    clip.start = Math.max(0, start);
+    let tr = audioTracks().find((t) => !overlaps(t, clip.start, clipLen(clip)));
+    if (!tr) { tr = newTrack(false, 'audio'); tracks.push(tr); }
     tr.clips.push(clip);
     layoutTrack(tr);
     return tr;
@@ -881,6 +1013,11 @@
 
   /** Append to the main track (or put it as overlay at the playhead). */
   function addClipToTimeline(clip, overlay) {
+    if (clip.kind === 'audio') {
+      placeAudio(clip, allClips().length ? playhead : 0);
+      selectedId = clip.id;
+      return;
+    }
     if (overlay && allClips().length) {
       clip.tf = { ...Render.tfOf(clip.tf), ...OVERLAY_TF };
       placeOverlay(clip, playhead);
@@ -898,7 +1035,8 @@
   function splitTarget() {
     const sel = findClip(selectedId);
     if (sel && playhead > sel.clip.start + EDGE && playhead < clipEnd(sel.clip) - EDGE) return sel;
-    const order = [0, ...tracks.map((_, i) => i).slice(1).reverse()];
+    const nVis = firstAudioIndex();
+    const order = [0, ...tracks.map((_, i) => i).slice(1, nVis).reverse(), ...tracks.map((_, i) => i).slice(nVis)];
     for (const ti of order) {
       const a = clipAtTrack(tracks[ti], playhead);
       if (a.idx >= 0) return { tr: tracks[ti], ti, idx: a.idx, clip: a.clip };
@@ -940,7 +1078,9 @@
     let insertTime = playhead;
     commit(() => {
       const main = tracks[0];
-      if (fromMain && main.magnetic) {
+      if (nc.kind === 'audio') {
+        placeAudio(nc, playhead);
+      } else if (fromMain && main.magnetic) {
         let insertAt = main.clips.length;
         insertTime = totalMain();
         const a = clipAt(playhead);
@@ -970,7 +1110,7 @@
   function toggleMuteClip() {
     let f = findClip(selectedId);
     if (!f) { const a = clipAt(playhead); if (a.idx >= 0) f = { tr: tracks[0], idx: a.idx, clip: a.clip }; }
-    if (!f || !isVideoClip(f.clip)) return;
+    if (!f || !isSoundClip(f.clip)) return;
     commit(() => { f.tr.clips[f.idx] = { ...f.clip, muted: !f.clip.muted }; });
   }
   function updateSelected(patch) {
@@ -997,7 +1137,7 @@
   // Clip panel fields
   $('cpDuration').addEventListener('change', (e) => {
     const f = findClip(selectedId);
-    if (!f || f.clip.kind === 'video') return;
+    if (!f || isSoundClip(f.clip)) return;
     let d = clamp(parseFloat(e.target.value) || STILL_DURATION, 0.1, 3600);
     // On a free track a still can't grow into the next clip.
     const next = f.tr.clips[f.idx + 1];
@@ -1041,18 +1181,24 @@
     if (!c) { panel.hidden = true; updateTransformingClass(); updateTrackPanel(); return; }
     const src = srcOf(c);
     panel.hidden = false;
-    $('cpKind').textContent = c.kind === 'video' ? 'Video' : c.kind === 'image' ? 'Image' : 'Color clip';
+    $('cpKind').textContent = { video: 'Video', image: 'Image', color: 'Color clip', audio: src && src.kind === 'video' ? 'Audio of video' : 'Audio' }[c.kind] || '';
     $('cpTitle').textContent = src ? src.name : `${(c.color || DEFAULT_COLOR).toUpperCase()} · ${c.size === 'canvas' ? 'canvas size' : `${c.w}×${c.h}`}`;
-    $('muteClipBtn').hidden = c.kind !== 'video';
+    $('muteClipBtn').hidden = !isSoundClip(c);
+    $('detachBtn').hidden = !(c.kind === 'video' && src && src.hasAudio && src.audioDecodable);
     $('muteClipBtn').classList.toggle('on', !!c.muted);
     $('muteClipBtn').querySelector('span').textContent = c.muted ? 'Unmute' : 'Mute';
-    $('cpDurField').hidden = c.kind === 'video';
+    $('cpDurField').hidden = isSoundClip(c);
     if (document.activeElement !== $('cpDuration')) $('cpDuration').value = +(c.out - c.in).toFixed(2);
     $('cpColorField').hidden = c.kind !== 'color';
     $('cpSizeField').hidden = c.kind !== 'color';
     $('cpCustomField').hidden = !(c.kind === 'color' && c.size === 'custom');
-    $('cpTabCrop').hidden = c.kind === 'color';
-    if (cpTab === 'crop' && c.kind === 'color') showTab('clip');
+    const audio = c.kind === 'audio';
+    $('cpTabCrop').hidden = c.kind === 'color' || audio;
+    $('cpTabPosition').hidden = audio;
+    $('cpTabRotate').hidden = audio;
+    $('cpTabAudio').hidden = !isSoundClip(c);
+    if ((cpTab === 'crop' && (c.kind === 'color' || audio)) || (audio && (cpTab === 'position' || cpTab === 'rotate')) || (cpTab === 'audio' && !isSoundClip(c))) showTab('clip');
+    syncAudioUI(c);
     updateTransformingClass();
     syncTransformUI();
     if (c.kind === 'color') {
@@ -1064,6 +1210,78 @@
     updateTrackPanel();
   }
   $('pasteBtn').addEventListener('click', paste);
+
+  // ---------------------------------------------------------------------------
+  // Audio tab: clip volume and fades (live while dragging, one undo step)
+  // ---------------------------------------------------------------------------
+  function syncAudioUI(c) {
+    if (!c || !isSoundClip(c)) return;
+    const vol = Math.round((c.volume == null ? 1 : c.volume) * 100);
+    const len = clipLen(c);
+    const maxFade = Math.max(0.1, Math.min(10, len)).toFixed(1);
+    if (document.activeElement !== $('volRange')) $('volRange').value = vol;
+    $('volVal').textContent = vol + '%';
+    for (const [k, id] of [['fadeIn', 'fadeIn'], ['fadeOut', 'fadeOut']]) {
+      $(id + 'Range').max = maxFade;
+      if (document.activeElement !== $(id + 'Range')) $(id + 'Range').value = c[k] || 0;
+      $(id + 'Val').textContent = (c[k] || 0).toFixed(1) + ' s';
+    }
+  }
+  let clipLiveBefore = null;
+  function liveClip(patch) {
+    const f = findClip(selectedId);
+    if (!f) return;
+    if (!clipLiveBefore) clipLiveBefore = snapshot();
+    const c = { ...f.clip, ...patch };
+    // Fades never overlap.
+    const len = clipLen(c);
+    if ((c.fadeIn || 0) + (c.fadeOut || 0) > len) {
+      if ('fadeIn' in patch) c.fadeOut = Math.max(0, len - c.fadeIn); else c.fadeIn = Math.max(0, len - c.fadeOut);
+    }
+    f.tr.clips[f.idx] = c;
+    syncAudioUI(c);
+    syncPool();
+    renderClips();
+  }
+  function liveClipCommit() {
+    if (!clipLiveBefore) return;
+    pushUndo(clipLiveBefore);
+    clipLiveBefore = null;
+    afterEdit();
+  }
+  $('volRange').addEventListener('input', (e) => liveClip({ volume: Math.abs(e.target.value - 100) < 4 ? 1 : e.target.value / 100 }));
+  $('fadeInRange').addEventListener('input', (e) => liveClip({ fadeIn: +e.target.value }));
+  $('fadeOutRange').addEventListener('input', (e) => liveClip({ fadeOut: +e.target.value }));
+  ['volRange', 'fadeInRange', 'fadeOutRange'].forEach((id) => $(id).addEventListener('change', liveClipCommit));
+  $('audioReset').addEventListener('click', () => updateSelected({ volume: 1, fadeIn: 0, fadeOut: 0 }));
+
+  // Detach audio: the sound goes onto an audio track right under the clip, the video is muted.
+  function detachAudio() {
+    const f = findClip(selectedId);
+    if (!f || f.clip.kind !== 'video') return;
+    const src = srcOf(f.clip);
+    if (!src || !src.hasAudio || !src.audioDecodable) { toast('This video has no sound that can be used.'); return; }
+    let ac = null;
+    commit(() => {
+      const c = f.clip;
+      ac = { id: newId(), kind: 'audio', srcId: c.srcId, in: c.in, out: c.out, muted: !!c.muted, volume: c.volume == null ? 1 : c.volume, fadeIn: c.fadeIn || 0, fadeOut: c.fadeOut || 0 };
+      placeAudio(ac, c.start);
+      f.tr.clips[f.idx] = { ...c, muted: true, fadeIn: 0, fadeOut: 0, volume: 1 };
+      selectedId = ac.id;
+    });
+    queuePeaks(src);
+    toast('Sound detached — it now has its own audio track.');
+  }
+  $('detachBtn').addEventListener('click', detachAudio);
+
+  // Snapping while dragging clips on free tracks (switchable).
+  function syncSnapBtn() {
+    $('snapBtn').setAttribute('aria-pressed', String(settings.snap));
+    $('snapBtn').classList.toggle('on', settings.snap);
+    $('snapBtn').title = settings.snap ? 'Snapping on — clips snap to clip edges and the playhead (click to turn off)' : 'Snapping off — clips move freely (click to turn on)';
+  }
+  $('snapBtn').addEventListener('click', () => { settings.snap = !settings.snap; store.set('snap', settings.snap); syncSnapBtn(); toast(settings.snap ? 'Snapping on' : 'Snapping off — clips move freely', 1500); });
+  syncSnapBtn();
   $('muteClipBtn').addEventListener('click', toggleMuteClip);
   $('muteAllBtn').addEventListener('click', toggleMuteAll);
 
@@ -1088,7 +1306,7 @@
   // ---------------------------------------------------------------------------
   // Track panel (opacity, volume, magnetic, order, delete)
   // ---------------------------------------------------------------------------
-  const trackLabel = (tr) => (tr.main ? 'Main track' : `Track ${tracks.indexOf(tr) + 1}`);
+  const trackLabel = (tr) => (tr.main ? 'Main track' : isAudioTrack(tr) ? `Audio ${audioTracks().indexOf(tr) + 1}` : `Track ${tracks.indexOf(tr) + 1}`);
   function updateTrackPanel() {
     const tr = findTrack(selectedTrackId);
     const panel = $('trackPanel');
@@ -1102,8 +1320,15 @@
     $('tpVolumeVal').textContent = Math.round(tr.volume * 100) + '%';
     $('tpMagneticRow').hidden = !tr.main;
     $('tpMagnetic').checked = !!tr.magnetic;
-    $('tpUp').disabled = tr.main || ti >= tracks.length - 1;
-    $('tpDown').disabled = tr.main || ti <= 1;
+    $('tpOpacityRow').hidden = isAudioTrack(tr);
+    const fa = firstAudioIndex();
+    if (isAudioTrack(tr)) {
+      $('tpUp').disabled = ti <= fa;
+      $('tpDown').disabled = ti >= tracks.length - 1;
+    } else {
+      $('tpUp').disabled = tr.main || ti >= fa - 1;
+      $('tpDown').disabled = tr.main || ti <= 1;
+    }
     $('tpDelete').hidden = tr.main;
   }
   // Track edits from sliders are live; one undo step per slider move.
@@ -1138,11 +1363,14 @@
     });
     toast(e.target.checked ? 'Main track is magnetic again — gaps are closed.' : 'Main track released — clips can be placed freely.');
   });
+  // dir: +1 = up on the screen, -1 = down.
   function moveTrack(dir) {
     const tr = findTrack(selectedTrackId);
     if (!tr || tr.main) return;
-    const i = tracks.indexOf(tr), j = i + dir;
-    if (j < 1 || j >= tracks.length) return;
+    const fa = firstAudioIndex();
+    const i = tracks.indexOf(tr);
+    const j = isAudioTrack(tr) ? i - dir : i + dir; // audio tracks are stored top to bottom
+    if (isAudioTrack(tr) ? (j < fa || j >= tracks.length) : (j < 1 || j >= fa)) return;
     commit(() => { tracks.splice(i, 1); tracks.splice(j, 0, tr); });
   }
   $('tpUp').addEventListener('click', () => moveTrack(1));
@@ -1166,6 +1394,8 @@
   const MAX_WIDTH = 80000;
   const RULER_H = 24;
   const rowH = (tr) => (tr.main ? 66 : isCoarse ? 46 : 50);
+  // Display order: visual tracks top to bottom (main last), then the audio tracks.
+  const displayTracks = () => { const fa = firstAudioIndex(); return [...tracks.slice(0, fa).reverse(), ...tracks.slice(fa)]; };
 
   const pad = () => timeline.clientWidth / 2;
   function clampPps(v) {
@@ -1185,7 +1415,7 @@
     // Playhead in the middle of the visible clip area (scrollbars change its width).
     $('playheadLine').style.left = (timeline.offsetLeft + timeline.clientWidth / 2) + 'px';
     // Height: show `settings.rows` tracks before scrolling vertically.
-    const shown = tracks.slice(0, settings.rows);
+    const shown = [tracks[0], ...tracks.slice(1)].slice(0, settings.rows);
     const maxH = RULER_H + shown.reduce((s, t) => s + rowH(t), 0) + 6;
     timeline.style.maxHeight = maxH + 'px';
     trackHeads.style.maxHeight = maxH + 'px';
@@ -1213,7 +1443,7 @@
     renderClips();
     renderTrackHeads();
     // New tracks: keep the main track in view.
-    if (tracks.length !== lastTrackCount) { timeline.scrollTop = timeline.scrollHeight; lastTrackCount = tracks.length; }
+    if (tracks.length !== lastTrackCount) { scrollToMain(); lastTrackCount = tracks.length; }
     syncScroll();
     updateToolbar();
     updateTime();
@@ -1244,7 +1474,7 @@
     const src = srcOf(c);
     const p = pad();
     const el = document.createElement('div');
-    el.className = 'clip' + (c.id === selectedId ? ' selected' : '') + (c.kind === 'color' ? ' color-clip' : '') + (tr.main ? '' : ' overlay');
+    el.className = 'clip' + (c.id === selectedId ? ' selected' : '') + (c.kind === 'color' ? ' color-clip' : '') + (c.kind === 'audio' ? ' audio-clip' : tr.main ? '' : ' overlay');
     if (c.kind === 'color') el.style.background = c.color || DEFAULT_COLOR;
     el.dataset.id = c.id;
     el.dataset.idx = i;
@@ -1253,7 +1483,8 @@
     el.style.left = (p + c.start * pps + 1) + 'px';
     el.style.width = w + 'px';
     el.style.height = h + 'px';
-    if (src && src.thumbs.length) {
+    if (c.kind === 'audio') el.appendChild(waveform(c, src, w, h));
+    else if (src && src.thumbs.length) {
       const tw = Math.round((h - 4) * (src.thumbAspect || 16 / 9));
       const n = Math.min(400, Math.ceil(w / tw));
       for (let k = 0; k < n; k++) {
@@ -1281,16 +1512,68 @@
       m.innerHTML = MUTE_SVG;
       el.appendChild(m);
     }
+    // Fades as darkened ramps; volume ≠ 100 % as a small badge.
+    for (const [k, cls] of [['fadeIn', 'fade-in'], ['fadeOut', 'fade-out']]) {
+      if (!(c[k] > 0) || !isSoundClip(c)) continue;
+      const f = document.createElement('span');
+      f.className = 'clip-fade ' + cls;
+      f.style.width = Math.min(w, c[k] * pps) + 'px';
+      el.appendChild(f);
+    }
+    if (isSoundClip(c) && c.volume != null && Math.abs(c.volume - 1) > 0.005 && w > 40) {
+      const v = document.createElement('span');
+      v.className = 'clip-vol';
+      v.textContent = Math.round(c.volume * 100) + '%';
+      el.appendChild(v);
+    }
     return el;
+  }
+
+  // Waveform of an audio clip (peaks are computed once when the sound is loaded).
+  function waveform(c, src, w, h) {
+    const cv = document.createElement('canvas');
+    cv.className = 'wave';
+    const cw = Math.max(1, Math.min(Math.round(w), 4096));
+    const ch = Math.max(1, h - 4);
+    cv.width = cw; cv.height = ch;
+    cv.style.width = '100%';
+    cv.style.height = ch + 'px';
+    const x = cv.getContext('2d');
+    x.fillStyle = 'rgba(255,255,255,.75)';
+    const pk = src && src.peaks;
+    if (!pk || !pk.length) {
+      x.fillRect(0, ch / 2 - 0.5, cw, 1);
+      return cv;
+    }
+    const rate = src.peaksRate || 50, from = src.peaksFrom || 0;
+    const len = clipLen(c);
+    const vol = Math.min(2, c.volume == null ? 1 : c.volume);
+    for (let px = 0; px < cw; px++) {
+      const t0 = c.in + (px / cw) * len, t1 = c.in + ((px + 1) / cw) * len;
+      let i0 = Math.floor((t0 - from) * rate), i1 = Math.max(i0 + 1, Math.ceil((t1 - from) * rate));
+      let m = 0;
+      for (let i = Math.max(0, i0); i < Math.min(pk.length, i1); i++) if (pk[i] > m) m = pk[i];
+      // Square root: quiet passages stay visible (closer to how loud it sounds).
+      const a = Math.min(1, Math.sqrt((m / 255) * vol)) * (ch / 2 - 1);
+      x.fillRect(px, ch / 2 - a, 1, Math.max(1, a * 2));
+    }
+    return cv;
+  }
+
+  // Keep the main track in view; show the audio tracks below it if there's room.
+  function scrollToMain() {
+    const row = tlRows.querySelector('.tl-row.main');
+    if (!row) return;
+    const bottom = Math.max(0, RULER_H + tlRows.scrollHeight - timeline.clientHeight);
+    timeline.scrollTop = Math.min(row.offsetTop, bottom);
   }
 
   function renderClips() {
     if ($('editorScreen').hidden) return;
     const frag = document.createDocumentFragment();
-    for (let ti = tracks.length - 1; ti >= 0; ti--) {
-      const tr = tracks[ti];
+    for (const tr of displayTracks()) {
       const row = document.createElement('div');
-      row.className = 'tl-row' + (tr.main ? ' main' : '') + (tr.hidden ? ' is-hidden' : '') + (tr.id === selectedTrackId ? ' track-selected' : '');
+      row.className = 'tl-row' + (tr.main ? ' main' : '') + (isAudioTrack(tr) ? ' audio' : '') + (tr.hidden ? ' is-hidden' : '') + (tr.id === selectedTrackId ? ' track-selected' : '');
       row.dataset.track = tr.id;
       row.style.height = rowH(tr) + 'px';
       tr.clips.forEach((c, i) => row.appendChild(clipElement(c, tr, i)));
@@ -1305,13 +1588,12 @@
     spacer.className = 'th-spacer';
     spacer.style.height = RULER_H + 'px';
     frag.appendChild(spacer);
-    for (let ti = tracks.length - 1; ti >= 0; ti--) {
-      const tr = tracks[ti];
+    for (const tr of displayTracks()) {
       const h = document.createElement('div');
-      h.className = 'track-head' + (tr.id === selectedTrackId ? ' selected' : '') + (tr.main ? ' main' : '');
+      h.className = 'track-head' + (tr.id === selectedTrackId ? ' selected' : '') + (tr.main ? ' main' : '') + (isAudioTrack(tr) ? ' audio' : '');
       h.style.height = rowH(tr) + 'px';
       h.dataset.track = tr.id;
-      h.title = `${trackLabel(tr)} — tap for opacity, volume and more`;
+      h.title = `${trackLabel(tr)} — tap for ${isAudioTrack(tr) ? 'volume' : 'opacity, volume'} and more`;
       const eye = document.createElement('button');
       eye.type = 'button';
       eye.className = 'th-btn' + (tr.hidden ? ' off' : '');
@@ -1324,7 +1606,7 @@
       snd.dataset.act = 'mute';
       snd.title = tr.muted ? 'Unmute track' : 'Mute track';
       snd.innerHTML = tr.muted ? MUTE_SVG : SOUND_SVG;
-      h.append(eye, snd);
+      if (isAudioTrack(tr)) h.append(snd); else h.append(eye, snd);
       frag.appendChild(h);
     }
     trackHeads.replaceChildren(frag);
@@ -1450,6 +1732,7 @@
     }
     drag.lastX = e.clientX;
     drag.lastY = e.clientY;
+    drag.alt = e.altKey;
     positionDrag();
   });
 
@@ -1467,9 +1750,16 @@
     const dx = drag.lastX - drag.startX + (timeline.scrollLeft - drag.scroll0);
     drag.el.style.left = (drag.origLeft + dx) + 'px';
     drag.el.style.transform = `translateY(${drag.lastY - drag.startY}px)`;
-    const row = rowAtY(drag.lastY);
-    const tr = row ? findTrack(row.dataset.track) : null;
-    drag.target = tr ? tr.id : 'new';
+    let row = rowAtY(drag.lastY);
+    let tr = row ? findTrack(row.dataset.track) : null;
+    // Sound stays on audio tracks, pictures on visual tracks.
+    if (f.clip.kind === 'audio') {
+      if (!isAudioTrack(tr)) { tr = null; row = null; }
+      drag.target = tr ? tr.id : 'newAudio';
+    } else {
+      if (isAudioTrack(tr)) { tr = f.tr; row = tlRows.querySelector(`.tl-row[data-track="${tr.id}"]`); }
+      drag.target = tr ? tr.id : 'new';
+    }
     const rect = timeline.getBoundingClientRect();
     const time = (drag.lastX - rect.left + timeline.scrollLeft - pad()) / pps;
     drag.time = Math.max(0, f.clip.start + dx / pps);
@@ -1488,7 +1778,9 @@
       drag.marker.style.height = rb.height + 'px';
     } else {
       drag.marker.hidden = true;
-      // Snap the start to the playhead and to edges of other clips (8 px).
+      // Snap the start or end to the playhead and to edges of other clips (8 px).
+      // Switchable below the timeline; Alt moves freely for a moment.
+      if (!settings.snap || drag.alt) return;
       const thr = 8 / pps;
       let best = null;
       const len = clipLen(f.clip);
@@ -1531,15 +1823,16 @@
     commit(() => {
       const c = f.clip;
       f.tr.clips.splice(f.idx, 1);
-      let tr = d.target === 'new' ? null : findTrack(d.target);
-      if (!tr) { tr = newTrack(false); tracks.push(tr); }
+      let tr = d.target === 'new' || d.target === 'newAudio' ? null : findTrack(d.target);
+      if (!tr && d.target === 'newAudio') { tr = newTrack(false, 'audio'); tracks.splice(firstAudioIndex(), 0, tr); }
+      if (!tr) { tr = newTrack(false); tracks.splice(firstAudioIndex(), 0, tr); }
       if (tr.magnetic) {
         tr.clips.splice(clamp(d.dropIdx, 0, tr.clips.length), 0, c);
       } else {
         c.start = d.time;
         if (overlaps(tr, c.start, clipLen(c), c.id)) {
-          // No room here: put it on a new track right above.
-          const nt = newTrack(false);
+          // No room here: put it on a new track right above (audio: right below).
+          const nt = newTrack(false, tr.kind || 'video');
           tracks.splice(tracks.indexOf(tr) + 1, 0, nt);
           tr = nt;
         }
@@ -1558,16 +1851,29 @@
   // the playhead; it waits while a playing video is still buffering.
   // ---------------------------------------------------------------------------
   const vids = [$('vidA'), $('vidB')];
+  const auds = [];                      // <audio> elements for audio clips
   const POOL_MAX = 8;
   const PRELOAD = 1.5; // seconds ahead
-  function poolElement() {
-    if (vids.length >= POOL_MAX) return null;
-    const v = vids[0].cloneNode(false);
-    v.removeAttribute('id');
-    v.removeAttribute('src');
-    vids[0].parentNode.insertBefore(v, vids[vids.length - 1].nextSibling);
-    vids.push(v);
+  const allEls = () => [...vids, ...auds];
+  function poolElement(kind) {
+    const list = kind === 'audio' ? auds : vids;
+    if (list.length >= POOL_MAX) return null;
+    let v;
+    if (kind === 'audio') {
+      v = document.createElement('audio');
+      v.preload = 'auto';
+      v.muted = true;
+      v.hidden = true;
+      vids[0].parentNode.appendChild(v);
+    } else {
+      v = vids[0].cloneNode(false);
+      v.removeAttribute('id');
+      v.removeAttribute('src');
+      vids[0].parentNode.insertBefore(v, vids[vids.length - 1].nextSibling);
+    }
+    list.push(v);
     hookVideo(v);
+    connectGain(v);
     return v;
   }
   const pv = $('pvCanvas');
@@ -1575,8 +1881,34 @@
   let clock = { t0: 0, ph0: 0 };
   const unlocked = new WeakSet();
 
+  // Volumes above 100 % need Web Audio (a media element only goes up to 1).
+  // It's switched on in the first play gesture that needs it; from then on
+  // every element plays through its own gain node.
+  let actx = null;
+  const gains = new WeakMap();
+  function ensureAudioCtx() {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!actx && Ctx) {
+      try { actx = new Ctx(); allEls().forEach(connectGain); } catch (e) { actx = null; }
+    }
+    if (actx && actx.state === 'suspended') actx.resume().catch(() => {});
+  }
+  function connectGain(el) {
+    if (!actx || gains.has(el)) return;
+    try {
+      const g = actx.createGain();
+      actx.createMediaElementSource(el).connect(g).connect(actx.destination);
+      gains.set(el, g);
+    } catch (e) { /* stays on element volume */ }
+  }
+  function setGain(el, g) {
+    const node = gains.get(el);
+    if (node) { el.volume = 1; node.gain.value = Math.max(0, g); } else el.volume = clamp(g, 0, 1);
+  }
+
   const isVideoClip = (c) => !!c && c.kind === 'video';
   const playableVideo = (c) => isVideoClip(c) && srcOf(c) && !srcOf(c).missing;
+  const playableSound = (c) => !!c && c.kind === 'audio' && srcOf(c) && !srcOf(c).missing;
 
   function setVideoTime(el, t) {
     if (el.readyState >= 1) el.currentTime = t;
@@ -1592,36 +1924,38 @@
       el.src = src.url;
     }
     el.dataset.clip = clip.id;
-    setVideoTime(el, Math.max(0, t - src.base));
+    setVideoTime(el, Math.max(0, t - (src.base || 0)));
   }
-  const mediaTime = (el) => { const s = sources.get(el.dataset.src); return el.currentTime + (s ? s.base : 0); };
-  const elOf = (clipId) => vids.find((v) => v.dataset.clip === clipId) || null;
+  const mediaTime = (el) => { const s = sources.get(el.dataset.src); return el.currentTime + (s ? s.base || 0 : 0); };
+  const elOf = (clipId) => allEls().find((v) => v.dataset.clip === clipId) || null;
 
   // The time shown: at the very end the last frame stays visible.
   const viewTime = () => { const tot = totalDuration(); return playhead >= tot - 1e-6 ? Math.max(0, tot - 1e-3) : playhead; };
 
-  // Video clips playing at time t (with their track), bottom track first.
-  function activeVideos(t) {
+  // Clips with a media element playing at time t: videos on visual tracks, sounds on audio tracks.
+  function activeMedia(t) {
     const out = [];
     for (const tr of tracks) {
       const a = clipAtTrack(tr, t);
-      if (a.idx >= 0 && playableVideo(a.clip)) out.push({ tr, clip: a.clip });
+      if (a.idx >= 0 && (isAudioTrack(tr) ? playableSound(a.clip) : playableVideo(a.clip))) out.push({ tr, clip: a.clip });
     }
     return out;
   }
+  const activeVideos = (t) => activeMedia(t).filter((a) => a.clip.kind === 'video');
 
   /**
-   * Give every playing and upcoming video clip an element, keep the playing
-   * ones in sync with the playhead and set their sound.
+   * Give every playing and upcoming clip an element, keep the playing ones in
+   * sync with the playhead and set their sound (volume, fades).
    * forceTime: re-position the playing elements (after a seek).
    */
   function syncPool(forceTime) {
     const t = viewTime();
-    const active = activeVideos(t);
+    const active = activeMedia(t);
     const upcoming = [];
     if (playing) {
       for (const tr of tracks) for (const c of tr.clips) {
-        if (playableVideo(c) && c.start > t + 1e-6 && c.start <= t + PRELOAD) upcoming.push({ tr, clip: c });
+        const ok = isAudioTrack(tr) ? playableSound(c) : playableVideo(c);
+        if (ok && c.start > t + 1e-6 && c.start <= t + PRELOAD) upcoming.push({ tr, clip: c });
       }
       upcoming.sort((a, b) => a.clip.start - b.clip.start);
     }
@@ -1631,16 +1965,18 @@
     for (const w of wanted) { const el = elOf(w.clip.id); if (el) { used.add(el); w.el = el; } }
     for (const w of wanted) {
       if (w.el) continue;
-      const free = vids.filter((v) => !used.has(v) && !ids.has(v.dataset.clip));
+      const kind = w.clip.kind === 'audio' ? 'audio' : 'video';
+      const pool = kind === 'audio' ? auds : vids;
+      const free = pool.filter((v) => !used.has(v) && !ids.has(v.dataset.clip));
       const src = srcOf(w.clip);
-      let el = free.find((v) => v.dataset.src === src.id) || free.find((v) => !v.dataset.clip) || free[0] || poolElement();
-      if (!el) continue; // more videos at once than elements: this one isn't shown
+      const el = free.find((v) => v.dataset.src === src.id) || free.find((v) => !v.dataset.clip) || free[0] || poolElement(kind);
+      if (!el) continue; // more clips at once than elements: this one isn't played
       used.add(el);
       w.el = el;
       w.fresh = true;
     }
     // Elements nobody needs right now pause.
-    vids.forEach((v) => { if (!used.has(v)) { if (!v.paused) v.pause(); v.muted = true; } });
+    allEls().forEach((v) => { if (!used.has(v)) { if (!v.paused) v.pause(); v.muted = true; } });
     const activeIds = new Set(active.map((a) => a.clip.id));
     for (const w of wanted) {
       const { el, clip, tr } = w;
@@ -1648,9 +1984,10 @@
       const isActive = activeIds.has(clip.id);
       const target = isActive ? clip.in + (t - clip.start) : clip.in;
       if (w.fresh) loadInto(el, clip, target);
-      else if (isActive && (forceTime || Math.abs(mediaTime(el) - target) > (playing ? 0.25 : 0.01))) setVideoTime(el, Math.max(0, target - srcOf(clip).base));
-      el.muted = !isActive || muteAll || !!clip.muted || tr.muted || tr.volume <= 0;
-      el.volume = clamp(tr.volume, 0, 1);
+      else if (isActive && (forceTime || Math.abs(mediaTime(el) - target) > (playing ? 0.25 : 0.01))) setVideoTime(el, Math.max(0, target - (srcOf(clip).base || 0)));
+      const g = (tr.volume == null ? 1 : tr.volume) * Render.clipGain(clip, t - clip.start);
+      el.muted = !isActive || muteAll || !!clip.muted || tr.muted || g <= 0;
+      setGain(el, g);
       if (isActive && playing) {
         if (el.paused) el.play().catch((err) => { if (err && err.name === 'NotAllowedError') { el.muted = true; el.play().catch(() => {}); } });
       } else if (!el.paused) el.pause();
@@ -1659,7 +1996,7 @@
   }
 
   function resetVideos() {
-    vids.forEach((v) => { v.pause(); v.removeAttribute('src'); delete v.dataset.src; delete v.dataset.url; delete v.dataset.clip; v.load(); });
+    allEls().forEach((v) => { v.pause(); v.removeAttribute('src'); delete v.dataset.src; delete v.dataset.url; delete v.dataset.clip; v.load(); });
   }
 
   function seek(t, fromScroll) {
@@ -1681,14 +2018,14 @@
   }
 
   function unlock(el) {
-    // iOS only lets a <video> play with sound if play() was first called in a user gesture.
+    // iOS only lets a media element play with sound if play() was first called in a user gesture.
     if (unlocked.has(el) || !el.getAttribute('src')) return;
     unlocked.add(el);
     if (!el.paused) return; // already playing in this gesture
     const t = el.currentTime;
     el.muted = true;
     el.play().then(() => {
-      const active = playing && activeVideos(viewTime()).some((a) => a.clip.id === el.dataset.clip);
+      const active = playing && activeMedia(viewTime()).some((a) => a.clip.id === el.dataset.clip);
       if (!active) { el.pause(); el.currentTime = t; }
       syncPool();
     }).catch(() => {});
@@ -1698,18 +2035,20 @@
     if (!allClips().length) return;
     if (playhead >= totalDuration() - 0.03) seek(0);
     // Make sure a few elements exist so they can be unlocked in this gesture.
-    while (vids.length < 4 && poolElement());
+    while (vids.length < 4 && poolElement('video'));
+    if (audioTracks().length) while (auds.length < 3 && poolElement('audio'));
+    if (actx || allClips().some((c) => isSoundClip(c) && c.volume > 1)) ensureAudioCtx();
     playing = true;
     setPlayIcon();
     clock = { t0: performance.now(), ph0: playhead };
     syncPool(true);
-    vids.forEach(unlock);
+    allEls().forEach(unlock);
     requestAnimationFrame(tick);
   }
   function pause() {
     if (!playing) return;
     playing = false;
-    vids.forEach((v) => v.pause());
+    allEls().forEach((v) => v.pause());
     setPlayIcon();
     syncPool();
   }
@@ -1719,8 +2058,8 @@
     if (!playing) return;
     const now = performance.now();
     const total = totalDuration();
-    // Wait while a playing video is still loading, so pictures and sound stay together.
-    const act = activeVideos(viewTime());
+    // Wait while a playing clip is still loading, so pictures and sound stay together.
+    const act = activeMedia(viewTime());
     const waiting = act.some((a) => { const el = elOf(a.clip.id); return el && (el.seeking || el.readyState < 3); });
     if (waiting) clock = { t0: now, ph0: playhead };
     else playhead = Math.min(total, clock.ph0 + (now - clock.t0) / 1000);
@@ -1771,7 +2110,7 @@
   // is split or an edit is undone, so fall back to a clip of the same media.
   function cropClip() {
     if (canvasState.aspect !== 'crop') return null;
-    const cands = allClips().filter((c) => c.kind !== 'color');
+    const cands = allClips().filter((c) => c.kind === 'video' || c.kind === 'image');
     return cands.find((c) => c.id === canvasState.cropClipId) || cands.find((c) => c.srcId === canvasState.cropSrcId) || cands[0] || null;
   }
   // Pixel size of a clip's crop (display space; 90° rotations swap width and height).
@@ -1804,7 +2143,7 @@
     const cc = cropClip();
     const csel = $('aspectCropSel');
     const cands = [];
-    tracks.forEach((tr, ti) => tr.clips.forEach((c, i) => { if (c.kind !== 'color') cands.push({ c, label: tracks.length > 1 ? `${ti === 0 ? 'Main' : 'Track ' + (ti + 1)} · clip ${i + 1}` : `Clip ${i + 1}` }); }));
+    tracks.forEach((tr, ti) => tr.clips.forEach((c, i) => { if (c.kind === 'video' || c.kind === 'image') cands.push({ c, label: tracks.length > 1 ? `${ti === 0 ? 'Main' : 'Track ' + (ti + 1)} · clip ${i + 1}` : `Clip ${i + 1}` }); }));
     csel.replaceChildren(...(cands.length ? cands.map(({ c, label }) => {
       const p = cropPixels(c);
       const s = srcOf(c);
@@ -1842,7 +2181,7 @@
   $('aspectSel').addEventListener('change', (e) => {
     canvasState.aspect = e.target.value;
     if (canvasState.aspect === 'video' && !sources.get(canvasState.videoSrcId)) canvasState.videoSrcId = (videoSources()[0] || {}).id || null;
-    if (canvasState.aspect === 'crop') { setCropCanvas(selClip() && selClip().kind !== 'color' ? selClip() : cropClip()); exportState.res = 'crop'; }
+    if (canvasState.aspect === 'crop') { setCropCanvas(selClip() && (selClip().kind === 'video' || selClip().kind === 'image') ? selClip() : cropClip()); exportState.res = 'crop'; }
     onCanvasChange();
   });
   $('aspectVideoSel').addEventListener('change', (e) => { canvasState.videoSrcId = e.target.value || null; onCanvasChange(); });
@@ -1941,7 +2280,7 @@
     let selLayer = null;
     for (let ti = 0; ti < tracks.length; ti++) {
       const tr = tracks[ti];
-      if (tr.hidden || tr.opacity <= 0) continue;
+      if (isAudioTrack(tr) || tr.hidden || tr.opacity <= 0) continue;
       const a = clipAtTrack(tr, t);
       if (a.idx < 0) continue;
       const d = currentDrawable(a.clip, out.w, out.h);
@@ -1989,7 +2328,7 @@
   // The preview is interactive only while a transform tab is open and the selected clip is the visible one.
   function editMode() {
     const f = findClip(selectedId);
-    if (!f || cpTab === 'clip' || playing || f.tr.hidden) return null;
+    if (!f || cpTab === 'clip' || cpTab === 'audio' || playing || f.tr.hidden || f.clip.kind === 'audio') return null;
     const c = f.clip;
     const t = viewTime();
     if (t < c.start - 1e-6 || t >= clipEnd(c) - 1e-6) return null;
@@ -2053,7 +2392,7 @@
 
   function syncTransformUI() {
     const c = selClip();
-    if (!c) return;
+    if (!c || c.kind === 'audio') return;
     const t = Render.tfOf(c.tf);
     $('anchorGrid').querySelectorAll('button').forEach((b) => {
       const on = b.dataset.anchor === t.anchor;
@@ -2075,6 +2414,7 @@
   function showTab(tab) {
     const c = selClip();
     if (tab === 'crop' && c && c.kind === 'color') tab = 'clip';
+    if (c && c.kind === 'audio' && tab !== 'audio') tab = tab === 'clip' ? 'clip' : 'audio';
     cpTab = tab;
     $('cpTabs').querySelectorAll('.seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
     document.querySelectorAll('#clipPanel .cp-pane').forEach((p) => { p.hidden = p.dataset.pane !== tab; });
@@ -2082,7 +2422,7 @@
   }
   // On phones the preview sticks to the top while a transform tab is open.
   function updateTransformingClass() {
-    const on = !$('clipPanel').hidden && cpTab !== 'clip';
+    const on = !$('clipPanel').hidden && cpTab !== 'clip' && cpTab !== 'audio';
     if (document.body.classList.contains('transforming') !== on) {
       document.body.classList.toggle('transforming', on);
       requestAnimationFrame(renderPreview);
@@ -2092,7 +2432,7 @@
     const b = e.target.closest('.seg-btn');
     if (!b) return;
     showTab(b.dataset.tab);
-    if (cpTab !== 'clip') ensureVisible();
+    if (cpTab !== 'clip' && cpTab !== 'audio') ensureVisible();
     syncTransformUI();
     renderPreview();
   });
@@ -2615,7 +2955,7 @@
   const exportDuration = () => (exportState.scope === 'selected' ? (selClip() ? clipLen(selClip()) : 0) : totalDuration());
   // Is a clip's sound part of the export?
   function audibleClip(c) {
-    if (muteAll || !isVideoClip(c) || c.muted || !srcOf(c) || !srcOf(c).audioDecodable) return false;
+    if (muteAll || !isSoundClip(c) || c.muted || c.volume === 0 || !srcOf(c) || !srcOf(c).audioDecodable) return false;
     if (exportState.scope === 'selected') return true;
     const f = findClip(c.id);
     return !f || (!f.tr.muted && f.tr.volume > 0);
@@ -2625,7 +2965,7 @@
   function sourceBytes() {
     return exportClips().reduce((sum, c) => {
       const s = srcOf(c);
-      return s && s.kind === 'video' && s.file ? sum + ((c.out - c.in) / Math.max(0.01, s.fileDuration)) * s.file.size : sum;
+      return s && c.kind === 'video' && s.kind === 'video' && s.file ? sum + ((c.out - c.in) / Math.max(0.01, s.fileDuration)) * s.file.size : sum;
     }, 0);
   }
 
@@ -2640,7 +2980,8 @@
     const withAudio = list.some(audibleClip);
     const est = Render.estimateSize(out, dur, withAudio);
     const srcBytes = sourceBytes();
-    const onlyVideos = used.length && used.every((x) => x.kind === 'video');
+    const visual = used.filter((x) => x.kind !== 'audio');
+    const onlyVideos = visual.length && visual.every((x) => x.kind === 'video');
     let html = `${out.width}×${out.height} · ${out.fps} fps · ${(out.bitrate / 1e6).toFixed(1)} Mbit/s · ${fmtTime(dur, false)}<br>` +
       `Estimated size: <strong>≈ ${fmtSize(est)}</strong>` + (srcBytes ? ` (source videos ≈ ${fmtSize(srcBytes)})` : '');
     if (out.scaled) html += `<span class="warn-line">Exported as ${out.width}×${out.height} — at this file size, a smaller picture looks better than a blocky one. Tick "Keep resolution" to prevent this.</span>`;
@@ -2673,17 +3014,25 @@
     const s = getExportSettings();
     // Clip times are in media time; the export reads the actual (possibly trimmed-copy) file.
     const scopeSelected = exportState.scope === 'selected';
+    const sound = (c) => ({ volume: c.volume == null ? 1 : c.volume, fadeIn: c.fadeIn || 0, fadeOut: c.fadeOut || 0 });
     const expClip = (c, start) => {
-      if (isVideoClip(c)) { const src = srcOf(c); return { kind: 'video', source: src, start, in: c.in - src.base, out: c.out - src.base, muted: c.muted, tf: c.tf }; }
+      if (isVideoClip(c)) { const src = srcOf(c); return { kind: 'video', source: src, start, in: c.in - src.base, out: c.out - src.base, muted: c.muted, tf: c.tf, ...sound(c) }; }
+      if (c.kind === 'audio') { const src = srcOf(c); const b = src.base || 0; return { kind: 'audio', source: src, start, in: c.in - b, out: c.out - b, muted: c.muted, ...sound(c) }; }
       return { kind: c.kind, source: srcOf(c) || null, start, in: c.in, out: c.out, muted: true, still: stillFor(c, s.width, s.height), tf: c.tf };
     };
     const sel = selClip();
     const expTracks = scopeSelected && sel
-      ? [{ hidden: false, opacity: 1, muted: false, volume: 1, clips: [expClip(sel, 0)] }]
-      : tracks.map((tr) => ({ hidden: tr.hidden, opacity: tr.opacity, muted: tr.muted, volume: tr.volume, clips: tr.clips.map((c) => expClip(c, c.start)) }));
+      ? [{ kind: sel.kind === 'audio' ? 'audio' : 'video', hidden: false, opacity: 1, muted: false, volume: 1, clips: [expClip(sel, 0)] }]
+      : tracks.map((tr) => ({ kind: tr.kind || 'video', hidden: tr.hidden, opacity: tr.opacity, muted: tr.muted, volume: tr.volume, clips: tr.clips.map((c) => expClip(c, c.start)) }));
     const duration = exportDuration();
     const t0 = performance.now();
+    // Audio files are decoded completely before the export starts.
+    const pcmSources = [...new Set(exportClips().filter((c) => c.kind === 'audio' && audibleClip(c)).map(srcOf).filter((x) => x && x.kind === 'audio'))];
     try {
+      for (const src of pcmSources) {
+        $('progressLabel').textContent = `Reading audio "${src.name}"…`;
+        try { src.pcm = await pcmOf(src); } catch (e) { const er = new Error(`The audio file "${src.name}" couldn't be read.`); er.name = e && e.name === 'NotReadableError' ? 'NotReadableError' : 'Error'; throw er; }
+      }
       const r = await Render.exportTimeline({
         tracks: expTracks,
         duration,
@@ -2706,6 +3055,7 @@
       else if (e && e.name === 'NotReadableError') { const u = await unreadableSources(); if (u.length) lostAccess(u); else toast('Export failed: a video couldn\'t be read.', 7000); }
       else { console.error(e); toast('Export failed: ' + (e && e.message ? e.message : e), 7000); }
     } finally {
+      for (const src of pcmSources) delete src.pcm; // free the memory
       exporting = false;
       abortCtl = null;
       $('progressBox').hidden = true;
@@ -2867,7 +3217,7 @@
       export: { ...exportState },
       exportName,
       // Bottom track first; tracks[0] is the main track.
-      tracks: tracks.map((t) => ({ ...t, kind: t.main ? 'main' : 'video', clips: t.clips.map((c) => ({ ...c })) })),
+      tracks: tracks.map((t) => ({ ...t, kind: t.kind || 'video', clips: t.clips.map((c) => ({ ...c })) })),
       media: [...sources.values()].map(mediaMeta),
       thumb: await projectThumb().catch(() => ''),
     };
@@ -2883,8 +3233,8 @@
     try { await src.file.slice(0, 16).arrayBuffer(); return true; } catch (e) { return false; }
   }
   async function unreadableSources() {
-    // Images are decoded into memory when loaded, only videos are read during export.
-    const used = [...new Set(exportClips().filter(isVideoClip).map((c) => srcOf(c)).filter(Boolean))];
+    // Images are decoded into memory when loaded, only videos and sounds are read during export.
+    const used = [...new Set(exportClips().filter(isSoundClip).map((c) => srcOf(c)).filter(Boolean))];
     const out = [];
     for (const s of used) if (s.missing || !(await isReadable(s))) out.push(s);
     return out;
@@ -3060,13 +3410,18 @@
   }
 
   async function attach(m, file, base, extra = {}) {
+    if (m.kind === 'audio') {
+      let duration = m.duration;
+      if (!(duration > 0)) duration = (await decodeAudioFile(file)).duration; // project file from elsewhere
+      return Object.assign(makeAudioSource({ ...m, duration }, file), extra);
+    }
     if (m.kind === 'image') {
       const bmp = await decodeImage(file).catch(() => { throw new Error(`"${file.name}" couldn't be opened as an image.`); });
       return Object.assign(makeImageSource(m, file, bmp), extra);
     }
     const probed = await probe(file);
     const src = makeSource(m, file, probed, base);
-    Object.assign(src, extra);
+    Object.assign(src, peaksFromMeta(m), extra);
     return src;
   }
 
@@ -3095,7 +3450,7 @@
     uid = Math.max(uid, maxId);
     // Projects before 0.8 have one track without track settings.
     setTracks(tl.map((t, i) => ({
-      ...newTrack(i === 0),
+      ...newTrack(i === 0, t.kind === 'audio' ? 'audio' : 'video'),
       ...(t.id ? { id: t.id } : {}),
       magnetic: t.magnetic !== undefined ? !!t.magnetic : i === 0,
       hidden: !!t.hidden,
@@ -3133,6 +3488,7 @@
       updatePreviewAspect();
       updateEstimate();
       sources.forEach((s) => { if (!s.thumbs.length) queueThumbs(s); });
+      allClips().forEach((c) => { if (c.kind === 'audio') queuePeaks(srcOf(c)); });
       scheduleSave();
     };
     if (!missing.length) { finish(); return; }
@@ -3150,11 +3506,11 @@
    * copy on phones, otherwise links the handle; frees the previous copy.
    */
   async function replaceMedia(m, old, file, handle) {
-    showBusy(m.kind === 'image' ? 'Opening image…' : 'Opening video…', file.name);
+    showBusy(m.kind === 'image' ? 'Opening image…' : m.kind === 'audio' ? 'Opening audio…' : 'Opening video…', file.name);
     try {
       const src = await attach(m, file, 0, { storage: handle ? 'handle' : 'none', copyName: null });
       if (old) { src.thumbs = old.thumbs; src.thumbStep = old.thumbStep; src.thumbAspect = old.thumbAspect; if (old.url) URL.revokeObjectURL(old.url); }
-      if (m.kind !== 'image' && src.fileDuration + 0.05 < m.rangeOut) toast(`"${file.name}" is shorter than the original — some cuts may be cut off.`, 6000);
+      if (m.kind === 'video' && src.fileDuration + 0.05 < m.rangeOut) toast(`"${file.name}" is shorter than the original — some cuts may be cut off.`, 6000);
       hideBusy();
       if (m.kind === 'image') {
         if (Project.canCopy()) {
@@ -3163,13 +3519,23 @@
         }
         if (src.storage !== 'opfs' && handle) await Project.saveHandle(src.id, handle);
         if (!src.thumbs.length) queueThumbs(src);
+      } else if (m.kind === 'audio') {
+        if ((isCoarse || !handle) && Project.canCopy()) {
+          const name = `${src.id}-${Date.now().toString(36)}-${++copyCounter}${(/\.[a-z0-9]+$/i.exec(file.name || '') || ['.audio'])[0]}`;
+          try {
+            src.file = await Project.copyWhole(name, file);
+            URL.revokeObjectURL(src.url); src.url = URL.createObjectURL(src.file);
+            src.storage = 'opfs'; src.copyName = name;
+          } catch (err) { /* keep */ }
+        }
+        if (src.storage !== 'opfs' && handle) await Project.saveHandle(src.id, handle);
       } else if (!(await makeWorkingCopy(src)) && handle) await Project.saveHandle(src.id, handle);
       if (src.storage !== 'handle') Project.removeHandle(src.id);
       if (old && old.storage === 'opfs' && old.copyName && old.copyName !== src.copyName) {
         Project.releaseCopy(old.copyName);
       }
       sources.set(src.id, src);
-      vids.forEach((v) => { if (v.dataset.src === src.id) delete v.dataset.url; });
+      allEls().forEach((v) => { if (v.dataset.src === src.id) delete v.dataset.url; });
       scheduleSave();
       return src;
     } catch (err) {
@@ -3224,6 +3590,7 @@
           meta.className = 'm-meta';
           meta.textContent = e.meta.kind === 'image'
             ? `Image · ${e.meta.width}×${e.meta.height} · ${fmtSize(e.meta.origSize)}`
+            : e.meta.kind === 'audio' ? `Audio · ${fmtTime(e.meta.duration, false)} · ${fmtSize(e.meta.origSize)}`
             : `${fmtTime(e.meta.duration - e.meta.start, false)} · ${fmtSize(e.meta.origSize)}`;
           info.append(name, meta);
           const st = document.createElement('span');
@@ -3268,8 +3635,13 @@
           if (!e) {
             // Fall back to duration (e.g. the file was re-saved by another app).
             try {
-              const d = await MP4.demux(file);
-              e = entries.find((x) => !resolved(x) && Math.abs(x.meta.duration - d.video.duration) < 0.2 && x.meta.width === d.video.width && x.meta.height === d.video.height);
+              if (isAudioFile(file)) {
+                const d = (await decodeAudioFile(file)).duration;
+                e = entries.find((x) => !resolved(x) && x.meta.kind === 'audio' && Math.abs(x.meta.duration - d) < 0.2);
+              } else {
+                const d = await MP4.demux(file);
+                e = entries.find((x) => !resolved(x) && Math.abs(x.meta.duration - d.video.duration) < 0.2 && x.meta.width === d.video.width && x.meta.height === d.video.height);
+              }
             } catch (err) { /* not a video */ }
           }
           if (e) await assign(e, file, handle);
@@ -3511,7 +3883,7 @@
       name.textContent = m.name;
       const where = document.createElement('div');
       where.className = 'm-meta';
-      const kind = m.kind === 'image' ? 'Image' : 'Video';
+      const kind = m.kind === 'image' ? 'Image' : m.kind === 'audio' ? 'Audio' : 'Video';
       if (m.missing) where.textContent = `${kind} · missing — select it again`;
       else if (m.storage === 'opfs') where.textContent = `${kind} · working copy in this browser's storage · ${fmtSize(sizes.get(m.copyName) || 0)}`;
       else if (m.storage === 'handle') where.textContent = `${kind} · linked to the original file "${m.name}" on this computer`;
@@ -3539,7 +3911,7 @@
         });
         if (src && m.storage !== 'opfs' && Project.canCopy() && !src.missing) {
           mk('Copy to browser', 'Keep a working copy in this browser, independent of the original file', async () => {
-            const ok = m.kind === 'image' ? await copyImageToBrowser(src) : await makeWorkingCopy(src, true);
+            const ok = m.kind === 'image' || m.kind === 'audio' ? await copyImageToBrowser(src) : await makeWorkingCopy(src, true);
             if (ok) { Project.removeHandle(src.id); scheduleSave(); toast('Working copy saved.'); }
           });
         }
@@ -3653,7 +4025,7 @@
       delete m.copyName;
       const src = ok.find((s) => s.id === m.id);
       if (!src) { m.pack = null; continue; }
-      const ext = (/\.[a-z0-9]{1,5}$/i.exec(src.name || '') || [m.kind === 'image' ? '.img' : '.mp4'])[0];
+      const ext = (/\.[a-z0-9]{1,5}$/i.exec(src.name || '') || [m.kind === 'image' ? '.img' : m.kind === 'audio' ? '.audio' : '.mp4'])[0];
       m.pack = `media/${m.id}${ext.toLowerCase()}`;
       m.packBase = src.base || 0; // a trimmed working copy starts later than the original
       entries.push({ name: m.pack, blob: src.file });

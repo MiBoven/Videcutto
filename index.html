@@ -141,6 +141,7 @@
         <div class="dropdown" id="addMenu" style="display:none" role="menu">
           <button type="button" role="menuitem" id="addMediaItem"><span class="mi-icon">▶</span>Videos &amp; images</button>
           <button type="button" role="menuitem" id="addColorItem"><span class="mi-icon">■</span>Color clip</button>
+          <button type="button" role="menuitem" id="addAudioItem"><span class="mi-icon">♪</span>Audio (music, sound)</button>
           <div class="menu-sep" role="separator"></div>
           <span class="menu-label">As overlay at the playhead</span>
           <button type="button" role="menuitem" id="addOverlayMediaItem"><span class="mi-icon">⧉</span>Videos &amp; images</button>
@@ -163,6 +164,7 @@
   <div class="below-timeline">
     <p class="hint">Tap a clip to select it, then drag it — sideways to move it, up or down to another track. Tap a track's left edge for its settings.</p>
     <div class="zoom-ctl">
+      <button class="icon small snap-btn" id="snapBtn" title="Snap clips to edges and the playhead" aria-label="Snap" aria-pressed="true"><svg viewBox="0 0 24 24"><path d="M6 4v8a6 6 0 0012 0V4"/><path d="M6 4h4v8a2 2 0 004 0V4h4"/><path d="M6 8h4M14 8h4"/></svg></button>
       <button class="icon small" id="zoomOutBtn" title="Zoom out" aria-label="Zoom out"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M8.5 11h5M20 20l-4.5-4.5"/></svg></button>
       <button class="icon small" id="zoomInBtn" title="Zoom in" aria-label="Zoom in"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M8.5 11h5M11 8.5v5M20 20l-4.5-4.5"/></svg></button>
     </div>
@@ -176,10 +178,12 @@
       <button class="icon small help-link" data-help="tracks" title="Help: tracks" aria-label="Help: tracks"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.3a2.5 2.5 0 014.8.9c0 1.7-2.4 2-2.4 3.6"/><path d="M12 17.2v.1"/></svg></button>
       <button class="icon small" id="tpClose" title="Close" aria-label="Close track settings"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
-    <span class="mini-label">Opacity</span>
-    <div class="range-row">
-      <input type="range" id="tpOpacity" min="0" max="100" step="1" value="100" aria-label="Track opacity">
-      <span class="range-val" id="tpOpacityVal">100%</span>
+    <div id="tpOpacityRow">
+      <span class="mini-label">Opacity</span>
+      <div class="range-row">
+        <input type="range" id="tpOpacity" min="0" max="100" step="1" value="100" aria-label="Track opacity">
+        <span class="range-val" id="tpOpacityVal">100%</span>
+      </div>
     </div>
     <span class="mini-label">Volume</span>
     <div class="range-row">
@@ -207,14 +211,16 @@
     <div class="segment small cp-tabs" id="cpTabs" role="tablist">
       <button type="button" class="seg-btn active" data-tab="clip" role="tab">Clip</button>
       <button type="button" class="seg-btn" data-tab="crop" role="tab" id="cpTabCrop">Crop</button>
-      <button type="button" class="seg-btn" data-tab="position" role="tab">Position</button>
-      <button type="button" class="seg-btn" data-tab="rotate" role="tab">Rotate</button>
+      <button type="button" class="seg-btn" data-tab="position" role="tab" id="cpTabPosition">Position</button>
+      <button type="button" class="seg-btn" data-tab="rotate" role="tab" id="cpTabRotate">Rotate</button>
+      <button type="button" class="seg-btn" data-tab="audio" role="tab" id="cpTabAudio">Audio</button>
     </div>
 
     <!-- Clip -->
     <div class="cp-pane" data-pane="clip">
       <div class="cp-actions">
         <button class="tool" id="muteClipBtn" title="Mute clip (M)"><svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg><span>Mute</span></button>
+        <button class="tool" id="detachBtn" title="Put the sound on an audio track of its own"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="1.5"/><path d="M4 16.5c1.5-2 2.5 2 4 0s2.5 2 4 0 2.5 2 4 0 2.5 2 4 0"/><path d="M12 11v3"/></svg><span>Detach audio</span></button>
       </div>
       <div class="field" id="cpDurField">
         <label for="cpDuration">Duration</label>
@@ -302,6 +308,26 @@
     </div>
 
     <!-- Rotate & flip -->
+    <div class="cp-pane" data-pane="audio" hidden>
+      <span class="mini-label">Volume</span>
+      <div class="range-row">
+        <input type="range" id="volRange" min="0" max="200" step="1" value="100" aria-label="Clip volume">
+        <span class="range-val" id="volVal">100%</span>
+      </div>
+      <span class="mini-label">Fade in</span>
+      <div class="range-row">
+        <input type="range" id="fadeInRange" min="0" max="10" step="0.1" value="0" aria-label="Fade in">
+        <span class="range-val" id="fadeInVal">0.0 s</span>
+      </div>
+      <span class="mini-label">Fade out</span>
+      <div class="range-row">
+        <input type="range" id="fadeOutRange" min="0" max="10" step="0.1" value="0" aria-label="Fade out">
+        <span class="range-val" id="fadeOutVal">0.0 s</span>
+      </div>
+      <p class="hint">Above 100 % the sound is amplified; a limiter keeps it from distorting. <button type="button" class="link-btn help-link" data-help="audio">More…</button></p>
+      <button type="button" class="btn-secondary wide" id="audioReset">Reset volume &amp; fades</button>
+    </div>
+
     <div class="cp-pane" data-pane="rotate" hidden>
       <div class="cp-actions">
         <button class="tool" id="rotLeftBtn" title="Rotate 90° left"><svg viewBox="0 0 24 24"><path d="M4 8V3l4 4"/><path d="M4.6 7.5A8 8 0 1112 20"/></svg><span>90° left</span></button>
@@ -657,10 +683,22 @@
       <summary>Tracks &amp; overlays</summary>
       <ul>
         <li>The <strong>main track</strong> is at the bottom and <strong>magnetic</strong>: clips follow each other without gaps. Switch the magnet off in its track settings to place clips freely.</li>
+        <li><strong>Audio tracks</strong> lie below the main track — sound only; they can't take pictures and the other way round.</li>
         <li><strong>Add → As overlay</strong> puts a video, image or color clip at the playhead on a track above — half size, centred. Higher tracks cover lower ones.</li>
         <li>Drag a selected clip <strong>up or down</strong> to another track. No room there, or dropped above the top track? A new track is created.</li>
         <li>Left of each track: 👁 <strong>hide</strong>, 🔊 <strong>mute</strong>. <strong>Tap the track's left edge</strong> for opacity, volume, order and delete.</li>
         <li>Empty overlay tracks disappear by themselves. Settings → how many tracks are visible before the timeline scrolls.</li>
+      </ul>
+    </details>
+
+    <details id="help-audio">
+      <summary>Audio, volume &amp; fades</summary>
+      <ul>
+        <li><strong>Add → Audio</strong> (or drop/paste MP3, M4A, WAV, FLAC, OGG) puts music or sound at the playhead on an <strong>audio track</strong> below the main track.</li>
+        <li><strong>Detach audio</strong> (clip panel of a video) moves a video's sound onto its own audio track — the video is muted, both can then be cut and moved separately.</li>
+        <li>Audio clips <strong>snap</strong> to the start and end of other clips and to the playhead. The magnet button below the timeline turns snapping off; hold <strong>Alt</strong> to move freely for a moment.</li>
+        <li>The <strong>Audio</strong> tab sets a clip's <strong>volume</strong> (up to 200 % — a limiter prevents distortion) and <strong>fade in / fade out</strong>. Fades show as dark ramps on the clip.</li>
+        <li>Track volume and clip volume multiply. 🔊 in the track header mutes a whole track.</li>
       </ul>
     </details>
 
@@ -710,7 +748,7 @@
         <tr><td><kbd>Ctrl</kbd> + <kbd>C</kbd> / <kbd>V</kbd></td><td>Copy clip / paste clip or files</td></tr>
         <tr><td><kbd>Ctrl</kbd> + <kbd>Z</kbd> / <kbd>Y</kbd></td><td>Undo / redo</td></tr>
         <tr><td><kbd>Ctrl</kbd> + <kbd>E</kbd></td><td>Create video…</td></tr>
-        <tr><td><kbd>Alt</kbd> while dragging</td><td>Move without snapping</td></tr>
+        <tr><td><kbd>Alt</kbd> while dragging</td><td>Move without snapping (clips and picture)</td></tr>
         <tr><td><kbd>Ctrl</kbd> + wheel</td><td>Zoom the timeline</td></tr>
         <tr><td><kbd>?</kbd></td><td>This help</td></tr>
       </table>
