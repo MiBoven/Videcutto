@@ -63,6 +63,7 @@ A privacy-friendly video editor and compressor that runs entirely in your browse
   | `Ctrl` + `C` / `V` | Copy clip / paste clip or files from the clipboard |
   | `Ctrl` + `Z` / `Y` | Undo / redo |
   | `Home` / `End` | Jump to start / end |
+  | `Ctrl` + `E` | Open the *Create video* window |
 
 ### Projects
 - **Any number of projects**, each saved automatically after every change (clips, canvas, export settings, name)
@@ -77,7 +78,7 @@ A privacy-friendly video editor and compressor that runs entirely in your browse
 - The single project of versions 0.2–0.5 is moved into the list automatically
 
 ### Project files (.videcutto) — other devices & backups
-- **Export project** (⇪ next to the project name, or on a project card) creates a `.videcutto` file (the extension is defined in one place, `PROJECT_EXT` in `app.js`; older extensions stay importable if the app is renamed):
+- **Save project file** (⇪ next to the project name, or *Export project file* on a project card) creates a `.videcutto` file (the extension is defined in one place, `PROJECT_EXT` in `app.js`; older extensions stay importable if the app is renamed):
   - **Project only** — cuts, canvas and settings, a few KB. On the other device the videos and images are selected again and recognised automatically (by file size)
   - **Project with all files** — everything included (trimmed working copies only contain the chosen part); the size is shown beforehand. Opens on the other device without selecting anything
 - **Download** or **Share** the file (cloud, USB stick, messenger, e-mail …)
@@ -112,6 +113,9 @@ The clip panel has four tabs — **Clip**, **Crop**, **Position**, **Rotate**. O
 - The preview draws the canvas exactly like the export and always keeps the canvas ratio
 
 ### Export & compression
+- **Create video…** below the canvas settings (or `Ctrl` + `E` on desktop) opens the export window with all settings, progress and result, so the editor itself stays uncluttered
+- **File name:** prefilled with the project name (`_clip` is added for *Selected clip only*); `.mp4` is added automatically. A changed name is remembered per project; as long as you don't change it, it follows the project name. Characters that Windows, macOS, Linux or Android memory cards don't allow are replaced (`< > : " / \ | ? *`, control characters), leading dots and trailing dots/spaces are removed, reserved Windows names (`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`9`, `LPT1`–`9`) get a `_`, and names are limited to 120 characters. Some Android browsers ignore the name when downloading; sharing keeps it
+- The window can be closed while the video is being created — the button in the editor shows the progress ("Creating video… 45 %") and then "Video ready — download…". Closing the project cancels a running export
 - **Resolution** — only sizes that fit the format, e.g. 16:9: HD 1280×720, Full HD 1920×1080 (default), UHD 3840×2160; 1:1: 1080×1080; 4:5: 1080×1350; *Like a video* adds *Source*, *Like a crop* adds *Crop size* (the crop's own pixels, no scaling); plus **Custom** (width and height stay linked to the format). A project that starts with a video smaller than 1080p uses its source size instead of upscaling
 - **Quality:** Small / Standard (default) / High — about 0.05 / 0.08 / 0.14 bits per pixel, the resulting Mbit/s are shown in the list (e.g. Standard at Full HD 30 fps ≈ 5 Mbit/s); **Custom bitrate** in Mbit/s; or **Max. file size** in MB
 - With *Max. file size*, the resolution is lowered automatically when the bitrate would be too low for it (a smaller sharp picture looks better than a large blocky one) — tick **Keep resolution** to prevent this; the estimate says when it happens

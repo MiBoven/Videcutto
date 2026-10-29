@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.8.0';
+  const VERSION = '0.8.1';
   const $ = (id) => document.getElementById(id);
 
   // ---------------------------------------------------------------------------
@@ -2412,6 +2412,33 @@
   // ---------------------------------------------------------------------------
   // Export
   // ---------------------------------------------------------------------------
+  // File names that work on Windows, macOS, Linux, Android (FAT/exFAT) and iOS.
+  function cleanFileName(n) {
+    let s = String(n || '').normalize('NFC')
+      .replace(/[\x00-\x1f\x7f<>:"/\\|?*]+/g, '_')   // forbidden on Windows/FAT (/ and : on macOS too)
+      .replace(/\s+/g, ' ').trim()
+      .replace(/\.mp4$/i, '')
+      .replace(/^[.\s]+/, '')                       // leading dot = hidden file on macOS/Linux
+      .replace(/[.\s]+$/, '');                      // trailing dots/spaces aren't allowed on Windows
+    if (s.length > 120) s = s.slice(0, 120).replace(/[.\s]+$/, '');
+    if (/^(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])(\..*)?$/i.test(s)) s += '_'; // reserved names on Windows
+    return s;
+  }
+  // File name of the video: empty = follow the project name.
+  let exportName = '';
+  const nameBase = () => exportName || cleanFileName(projectName) || 'video';
+  const exportFileName = () => nameBase() + (exportState.scope === 'selected' ? '_clip' : '');
+  function syncFileName() {
+    if (document.activeElement !== $('fileNameInput')) $('fileNameInput').value = exportFileName();
+  }
+  $('fileNameInput').addEventListener('change', (e) => {
+    let v = cleanFileName(e.target.value);
+    if (exportState.scope === 'selected') v = v.replace(/_clip$/, '');
+    exportName = v && v !== cleanFileName(projectName) ? v : '';
+    e.target.value = exportFileName();
+    scheduleSave();
+  });
+
   const exportDefaults = () => ({ scope: 'all', res: '1080', resW: 1920, resH: 1080, quality: 'standard', bitrateMbps: 5, targetMB: 25, lockRes: false, fps: '30', codec: 'avc' });
   let exportState = Object.assign(exportDefaults(), store.get('export2', {}));
 
@@ -2477,6 +2504,7 @@
     $('fpsSel').value = exportState.fps;
     if (!$('codecSel').querySelector(`option[value="${exportState.codec}"]`).disabled) $('codecSel').value = exportState.codec;
     $('scopeToggle').querySelectorAll('.seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.scope === exportState.scope));
+    syncFileName();
     $('bitrateField').hidden = exportState.quality !== 'custom';
     $('targetField').hidden = exportState.quality !== 'target';
     $('lockResField').hidden = exportState.quality !== 'target';
@@ -2603,6 +2631,8 @@
     const unreadable = await unreadableSources();
     if (unreadable.length) { lostAccess(unreadable); return; }
     exporting = true;
+    fileNameAtStart = exportFileName();
+    setCreateButton(0);
     updateToolbar();
     $('resultBox').hidden = true;
     $('progressBox').hidden = false;
@@ -2636,9 +2666,12 @@
           const eta = f > 0.03 ? el / f - el : null;
           const label = stage === 'audio' ? 'Encoding audio' : stage === 'finalizing' ? 'Writing file' : 'Encoding video';
           $('progressLabel').textContent = `${label}… ${Math.floor(f * 100)}%${eta !== null && stage !== 'finalizing' ? ' · ~' + fmtTime(eta, false) + ' left' : ''}`;
+          setCreateButton(f);
         },
       });
       showResult(r, scopeSelected);
+      exportDone = $('exportModal').hidden;
+      if ($('exportModal').hidden) toast('Your video is ready — tap "Video ready" to download it.', 5000);
     } catch (e) {
       if (e && e.name === 'AbortError') toast('Export cancelled.');
       else if (e && e.name === 'NotReadableError') { const u = await unreadableSources(); if (u.length) lostAccess(u); else toast('Export failed: a video couldn\'t be read.', 7000); }
@@ -2648,17 +2681,52 @@
       abortCtl = null;
       $('progressBox').hidden = true;
       if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+      setCreateButton(null);
       updateToolbar();
     }
   }
   $('exportBtn').addEventListener('click', doExport);
+
+  // The button in the editor opens the export window and shows the progress.
+  let fileNameAtStart = '';
+  let exportDone = false; // a finished video waits in the closed window
+  function setCreateButton(f) {
+    const btn = $('openExportBtn');
+    const busy = f !== null && exporting;
+    btn.classList.toggle('busy', busy);
+    btn.style.setProperty('--p', busy ? (f * 100).toFixed(1) + '%' : '0%');
+    const ready = !busy && exportDone && $('exportModal').hidden;
+    btn.classList.toggle('ready', ready);
+    $('openExportLabel').textContent = busy ? `Creating video… ${Math.floor(f * 100)} %` : ready ? 'Video ready — download…' : 'Create video…';
+  }
+  function openExport() {
+    if (!allClips().length && !exporting) { toast('Add a video, an image or a color clip first.'); return; }
+    pause();
+    syncExportUI();
+    updateEstimate();
+    openModal('exportModal');
+    exportDone = false;
+    setCreateButton(exporting ? parseFloat($('progressFill').style.width) / 100 || 0 : null);
+  }
+  function closeExport() {
+    if (document.activeElement === $('fileNameInput')) $('fileNameInput').dispatchEvent(new Event('change'));
+    closeModal('exportModal');
+    if (exporting) setCreateButton(parseFloat($('progressFill').style.width) / 100 || 0);
+  }
+  $('openExportBtn').addEventListener('click', openExport);
+  $('exportCloseBtn').addEventListener('click', closeExport);
+  $('exportModal').addEventListener('click', (e) => { if (e.target.id === 'exportModal') closeExport(); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !$('exportModal').hidden) { closeExport(); return; }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'e' && !$('editorScreen').hidden && $('exportModal').hidden
+      && !document.querySelector('.modal-bg:not([hidden])')) { e.preventDefault(); openExport(); }
+  });
+  $('fileNameInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); } });
   $('cancelExportBtn').addEventListener('click', () => { if (abortCtl) abortCtl.abort(); });
 
   function showResult(r, onlyClip) {
     if (resultUrl) URL.revokeObjectURL(resultUrl);
-    const first = exportClips().map((c) => srcOf(c)).find(Boolean) || allClips().map((c) => srcOf(c)).find(Boolean);
-    const base = (first ? first.name : 'videcutto').replace(/\.[^.]+$/, '');
-    const name = `${base}${onlyClip ? '_clip' : ''}_videcutto.mp4`;
+    const name = `${fileNameAtStart || exportFileName()}.mp4`;
     resultFile = new File([r.blob], name, { type: 'video/mp4' });
     resultUrl = URL.createObjectURL(resultFile);
     const link = $('downloadLink');
@@ -2768,6 +2836,7 @@
       muteAll,
       canvas: { ...canvasState },
       export: { ...exportState },
+      exportName,
       // Bottom track first; tracks[0] is the main track.
       tracks: tracks.map((t) => ({ ...t, kind: t.main ? 'main' : 'video', clips: t.clips.map((c) => ({ ...c })) })),
       media: [...sources.values()].map(mediaMeta),
@@ -2877,6 +2946,10 @@
 
   function resetState() {
     setTracks([newTrack(true)]);
+    exportName = ''; exportDone = false;
+    $('resultBox').hidden = true;
+    $('exportModal').hidden = true;
+    setCreateButton(null);
     undoStack = []; redoStack = []; clipboard = null; selectedId = null; selectedTrackId = null; playhead = 0;
     for (const src of sources.values()) disposeSource(src);
     sources.clear();
@@ -2893,6 +2966,7 @@
 
   /** Close the open project (saving it first unless skipSave). */
   async function closeProject(skipSave) {
+    if (abortCtl) abortCtl.abort(); // a running export belongs to this project
     if (projectId && saveEnabled && !skipSave) { clearTimeout(saveTimer); await saveNow(); }
     pause();
     clearTimeout(saveTimer);
@@ -3002,6 +3076,7 @@
       clips: (t.clips || []).map((c) => ({ ...c, kind: c.kind || 'video' })),
     })).filter((t, i) => i === 0 || t.clips.length));
     undoStack = []; redoStack = []; clipboard = null; selectedId = null; selectedTrackId = null;
+    exportName = cleanFileName(p.exportName || '');
     muteAll = !!p.muteAll;
     $('muteAllBtn').setAttribute('aria-pressed', String(muteAll));
     if (p.version >= 2 && p.canvas) {
@@ -3508,7 +3583,7 @@
   const PROJECT_EXT = 'videcutto';
   const LEGACY_EXTS = ['videcutto'];
   const isProjectFile = (name) => [PROJECT_EXT, ...LEGACY_EXTS].some((x) => String(name || '').toLowerCase().endsWith('.' + x));
-  const safeFileName = (n) => (String(n || 'project').replace(/[\\/:*?"<>|]+/g, '_').trim() || 'project');
+  const safeFileName = (n) => cleanFileName(n) || 'project';
   let pxUrl = null;
   let pxFile = null;
   let pxAbort = null;

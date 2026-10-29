@@ -1,5 +1,12 @@
 # Changelog
 
+### 0.8.1 — 2026-10-29 — Export window & file name
+- Export settings moved into their own window; the editor only shows a **Create video…** button (also `Ctrl` + `E`)
+- File name field, prefilled with the project name (`_clip` for *Selected clip only*), remembered per project; characters and names not allowed on Windows, macOS, Linux or Android are cleaned up automatically
+- The window can be closed during the export: the button shows the progress and then "Video ready — download…"
+- Closing the project cancels a running export
+- The project file button is now called "Save project file" to tell it apart from creating a video
+
 ### 0.8.0 — 2026-10-28 — Multiple tracks
 - Any number of video tracks: the main track at the bottom, overlay tracks above it; higher tracks are drawn on top, empty space on overlay tracks is transparent
 - Add → *As overlay* (videos & images or color clip): placed at the playhead on the lowest overlay track with room, or on a new track; overlays start at 50 % size, centred

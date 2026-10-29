@@ -90,7 +90,7 @@
 <main id="editorScreen" hidden>
   <div class="project-bar">
     <input type="text" id="projectName" class="project-name" maxlength="80" aria-label="Project name" title="Rename project" spellcheck="false">
-    <button class="icon small" id="projectExportBtn" title="Export project file" aria-label="Export project file"><svg viewBox="0 0 24 24"><path d="M12 3v12M7 8l5-5 5 5"/><path d="M5 13v6a2 2 0 002 2h10a2 2 0 002-2v-6"/></svg></button>
+    <button class="icon small" id="projectExportBtn" title="Save project file" aria-label="Save project file"><svg viewBox="0 0 24 24"><path d="M12 3v12M7 8l5-5 5 5"/><path d="M5 13v6a2 2 0 002 2h10a2 2 0 002-2v-6"/></svg></button>
     <button class="icon small" id="projectFilesBtn" title="Files &amp; storage" aria-label="Files and storage"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6"/><path class="fill" d="M12 6.6a1.2 1.2 0 110 2.4 1.2 1.2 0 010-2.4z"/></svg></button>
   </div>
   <div class="preview-wrap">
@@ -358,9 +358,26 @@
     <p class="hint" id="bgHint">Fills the space around videos and images that don't match the format.</p>
   </section>
 
-  <!-- Export -->
-  <section class="card export-card" id="exportCard">
-    <h2>Export</h2>
+  <!-- Create video (opens the export window) -->
+  <div class="create-bar">
+    <button class="btn-primary wide create-btn" id="openExportBtn" title="Create video (Ctrl+E)">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M10 9.5v5l4.5-2.5z" class="fill"/></svg>
+      <span id="openExportLabel">Create video…</span>
+    </button>
+  </div>
+</main>
+
+<!-- ===================== Create video (export) ===================== -->
+<div class="modal-bg" id="exportModal" hidden>
+  <div class="modal export-modal" role="dialog" aria-modal="true" aria-labelledby="exportTitle">
+    <div class="modal-head">
+      <h2 id="exportTitle">Create video</h2>
+      <button class="icon small" id="exportCloseBtn" title="Close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="field">
+      <label for="fileNameInput">File name</label>
+      <div class="input-unit"><input type="text" id="fileNameInput" autocomplete="off" spellcheck="false" maxlength="160"><span>.mp4</span></div>
+    </div>
     <div class="segment small scope" id="scopeToggle">
       <button type="button" class="seg-btn active" data-scope="all">Whole timeline</button>
       <button type="button" class="seg-btn" data-scope="selected">Selected clip only</button>
@@ -416,7 +433,7 @@
     <div class="progress" id="progressBox" hidden>
       <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
       <div class="progress-row"><span id="progressLabel">Preparing…</span><button class="link-btn" id="cancelExportBtn">Cancel</button></div>
-      <p class="hint">Keep this tab open and the screen on while exporting.</p>
+      <p class="hint">Keep this tab open and the screen on. You can close this window meanwhile — the button in the editor shows the progress.</p>
     </div>
 
     <div class="result" id="resultBox" hidden>
@@ -427,8 +444,9 @@
         <button class="btn-secondary" id="shareBtn" hidden>Share</button>
       </div>
     </div>
-  </section>
-</main>
+  </div>
+</div>
+
 
 <footer>Videcutto · v<span id="versionFooter">0.1.0</span></footer>
 
@@ -561,7 +579,7 @@
 <!-- ===================== Export project file ===================== -->
 <div class="modal-bg" id="projExportModal" hidden>
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="pxTitle">
-    <h2 id="pxTitle">Export project</h2>
+    <h2 id="pxTitle">Save project file</h2>
     <p class="modal-sub">Saves the project as a .videcutto file — to continue on another device or as a backup. Open it there with "Import a project file" on the start screen, or simply drop it onto Videcutto.</p>
     <div id="pxChoices">
       <button class="choice" id="pxSmallBtn">
