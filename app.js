@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.9.3';
+  const VERSION = '0.9.4';
   const $ = (id) => document.getElementById(id);
 
   // ---------------------------------------------------------------------------
@@ -1494,7 +1494,7 @@
   }
   function clampPps(v) {
     const total = Math.max(0.5, totalDuration());
-    return clamp(v, Math.max(2, (timeline.clientWidth * 0.5) / total), Math.min(600, MAX_WIDTH / total));
+    return clamp(v, Math.max(2, (timeline.clientWidth * 0.5) / total), Math.min(3000, MAX_WIDTH / total));
   }
   let ppsUserSet = false;
   let lastTrackCount = 0;
@@ -1502,7 +1502,7 @@
   function renderTimeline() {
     if ($('editorScreen').hidden) return;
     const total = totalDuration();
-    if (!ppsUserSet && total > 0) pps = clamp(fitWidth() / total, 4, 160);
+    if (!ppsUserSet && total > 0) pps = fitWidth() / total; // fit (limited by clampPps below)
     pps = clampPps(pps);
     const p = pad();
     tlInner.style.width = (p * 2 + total * pps) + 'px';

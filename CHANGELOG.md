@@ -1,5 +1,8 @@
 # Changelog
 
+### 0.9.4 — 2026-10-30 — Fit fills the width
+- Fix: *Fit* (and the automatic zoom) stopped at 160 px per second, so short projects didn't fill the timeline's width; zooming in now goes up to 3000 px per second
+
 ### 0.9.3 — 2026-10-30 — Cutting close to a clip's edge
 - Fix: Cut refused to split when the playhead was less than 0.05 s from a clip's start or end (e.g. one frame before the end) and wrongly asked to move the playhead onto the clip. Cuts now work down to a few milliseconds from the edge
 - Clearer messages when the playhead is exactly at a clip's edge or at the very end
