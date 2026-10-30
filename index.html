@@ -371,7 +371,10 @@
 
   <!-- Canvas -->
   <section class="card canvas-card" id="canvasCard">
-    <h2>Canvas</h2>
+    <button type="button" class="card-toggle" id="canvasToggle" aria-expanded="true" aria-controls="canvasBody">
+      <span class="ct-chev" aria-hidden="true">▾</span><h2>Canvas</h2><span class="ct-summary" id="canvasSummary"></span>
+    </button>
+    <div class="card-body" id="canvasBody">
     <div class="field">
       <label for="aspectSel">Format</label>
       <select id="aspectSel">
@@ -410,6 +413,7 @@
       </div>
     </div>
     <p class="hint" id="bgHint">Fills the space around videos and images that don't match the format.</p>
+    </div>
   </section>
 
   <!-- Create video (opens the export window) -->

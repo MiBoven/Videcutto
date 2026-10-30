@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.9.6';
+  const VERSION = '0.9.7';
   const $ = (id) => document.getElementById(id);
 
   // ---------------------------------------------------------------------------
@@ -2370,7 +2370,7 @@
           el.playbackRate = 1; // the master gives the time
         } else if (Math.abs(drift) > 0.5 && !el.seeking) {
           setVideoTime(el, Math.max(0, target - (srcOf(clip).base || 0)));
-          noteStutter();
+          noteStutter('resync', srcOf(clip));
         } else {
           // Followers are nudged gently instead of jumping (a jump is visible as a stutter).
           el.playbackRate = Math.abs(drift) < 0.03 ? 1 : clamp(1 - drift * 0.8, 0.85, 1.15);
@@ -2393,6 +2393,7 @@
   function seek(t, fromScroll) {
     playhead = clamp(t, 0, totalDuration());
     clock = { t0: performance.now(), ph0: playhead };
+    startAt = performance.now();
     if (!allClips().length) resetVideos();
     else syncPool(true);
     if (!fromScroll) syncScroll(); else placePlayhead();
@@ -2432,6 +2433,7 @@
     playing = true;
     setPlayIcon();
     clock = { t0: performance.now(), ph0: playhead };
+    startAt = performance.now();
     syncPool(true);
     allEls().forEach(unlock);
     requestAnimationFrame(tick);
@@ -2445,34 +2447,61 @@
   }
   $('playBtn').addEventListener('click', () => (playing ? pause() : play()));
 
-  // The bottom-most playing video gives the time (its own smooth playback is
-  // the reference); without a video a wall clock runs. Everything else follows.
+  // The clock never stops while playing. The bottom-most playing video gives
+  // the time as long as it runs smoothly; if it falls behind or gets stuck,
+  // the wall clock carries on and the video is re-synced in the background.
+  // Only right after Play or a jump the preview waits up to ½ s for loading.
   let masterId = null;
-  const stutter = [];
-  function noteStutter() {
+  let startAt = 0;
+  const stutter = [];               // [{ t, text }]
+  const advance = new WeakMap();    // element -> { ct, at } last time its picture moved on
+  function noteStutter(kind, src) {
     const now = performance.now();
-    stutter.push(now);
-    while (stutter.length && now - stutter[0] > 8000) stutter.shift();
-    if (stutter.length >= 3) setHint('stutter', 'The preview had to wait for or re-sync videos a few times — this device is struggling with the preview here. The created video is not affected.');
+    const name = src ? `"${src.name}"` : 'A video';
+    const text = kind === 'slow' ? `${name} couldn't keep up — decoding is too slow on this device.`
+      : kind === 'resync' ? `${name} drifted and had to be re-synced.`
+        : `${name} took too long to load.`;
+    stutter.push({ t: now, text, kind });
+    while (stutter.length && now - stutter[0].t > 8000) stutter.shift();
+    // A stuck video is reported at once, re-syncs only when they pile up.
+    if (kind !== 'resync' || stutter.length >= 2) {
+      const reasons = [...new Set(stutter.map((x) => x.text))].slice(-3);
+      setHint('stutter', `The preview stuttered here. ${reasons.join(' ')} It keeps playing; the created video is not affected.`);
+    }
   }
   function tick() {
     if (!playing) return;
     const now = performance.now();
     const total = totalDuration();
     const act = activeMedia(viewTime());
-    const m = act.find((a) => a.clip.kind === 'video' && (() => { const el = elOf(a.clip.id); return el && !el.paused && !el.seeking && el.readyState >= 2; })());
-    const mEl = m ? elOf(m.clip.id) : null;
-    if (m && masterId === m.clip.id) {
-      // Follow the master video; it may run past its clip's end into the next clip.
-      playhead = Math.min(total, Math.max(playhead, m.clip.start + (mediaTime(mEl) - m.clip.in)));
+    const wall = clock.ph0 + (now - clock.t0) / 1000;
+    const loading = act.filter((a) => { const el = elOf(a.clip.id); return el && (el.seeking || el.readyState < 3); });
+    let next = wall;
+    let master = null;
+    if (loading.length && now - startAt < 500) {
+      next = playhead; // short start-up wait, so the preview doesn't start black
       clock = { t0: now, ph0: playhead };
     } else {
-      // No master (yet): wait while something that should play is still loading.
-      const waiting = act.some((a) => { const el = elOf(a.clip.id); return el && (el.seeking || el.readyState < 3); });
-      if (waiting) { clock = { t0: now, ph0: playhead }; if (!tick.waitStart) tick.waitStart = now; else if (now - tick.waitStart > 400) { noteStutter(); tick.waitStart = now; } }
-      else { playhead = Math.min(total, clock.ph0 + (now - clock.t0) / 1000); tick.waitStart = 0; }
+      if (loading.length && now - startAt < 1500 && tick.loadNoted !== startAt) { tick.loadNoted = startAt; noteStutter('load', srcOf(loading[0].clip)); }
+      const m = act.find((a) => a.clip.kind === 'video' && (() => { const el = elOf(a.clip.id); return el && !el.paused && !el.seeking && el.readyState >= 2; })());
+      if (m) {
+        const el = elOf(m.clip.id);
+        const st = advance.get(el) || { ct: -1, at: now };
+        if (el.currentTime !== st.ct) { st.ct = el.currentTime; st.at = now; }
+        advance.set(el, st);
+        const mt = m.clip.start + (mediaTime(el) - m.clip.in);
+        const stuck = now - st.at > 250;
+        if (!stuck && Math.abs(mt - wall) < 0.35) {
+          next = Math.max(playhead, mt);
+          master = m.clip.id;
+          clock.ph0 += clamp((mt - wall) * 0.05, -0.002, 0.002); // the wall clock slowly follows a healthy video
+        }
+        else if (!st.reported) { st.reported = true; noteStutter('slow', srcOf(m.clip)); } // stuck or falling behind
+        if (!stuck && Math.abs(mt - wall) < 0.1) st.reported = false;
+      }
     }
-    masterId = m ? m.clip.id : null;
+    playhead = Math.min(total, next);
+    masterId = master; // a lagging video becomes a follower and gets re-synced
     checkBoost(now);
     if (playhead >= total - 1e-4) {
       playhead = total;
@@ -2576,10 +2605,27 @@
     if (av) sel.value = av.id;
     $('bgToggle').querySelectorAll('.seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.bg === canvasState.bg));
     $('bgColor').value = canvasState.bgColor;
+    syncCanvasSummary();
     $('bgHint').textContent = canvasState.bg === 'blur'
       ? 'Blurred copy of the visible video or image. Color clips and empty areas use the color.'
       : 'Fills the space around videos and images that don\'t match the format.';
   }
+
+  // The canvas card can be folded to a single line (remembered).
+  function syncCanvasSummary() {
+    const a = $('aspectSel');
+    const fmt = a.selectedOptions[0] ? a.selectedOptions[0].textContent.split(' · ')[0] : '';
+    const ratio = canvasAspect();
+    $('canvasSummary').textContent = `${fmt}${canvasState.aspect === 'video' || canvasState.aspect === 'crop' ? ` (${ratio >= 1 ? ratio.toFixed(2) + ':1' : '1:' + (1 / ratio).toFixed(2)})` : ''} · ${canvasState.bg === 'blur' ? 'Blur' : 'Color ' + canvasState.bgColor.toUpperCase()}`;
+  }
+  function setCanvasFolded(folded) {
+    $('canvasCard').classList.toggle('collapsed', folded);
+    $('canvasBody').hidden = folded;
+    $('canvasToggle').setAttribute('aria-expanded', String(!folded));
+    store.set('canvasFolded', folded);
+  }
+  $('canvasToggle').addEventListener('click', () => setCanvasFolded(!$('canvasCard').classList.contains('collapsed')));
+  setCanvasFolded(store.get('canvasFolded', false));
 
   function onCanvasChange() {
     syncCanvasUI();

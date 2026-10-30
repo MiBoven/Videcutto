@@ -359,7 +359,12 @@ input[type=color] { width: 44px; height: 36px; padding: 2px; border: 1px solid v
 .segment.small { flex: 1; margin: 0; }
 .segment.small button { padding: 6px 8px; }
 .canvas-card { margin-top: 14px; }
-.canvas-card h2 { font-size: 16px; margin: 0 0 12px; }
+.canvas-card h2 { font-size: 16px; margin: 0; }
+.card-toggle { display: flex; align-items: baseline; gap: 8px; width: 100%; padding: 0; margin: 0 0 12px; background: none; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.card-toggle .ct-chev { width: 14px; color: var(--text-secondary); transition: transform .15s; display: inline-block; }
+.card-toggle .ct-summary { color: var(--text-secondary); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.collapsed .card-toggle { margin-bottom: 0; }
+.collapsed .card-toggle .ct-chev { transform: rotate(-90deg); }
 .field.check input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--accent); }
 #emptyCanvasBtn svg { width: 18px; height: 18px; }
 .clip.color-clip::after { box-shadow: inset 0 0 0 1px rgba(255,255,255,.25); }

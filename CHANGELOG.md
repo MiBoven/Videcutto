@@ -1,5 +1,10 @@
 # Changelog
 
+### 0.9.7 — 2026-10-30 — Preview never stops
+- Fix: the preview could stop (and not continue) when a video stuttered. Playback now always carries on: a lagging or stuck video is re-synced in the background, only the start waits up to ½ s for loading
+- The ⚠ note names the reason for stuttering (which video couldn't keep up, had to be re-synced or loaded too slowly)
+- The Canvas card can be folded to a single summary line (remembered)
+
 ### 0.9.6 — 2026-10-30 — Undo survives a reload
 - Undo and redo steps are saved with the project (as many as set in Settings, default 10) and still work after a reload or when the project is opened again
 
