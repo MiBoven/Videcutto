@@ -3,8 +3,9 @@
  *
  * Demuxer: reads only the boxes and sample ranges it needs straight from the
  * File/Blob (never loads the whole video into memory). Supports progressive
- * (non-fragmented) MP4/MOV with H.264, HEVC, VP9, AV1 video and AAC / Opus
- * audio — that covers virtually every phone and camera recording.
+ * and fragmented MP4/MOV (moof/trun, e.g. streaming downloads, Safari or OBS
+ * recordings) with H.264, HEVC, VP9, AV1 video and AAC / Opus audio — that
+ * covers virtually every phone and camera recording.
  *
  * Muxer: writes a progressive "fast start" MP4 (moov before mdat) from
  * encoded WebCodecs chunks — H.264 or HEVC video, AAC or Opus audio.
@@ -363,7 +364,86 @@
     return { count: n, offsets, sizes, dts, cts, durations, sync };
   }
 
-  function parseTrak(u8, trak, movieTimescale) {
+  /**
+   * Fragmented MP4: collect the samples of all moof/traf/trun boxes into
+   * ordinary sample tables (one per track id), so the rest works unchanged.
+   */
+  async function readFragments(reader, top, moov) {
+    const v = dv(moov);
+    const trex = new Map(); // track id -> defaults
+    const mvex = findBox(moov, 'mvex', 8, moov.length);
+    if (mvex) {
+      for (const b of boxes(moov, mvex.data, mvex.end)) {
+        if (b.type !== 'trex') continue;
+        trex.set(v.getUint32(b.data + 4), { dur: v.getUint32(b.data + 12), size: v.getUint32(b.data + 16), flags: v.getUint32(b.data + 20) });
+      }
+    }
+    const tables = new Map(); // track id -> { offsets, sizes, dts, cts, durations, sync, next }
+    const tableFor = (id) => {
+      let t = tables.get(id);
+      if (!t) { t = { offsets: [], sizes: [], dts: [], cts: [], durations: [], sync: [], next: 0 }; tables.set(id, t); }
+      return t;
+    };
+    for (const box of top) {
+      if (box.type !== 'moof') continue;
+      const m = await reader.readDirect(box.start, box.size);
+      const mv = dv(m);
+      const hdr = mv.getUint32(0) === 1 ? 16 : 8;
+      for (const traf of boxes(m, hdr, m.length)) {
+        if (traf.type !== 'traf') continue;
+        const tfhd = findBox(m, 'tfhd', traf.data, traf.end);
+        if (!tfhd) continue;
+        const tf = mv.getUint32(tfhd.data) & 0xffffff;
+        const id = mv.getUint32(tfhd.data + 4);
+        const def = trex.get(id) || { dur: 0, size: 0, flags: 0 };
+        let p = tfhd.data + 8;
+        let base = box.start; // default-base-is-moof (and the usual case without a base offset)
+        if (tf & 0x01) { base = Number(mv.getBigUint64(p)); p += 8; }
+        if (tf & 0x02) p += 4;
+        let dDur = def.dur, dSize = def.size, dFlags = def.flags;
+        if (tf & 0x08) { dDur = mv.getUint32(p); p += 4; }
+        if (tf & 0x10) { dSize = mv.getUint32(p); p += 4; }
+        if (tf & 0x20) { dFlags = mv.getUint32(p); p += 4; }
+        const t = tableFor(id);
+        const tfdt = findBox(m, 'tfdt', traf.data, traf.end);
+        if (tfdt) t.next = m[tfdt.data] === 1 ? Number(mv.getBigUint64(tfdt.data + 4)) : mv.getUint32(tfdt.data + 4);
+        let dataPos = base;
+        for (const trun of boxes(m, traf.data, traf.end)) {
+          if (trun.type !== 'trun') continue;
+          const fl = mv.getUint32(trun.data) & 0xffffff;
+          const count = mv.getUint32(trun.data + 4);
+          let q = trun.data + 8;
+          if (fl & 0x01) { dataPos = base + mv.getInt32(q); q += 4; }
+          let firstFlags = null;
+          if (fl & 0x04) { firstFlags = mv.getUint32(q); q += 4; }
+          for (let i = 0; i < count; i++) {
+            const dur = fl & 0x100 ? mv.getUint32(q) : dDur; if (fl & 0x100) q += 4;
+            const size = fl & 0x200 ? mv.getUint32(q) : dSize; if (fl & 0x200) q += 4;
+            let flags = fl & 0x400 ? mv.getUint32(q) : dFlags; if (fl & 0x400) q += 4;
+            if (i === 0 && firstFlags !== null) flags = firstFlags;
+            const off = fl & 0x800 ? mv.getInt32(q) : 0; if (fl & 0x800) q += 4;
+            t.offsets.push(dataPos); t.sizes.push(size);
+            t.dts.push(t.next); t.cts.push(t.next + off); t.durations.push(dur);
+            t.sync.push((flags & 0x10000) ? 0 : 1); // sample_is_non_sync_sample
+            t.next += dur;
+            dataPos += size;
+          }
+        }
+      }
+    }
+    const out = new Map();
+    for (const [id, t] of tables) {
+      out.set(id, {
+        count: t.sizes.length,
+        offsets: Float64Array.from(t.offsets), sizes: Uint32Array.from(t.sizes),
+        dts: Float64Array.from(t.dts), cts: Float64Array.from(t.cts), durations: Float64Array.from(t.durations),
+        sync: Uint8Array.from(t.sync),
+      });
+    }
+    return out;
+  }
+
+  function parseTrak(u8, trak, movieTimescale, fragments) {
     const v = dv(u8);
     const tkhd = findBox(u8, 'tkhd', trak.data, trak.end);
     const mdia = findBox(u8, 'mdia', trak.data, trak.end);
@@ -390,7 +470,8 @@
     const stsd = findBox(u8, 'stsd', stbl.data, stbl.end);
     const info = stsd ? parseStsd(u8, stsd, handler) : null;
     if (!info) return null;
-    const table = buildSampleTable(u8, stbl);
+    let table = buildSampleTable(u8, stbl);
+    if (!table.count && fragments && fragments.has(trackId)) table = fragments.get(trackId);
 
     // Edit list: shift presentation times (common with B-frames / iPhone files).
     let shift = 0; // in media timescale units, subtracted from cts
@@ -459,13 +540,9 @@
       const isWebm = top.length === 0;
       throw new Error(isWebm ? 'Not an MP4/MOV file' : 'No movie header found');
     }
-    if (top.some((b) => b.type === 'moof')) {
-      // Fragmented MP4: the sample tables live in moof boxes we don't parse yet.
-      const err = new Error('Fragmented MP4 files are not supported yet');
-      err.code = 'FRAGMENTED';
-      throw err;
-    }
     const moov = await reader.readDirect(moovInfo.start, moovInfo.size);
+    // Fragmented MP4: the samples are described in moof boxes after the moov.
+    const fragments = top.some((b) => b.type === 'moof') ? await readFragments(reader, top, moov) : null;
     const inner = { data: 8, end: moov.length };
     const mvhd = findBox(moov, 'mvhd', inner.data, inner.end);
     const mv = dv(moov);
@@ -474,14 +551,14 @@
     let video = null, audio = null;
     for (const b of boxes(moov, inner.data, inner.end)) {
       if (b.type !== 'trak') continue;
-      const t = parseTrak(moov, b, movieTimescale);
+      const t = parseTrak(moov, b, movieTimescale, fragments);
       if (!t || t.samples.count === 0) continue;
       if (t.type === 'video' && !video) video = t;
       if (t.type === 'audio' && !audio) audio = t;
     }
     if (!video) throw new Error('No video track found');
     const duration = Math.max(video.duration, audio ? audio.duration : 0);
-    return { reader, video, audio, duration, blob };
+    return { reader, video, audio, duration, blob, fragmented: !!fragments };
   }
 
   // Index of the last sample (in decode order) whose pts <= t. Samples are in

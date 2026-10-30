@@ -1,5 +1,11 @@
 # Changelog
 
+### 0.9.1 — 2026-10-30 — Fragmented MP4
+- Fragmented MP4 files can be opened (e.g. streaming downloads, Safari or OBS "fragmented" recordings): the demuxer now reads the samples from moof/trun boxes; pre-trimming, working copies and export work as usual (the working copy is written as a normal MP4)
+- Fragmented files with sound only (e.g. .m4a) open as audio
+- Short note when a video has no sound
+- Start screen mentions audio files and tracks
+
 ### 0.9.0 — 2026-10-29 — Audio
 - Audio files (MP3, M4A/AAC, WAV, FLAC, OGG/Opus) via Add → Audio, drag & drop or paste; placed at the playhead on audio tracks below the main track
 - Audio tracks: sound only, free placement, header with mute, track settings with volume, order and delete

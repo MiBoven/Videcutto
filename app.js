@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.9.0';
+  const VERSION = '0.9.1';
   const $ = (id) => document.getElementById(id);
 
   // ---------------------------------------------------------------------------
@@ -289,7 +289,7 @@
   if (!isCoarse) {
     $('sourceToggle').hidden = true;
     $('sourceHint').hidden = true;
-    $('dropTitle').textContent = 'Click to choose videos or images';
+    $('dropTitle').textContent = 'Click to choose videos, images or audio';
     $('dropSub').textContent = 'or drag & drop or paste (Ctrl+V) them here';
   }
   $('sourceToggle').addEventListener('click', (e) => {
@@ -552,7 +552,8 @@
       start, duration: v.duration, rangeIn: start, rangeOut: v.duration,
     };
     const src = makeSource(meta, file, probed, 0);
-    if (src.hasAudio && !src.audioDecodable) toast(`The sound of "${file.name}" (${probed.demux.audio.codecString || probed.demux.audio.format}) can't be decoded here — it will be silent in the export.`, 6000);
+    if (!src.hasAudio) toast(`"${file.name}" has no sound.`, 3500);
+    else if (!src.audioDecodable) toast(`The sound of "${file.name}" (${probed.demux.audio.codecString || probed.demux.audio.format}) can't be decoded here — it will be silent in the export.`, 6000);
 
     const big = file.size > THRESH.bytes || v.duration > THRESH.secs;
     const offer = settings.trimMode === 'always' || (settings.trimMode === 'auto' && big);
