@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.9.5';
+  const VERSION = '0.9.6';
   const $ = (id) => document.getElementById(id);
 
   // ---------------------------------------------------------------------------
@@ -3628,6 +3628,9 @@
       canvas: { ...canvasState },
       export: { ...exportState },
       exportName,
+      // Undo/redo survive a reload (as many steps as set in Settings).
+      undo: undoStack.slice(-settings.undoSteps),
+      redo: redoStack.slice(-settings.undoSteps),
       // Bottom track first; tracks[0] is the main track.
       tracks: tracks.map((t) => ({ ...t, kind: t.kind || 'video', clips: t.clips.map((c) => ({ ...c })) })),
       media: [...sources.values()].map(mediaMeta),
@@ -3858,10 +3861,12 @@
       hideBusy();
     }
     const tl = (p.tracks && p.tracks.length ? p.tracks : [{ clips: [] }]);
-    tl.forEach((t) => { if (t.id) bump(t.id); (t.clips || []).forEach((c) => bump(c.id)); });
+    const savedUndo = Array.isArray(p.undo) ? p.undo.filter(Array.isArray) : [];
+    const savedRedo = Array.isArray(p.redo) ? p.redo.filter(Array.isArray) : [];
+    for (const list of [tl, ...savedUndo, ...savedRedo]) list.forEach((t) => { if (t.id) bump(t.id); (t.clips || []).forEach((c) => bump(c.id)); });
     uid = Math.max(uid, maxId);
     // Projects before 0.8 have one track without track settings.
-    setTracks(tl.map((t, i) => ({
+    const normTracks = (list) => list.map((t, i) => ({
       ...newTrack(i === 0, t.kind === 'audio' ? 'audio' : 'video'),
       ...(t.id ? { id: t.id } : {}),
       magnetic: t.magnetic !== undefined ? !!t.magnetic : i === 0,
@@ -3871,8 +3876,12 @@
       volume: t.volume != null ? clamp(+t.volume, 0, 1) : 1,
       manual: !!t.manual,
       clips: (t.clips || []).map((c) => ({ ...c, kind: c.kind || 'video' })),
-    })).filter((t, i) => i === 0 || t.clips.length || t.manual));
-    undoStack = []; redoStack = []; clipboard = null; selectedId = null; selectedTrackId = null;
+    })).filter((t, i) => i === 0 || t.clips.length || t.manual);
+    setTracks(normTracks(tl));
+    // Undo/redo steps saved with the project (since 0.9.6).
+    undoStack = savedUndo.slice(-settings.undoSteps).map(normTracks);
+    redoStack = savedRedo.slice(-settings.undoSteps).map(normTracks);
+    clipboard = null; selectedId = null; selectedTrackId = null;
     exportName = cleanFileName(p.exportName || '');
     muteAll = !!p.muteAll;
     $('muteAllBtn').setAttribute('aria-pressed', String(muteAll));
@@ -4078,7 +4087,7 @@
 
       const onRemove = () => {
         const gone = new Set(entries.filter((e) => !resolved(e)).map((e) => e.meta.id));
-        const keep = (list) => list.map((t) => ({ ...t, clips: t.clips.filter((c) => !gone.has(c.srcId)) })).filter((t, i) => i === 0 || t.clips.length);
+        const keep = (list) => list.map((t) => ({ ...t, clips: t.clips.filter((c) => !gone.has(c.srcId)) })).filter((t, i) => i === 0 || t.clips.length || t.manual);
         setTracks(keep(tracks));
         undoStack = undoStack.map(keep);
         redoStack = redoStack.map(keep);

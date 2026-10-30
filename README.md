@@ -63,7 +63,7 @@ A privacy-friendly video editor and compressor that runs entirely in your browse
 - **Clip panel:** appears below the timeline while a clip is selected — **Mute** (videos), and for images/color clips the **duration**; for color clips also **color** and **size**
 - **Reorder / move** clips by dragging the selected clip (tap or click to select first)
 - Mute all audio at once with the speaker button
-- **Undo / Redo** — 10 steps by default (adjustable in Settings, 1–100)
+- **Undo / Redo** — 10 steps by default (adjustable in Settings, 1–100); the steps are saved with the project, so they still work after a reload. Files that older steps refer to are kept until those steps are gone
 - Zoom the timeline with the zoom buttons, pinch, or Ctrl + mouse wheel
 - Keyboard shortcuts on desktop:
 

@@ -1,5 +1,8 @@
 # Changelog
 
+### 0.9.6 — 2026-10-30 — Undo survives a reload
+- Undo and redo steps are saved with the project (as many as set in Settings, default 10) and still work after a reload or when the project is opened again
+
 ### 0.9.5 — 2026-10-30 — Wide layout & smoother preview
 - Wide layout (automatically from ~1200 px, also outside fullscreen; full screen width in fullscreen): preview left, settings column right, timeline across the full width with all remaining height; no page scrolling
 - Menu → View: layout Auto / Wide / Classic, arrangements Balanced / Large preview / Large timeline, Reset panel sizes; draggable borders (remembered, double-click resets)
