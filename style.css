@@ -456,3 +456,19 @@ body.coarse .desktop-only { display: none; }
 .clip.audio-clip .clip-label { top: 3px; bottom: auto; }
 .snap-btn { opacity: .55; }
 .snap-btn.on { opacity: 1; color: var(--accent); border-color: var(--accent); }
+
+/* ---------- Snapping, exact timing, free playhead ---------- */
+.snap-line { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: 0; background: var(--accent); box-shadow: 0 0 6px var(--accent); pointer-events: none; z-index: 6; }
+.th-spacer { display: flex; align-items: center; justify-content: center; }
+.th-add { width: 26px; height: 20px; padding: 0; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); color: var(--text); font-size: 16px; line-height: 1; cursor: pointer; }
+.th-add:hover { border-color: var(--accent); color: var(--accent); }
+.dropdown.floating { position: absolute; right: auto; top: 0; z-index: 35; display: none; }
+.nudge-row { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin: -2px 0 12px; }
+.nudge-row .btn-chip { padding: 6px 2px; font-variant-numeric: tabular-nums; text-align: center; }
+.nudge-row .btn-chip:disabled { opacity: .4; cursor: default; }
+#cpStart { flex: 1; min-width: 0; max-width: 140px; background: var(--surface-2); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 9px 10px; font-size: 14px; font-family: inherit; font-variant-numeric: tabular-nums; }
+#cpStart:disabled { opacity: .5; }
+#cpEnd { font-variant-numeric: tabular-nums; }
+body.free-head .tl-ruler { cursor: pointer; }
+body.free-head .playhead { pointer-events: auto; cursor: ew-resize; }
+body.free-head .playhead::after { content: ""; position: absolute; top: 0; height: 24px; left: -7px; width: 16px; }

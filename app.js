@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.9.1';
+  const VERSION = '0.9.2';
   const $ = (id) => document.getElementById(id);
 
   // ---------------------------------------------------------------------------
@@ -145,11 +145,14 @@
     undoSteps: store.get('undoSteps', 10),
     rows: store.get('tlRows', isCoarse ? 3 : 5),
     snap: store.get('snap', true),
+    haptics: store.get('haptics', true),
   };
   const THRESH = isCoarse ? { bytes: 150 * 1024 * 1024, secs: 180 } : { bytes: 1024 * 1024 * 1024, secs: 900 };
   $('trimModeSel').value = settings.trimMode;
   $('undoStepsInput').value = settings.undoSteps;
   $('trimThresholdHint').textContent = `On this device, "large" means bigger than ${fmtSize(THRESH.bytes)} or longer than ${THRESH.secs / 60} minutes.`;
+  $('hapticsChk').checked = settings.haptics;
+  $('hapticsChk').addEventListener('change', (e) => { settings.haptics = e.target.checked; store.set('haptics', settings.haptics); });
   $('tlRowsInput').value = settings.rows;
   $('tlRowsInput').addEventListener('change', (e) => {
     settings.rows = clamp(parseInt(e.target.value, 10) || 3, 1, 20);
@@ -944,6 +947,7 @@
     afterEdit();
   }
   function undo() {
+    if (clipLiveBefore) { clearTimeout(clipNudgeTimer); liveClipCommit(); } // finish a series of nudges first
     if (!undoStack.length) return;
     redoStack.push(snapshot());
     setTracks(undoStack.pop());
@@ -966,7 +970,7 @@
   }
   // Empty overlay tracks disappear automatically.
   function pruneTracks() {
-    const keep = tracks.filter((t, i) => i === 0 || t.clips.length);
+    const keep = tracks.filter((t, i) => i === 0 || t.clips.length || t.manual);
     if (keep.length !== tracks.length) setTracks(keep);
   }
   function afterEdit() {
@@ -1200,6 +1204,7 @@
     $('cpTabAudio').hidden = !isSoundClip(c);
     if ((cpTab === 'crop' && (c.kind === 'color' || audio)) || (audio && (cpTab === 'position' || cpTab === 'rotate')) || (cpTab === 'audio' && !isSoundClip(c))) showTab('clip');
     syncAudioUI(c);
+    syncTimeUI();
     updateTransformingClass();
     syncTransformUI();
     if (c.kind === 'color') {
@@ -1274,6 +1279,76 @@
     toast('Sound detached — it now has its own audio track.');
   }
   $('detachBtn').addEventListener('click', detachAudio);
+
+  // ---------------------------------------------------------------------------
+  // Exact timing: start field (absolute) and nudging (relative)
+  // ---------------------------------------------------------------------------
+  // Accepts 43.79, 0:43.79, 1:02:03.5 (comma works as decimal point too).
+  function parseTime(str) {
+    const parts = String(str || '').trim().replace(',', '.').split(':');
+    if (!parts.length || parts.some((x) => x.trim() === '' || isNaN(+x))) return null;
+    return parts.reduce((acc, x) => acc * 60 + +x, 0);
+  }
+  function syncTimeUI() {
+    const f = findClip(selectedId);
+    if (!f) return;
+    const mag = f.tr.magnetic;
+    if (document.activeElement !== $('cpStart')) $('cpStart').value = fmtTime(f.clip.start);
+    $('cpStart').disabled = mag;
+    $('cpEnd').textContent = `→ ${fmtTime(clipEnd(f.clip))}`;
+    $('cpNudge').querySelectorAll('button').forEach((b) => { b.disabled = mag; });
+    $('cpMagHint').hidden = !mag;
+  }
+  /** Move the selected clip to an exact start; no room there → a new track next to it. */
+  function setClipStart(t) {
+    const f = findClip(selectedId);
+    if (!f || f.tr.magnetic) return;
+    t = Math.max(0, Math.round(t * 1000) / 1000);
+    if (Math.abs(t - f.clip.start) < 1e-4) { syncTimeUI(); return; }
+    let moved = false;
+    commit(() => {
+      const c = f.clip;
+      f.tr.clips.splice(f.idx, 1);
+      c.start = t;
+      let tr = f.tr;
+      if (overlaps(tr, t, clipLen(c), c.id)) {
+        tr = newTrack(false, tr.kind || 'video');
+        tracks.splice(tracks.indexOf(f.tr) + 1, 0, tr);
+        moved = true;
+      }
+      tr.clips.push(c);
+    });
+    if (moved) toast('Another clip is in the way there — the clip moved to a new track.');
+  }
+  $('cpStart').addEventListener('change', (e) => {
+    const t = parseTime(e.target.value);
+    if (t == null) { toast('Please enter a time like 0:43.79 or 43.79'); syncTimeUI(); return; }
+    setClipStart(t);
+  });
+  $('cpStart').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); } });
+
+  // Nudging stops at neighbouring clips; a series of nudges is one undo step.
+  let clipNudgeTimer = 0;
+  function nudge(d) {
+    const f = findClip(selectedId);
+    if (!f || f.tr.magnetic) return;
+    const c = f.clip, len = clipLen(c);
+    const prev = f.tr.clips[f.idx - 1], next = f.tr.clips[f.idx + 1];
+    const lo = prev ? clipEnd(prev) : 0;
+    const hi = next ? next.start - len : Infinity;
+    const t = Math.round(clamp(c.start + d, lo, Math.max(lo, hi)) * 1000) / 1000;
+    if (Math.abs(t - c.start) < 1e-6) { toast(d < 0 ? 'The clip already touches its neighbour (or the start).' : 'The clip already touches the next clip.', 1500); return; }
+    if (!clipLiveBefore) clipLiveBefore = snapshot();
+    f.tr.clips[f.idx] = { ...c, start: t };
+    renderClips();
+    syncTimeUI();
+    syncPool();
+    renderPreview();
+    updateTime();
+    clearTimeout(clipNudgeTimer);
+    clipNudgeTimer = setTimeout(liveClipCommit, 700);
+  }
+  $('cpNudge').addEventListener('click', (e) => { const b = e.target.closest('[data-nudge]'); if (b) nudge(+b.dataset.nudge); });
 
   // Snapping while dragging clips on free tracks (switchable).
   function syncSnapBtn() {
@@ -1398,7 +1473,24 @@
   // Display order: visual tracks top to bottom (main last), then the audio tracks.
   const displayTracks = () => { const fa = firstAudioIndex(); return [...tracks.slice(0, fa).reverse(), ...tracks.slice(fa)]; };
 
-  const pad = () => timeline.clientWidth / 2;
+  // Phones: the playhead stays in the middle and the timeline moves under it.
+  // Desktop: the playhead moves freely (click/drag in the ruler or on the
+  // line); scrolling only moves the view.
+  const freeHead = !isCoarse;
+  if (freeHead) {
+    document.body.classList.add('free-head');
+    document.querySelector('.below-timeline .hint').textContent = 'Click a clip to select it, then drag it — sideways to move it, up or down to another track. Click or drag in the time ruler to move the playhead. Click a track\'s left edge for its settings.';
+  }
+  const pad = () => (freeHead ? 16 : timeline.clientWidth / 2);
+  const timeX = (t) => pad() + t * pps;
+  const fitWidth = () => Math.max(50, timeline.clientWidth - (freeHead ? 2 * pad() : 0));
+  function placePlayhead() {
+    const line = $('playheadLine');
+    if (!freeHead) { line.style.left = (timeline.offsetLeft + timeline.clientWidth / 2) + 'px'; return; }
+    const x = timeX(playhead) - timeline.scrollLeft;
+    line.style.left = (timeline.offsetLeft + x) + 'px';
+    line.style.visibility = x < -1 || x > timeline.clientWidth + 1 ? 'hidden' : '';
+  }
   function clampPps(v) {
     const total = Math.max(0.5, totalDuration());
     return clamp(v, Math.max(2, (timeline.clientWidth * 0.5) / total), Math.min(600, MAX_WIDTH / total));
@@ -1409,12 +1501,11 @@
   function renderTimeline() {
     if ($('editorScreen').hidden) return;
     const total = totalDuration();
-    if (!ppsUserSet && total > 0) pps = clamp(timeline.clientWidth / total, 4, 160);
+    if (!ppsUserSet && total > 0) pps = clamp(fitWidth() / total, 4, 160);
     pps = clampPps(pps);
     const p = pad();
     tlInner.style.width = (p * 2 + total * pps) + 'px';
-    // Playhead in the middle of the visible clip area (scrollbars change its width).
-    $('playheadLine').style.left = (timeline.offsetLeft + timeline.clientWidth / 2) + 'px';
+    placePlayhead();
     // Height: show `settings.rows` tracks before scrolling vertically.
     const shown = [tracks[0], ...tracks.slice(1)].slice(0, settings.rows);
     const maxH = RULER_H + shown.reduce((s, t) => s + rowH(t), 0) + 6;
@@ -1588,6 +1679,14 @@
     const spacer = document.createElement('div');
     spacer.className = 'th-spacer';
     spacer.style.height = RULER_H + 'px';
+    const add = document.createElement('button');
+    add.type = 'button';
+    add.className = 'th-add';
+    add.id = 'addTrackBtn';
+    add.title = 'Add an empty track';
+    add.setAttribute('aria-label', 'Add an empty track');
+    add.textContent = '+';
+    spacer.appendChild(add);
     frag.appendChild(spacer);
     for (const tr of displayTracks()) {
       const h = document.createElement('div');
@@ -1614,7 +1713,35 @@
     trackHeads.scrollTop = timeline.scrollTop;
   }
 
+  // Empty tracks added by hand stay until they are deleted.
+  function addEmptyTrack(kind) {
+    commit(() => {
+      const tr = newTrack(false, kind);
+      tr.manual = true;
+      if (kind === 'audio') tracks.push(tr); else tracks.splice(firstAudioIndex(), 0, tr);
+    });
+    toast(kind === 'audio' ? 'Empty audio track added at the bottom.' : 'Empty video track added at the top.', 2000);
+  }
+  function openTrackMenu(btn) {
+    let m = $('trackAddMenu');
+    if (!m) {
+      m = document.createElement('div');
+      m.id = 'trackAddMenu';
+      m.className = 'dropdown floating';
+      m.setAttribute('role', 'menu');
+      m.innerHTML = '<button type="button" role="menuitem" data-kind="video"><span class="mi-icon">▭</span>Video track</button><button type="button" role="menuitem" data-kind="audio"><span class="mi-icon">♪</span>Audio track</button>';
+      m.addEventListener('click', (e) => { const b = e.target.closest('[data-kind]'); if (b) { m.style.display = 'none'; addEmptyTrack(b.dataset.kind); } });
+      document.body.appendChild(m);
+      document.addEventListener('click', (e) => { if (!e.target.closest('#trackAddMenu') && !e.target.closest('#addTrackBtn')) m.style.display = 'none'; });
+    }
+    const r = btn.getBoundingClientRect();
+    m.style.left = (r.left + window.scrollX) + 'px';
+    m.style.top = (r.bottom + window.scrollY + 4) + 'px';
+    m.style.display = m.style.display === 'block' ? 'none' : 'block';
+  }
+
   trackHeads.addEventListener('click', (e) => {
+    if (e.target.closest('#addTrackBtn')) { openTrackMenu(e.target.closest('#addTrackBtn')); return; }
     const head = e.target.closest('.track-head');
     if (!head) return;
     const tr = findTrack(head.dataset.track);
@@ -1637,6 +1764,16 @@
   let expectedScroll = -1;
   let lastScrollLeft = 0;
   function syncScroll() {
+    if (freeHead) {
+      // Keep the playhead in view: page on when it runs out of the visible part.
+      const x = timeX(playhead) - timeline.scrollLeft, w = timeline.clientWidth;
+      if (x < 0 || x > w - 8) {
+        timeline.scrollLeft = Math.max(0, timeX(playhead) - (playing ? w * 0.1 : w / 2));
+        lastScrollLeft = timeline.scrollLeft;
+      }
+      placePlayhead();
+      return;
+    }
     const target = Math.round(playhead * pps);
     expectedScroll = target;
     timeline.scrollLeft = target;
@@ -1645,6 +1782,7 @@
   let scrollRaf = 0;
   timeline.addEventListener('scroll', () => {
     trackHeads.scrollTop = timeline.scrollTop;
+    if (freeHead) { lastScrollLeft = timeline.scrollLeft; placePlayhead(); return; }
     if (drag) return;
     if (timeline.scrollLeft === lastScrollLeft) return; // vertical scrolling only
     lastScrollLeft = timeline.scrollLeft;
@@ -1659,18 +1797,63 @@
     });
   }, { passive: true });
 
-  function setZoom(newPps) {
+  // Zoom; on desktop the time under `anchorX` (screen x in the timeline, default: the playhead) stays in place.
+  function setZoom(newPps, anchorX) {
     ppsUserSet = true;
+    let t = playhead, x0 = timeX(playhead) - timeline.scrollLeft;
+    if (freeHead && anchorX != null) { x0 = anchorX; t = (timeline.scrollLeft + anchorX - pad()) / pps; }
     pps = clampPps(newPps);
     renderTimeline();
+    if (freeHead) { timeline.scrollLeft = Math.max(0, timeX(t) - x0); placePlayhead(); }
   }
   $('zoomInBtn').addEventListener('click', () => setZoom(pps * 1.6));
   $('zoomOutBtn').addEventListener('click', () => setZoom(pps / 1.6));
   timeline.addEventListener('wheel', (e) => {
     if (!e.ctrlKey && !e.metaKey) return;
     e.preventDefault();
-    setZoom(pps * Math.exp(-e.deltaY * 0.01));
+    setZoom(pps * Math.exp(-e.deltaY * 0.01), e.clientX - timeline.getBoundingClientRect().left);
   }, { passive: false });
+
+  // Fit: the whole project, or the selected clip (about 80 % of the width).
+  function zoomFit() {
+    const c = selClip();
+    if (!c) {
+      ppsUserSet = false;
+      renderTimeline();
+      if (freeHead) { timeline.scrollLeft = 0; placePlayhead(); }
+      return;
+    }
+    const len = Math.max(0.05, clipLen(c));
+    ppsUserSet = true;
+    pps = clampPps((fitWidth() * 0.8) / len);
+    renderTimeline();
+    if (freeHead) { timeline.scrollLeft = Math.max(0, timeX(c.start + len / 2) - timeline.clientWidth / 2); placePlayhead(); }
+    else { pause(); seek(c.start + len / 2); }
+  }
+  $('zoomFitBtn').addEventListener('click', zoomFit);
+
+  // Desktop: click or drag in the ruler, or drag the playhead line, to set the playhead.
+  const timeAtClientX = (x) => clamp((x - timeline.getBoundingClientRect().left + timeline.scrollLeft - pad()) / pps, 0, totalDuration());
+  let headDrag = null;
+  function startHeadDrag(e) {
+    if (!freeHead || e.button > 0) return;
+    e.preventDefault();
+    pause();
+    headDrag = { id: e.pointerId };
+    seek(timeAtClientX(e.clientX), true);
+  }
+  tlRuler.addEventListener('pointerdown', startHeadDrag);
+  $('playheadLine').addEventListener('pointerdown', startHeadDrag);
+  window.addEventListener('pointermove', (e) => {
+    if (!headDrag || e.pointerId !== headDrag.id) return;
+    // Scroll along at the edges.
+    const r = timeline.getBoundingClientRect();
+    if (e.clientX > r.right - 20) timeline.scrollLeft += 12; else if (e.clientX < r.left + 20) timeline.scrollLeft -= 12;
+    seek(timeAtClientX(clamp(e.clientX, r.left, r.right)), true);
+  });
+  const endHeadDrag = (e) => { if (headDrag && e.pointerId === headDrag.id) headDrag = null; };
+  window.addEventListener('pointerup', endHeadDrag);
+  window.addEventListener('pointercancel', endHeadDrag);
 
   // Pinch zoom (touch events so we can stop the browser from zooming the page)
   let pinch = null;
@@ -1779,10 +1962,11 @@
       drag.marker.style.height = rb.height + 'px';
     } else {
       drag.marker.hidden = true;
-      // Snap the start or end to the playhead and to edges of other clips (8 px).
+      // Snap the start or end to the playhead and to edges of other clips.
       // Switchable below the timeline; Alt moves freely for a moment.
+      showSnap(null);
       if (!settings.snap || drag.alt) return;
-      const thr = 8 / pps;
+      const thr = (isCoarse ? 20 : 14) / pps;
       let best = null;
       const len = clipLen(f.clip);
       const cands = [playhead, 0];
@@ -1790,10 +1974,36 @@
       for (const cnd of cands) {
         for (const [edge, off] of [[drag.time, 0], [drag.time + len, len]]) {
           const d = Math.abs(edge - cnd);
-          if (d < thr && (!best || d < best.d)) best = { d, t: cnd - off };
+          if (d < thr && (!best || d < best.d)) best = { d, t: cnd - off, at: cnd };
         }
       }
-      if (best) drag.time = Math.max(0, best.t);
+      if (best) {
+        drag.time = Math.max(0, best.t);
+        // Place the dragged clip exactly where it will land and show the snap line.
+        drag.el.style.left = (timeX(drag.time) + 1) + 'px';
+        showSnap(best.at);
+      }
+    }
+  }
+
+  // Blue line across all tracks where a clip snaps; a short vibration (Android) on each new snap.
+  let snapLine = null;
+  function showSnap(t) {
+    if (t == null) {
+      if (snapLine) snapLine.hidden = true;
+      if (drag) drag.snapAt = null;
+      return;
+    }
+    if (!snapLine || !snapLine.isConnected) {
+      snapLine = document.createElement('div');
+      snapLine.className = 'snap-line';
+      tlRows.appendChild(snapLine);
+    }
+    snapLine.hidden = false;
+    snapLine.style.left = (timeX(t) - 1) + 'px';
+    if (drag && drag.snapAt !== t) {
+      drag.snapAt = t;
+      if (settings.haptics && navigator.vibrate) { try { navigator.vibrate(12); } catch (e) { /* ignore */ } }
     }
   }
 
@@ -2005,7 +2215,7 @@
     clock = { t0: performance.now(), ph0: playhead };
     if (!allClips().length) resetVideos();
     else syncPool(true);
-    if (!fromScroll) syncScroll();
+    if (!fromScroll) syncScroll(); else placePlayhead();
     updateTime();
     updateToolbar();
     renderPreview();
@@ -2757,6 +2967,7 @@
     else if (k === 'm') toggleMuteClip();
     else if (e.key === 'Escape') { selectedId = null; renderClips(); updateToolbar(); }
     else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSelected(); }
+    else if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && selClip()) { e.preventDefault(); nudge((e.key === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 0.01 : 0.1)); }
     else if (e.key === 'ArrowLeft') { e.preventDefault(); e.shiftKey ? (pause(), seek(playhead - 1)) : frameStep(-1); }
     else if (e.key === 'ArrowRight') { e.preventDefault(); e.shiftKey ? (pause(), seek(playhead + 1)) : frameStep(1); }
     else if (e.key === 'Home') { pause(); seek(0); }
@@ -3458,8 +3669,9 @@
       opacity: t.opacity != null ? clamp(+t.opacity, 0, 1) : 1,
       muted: !!t.muted,
       volume: t.volume != null ? clamp(+t.volume, 0, 1) : 1,
+      manual: !!t.manual,
       clips: (t.clips || []).map((c) => ({ ...c, kind: c.kind || 'video' })),
-    })).filter((t, i) => i === 0 || t.clips.length));
+    })).filter((t, i) => i === 0 || t.clips.length || t.manual));
     undoStack = []; redoStack = []; clipboard = null; selectedId = null; selectedTrackId = null;
     exportName = cleanFileName(p.exportName || '');
     muteAll = !!p.muteAll;

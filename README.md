@@ -32,7 +32,7 @@ A privacy-friendly video editor and compressor that runs entirely in your browse
 ### Audio
 - **Audio files** — MP3, M4A/AAC, WAV, FLAC, OGG/Opus (whatever the browser can decode; Safari has no OGG) — via *Add → Audio*, drag & drop or paste. They land at the playhead on the topmost **audio track** with room, or on a new one
 - **Audio tracks** lie below the main track; they hold sound only (pictures can't be dragged onto them and vice versa). Clips sit freely in time, gaps are silent. Track header: 🔊 mute; tap it for volume, order and delete
-- **Snapping:** while dragging, clips on free tracks (audio and overlays) snap to the start and end of all other clips and to the playhead (index points will follow). The magnet button below the timeline turns snapping off (remembered); hold Alt to move freely for a moment
+- **Snapping:** while dragging, clips on free tracks (audio and overlays) snap to the start and end of all other clips and to the playhead (index points will follow) — within 14 px on desktop, 20 px on touch screens. A **blue line across all tracks** shows where the clip docks; Android phones vibrate briefly on each new snap (can be switched off in Settings). The magnet button below the timeline turns snapping off (remembered); hold Alt to move freely for a moment
 - **Detach audio** (clip panel of a video): the sound becomes an audio clip right below, the video is muted. Both are independent afterwards (gluing comes later); undo reverts it
 - **Audio tab** for videos and audio clips: **volume** 0–200 % (amplified above 100 %, a soft limiter prevents clipping) and **fade in / fade out** in seconds (smooth curve). Fades show as dark ramps, a changed volume as a badge on the clip
 - **Waveform** on audio clips — computed once (also for detached video sound, in the background) and saved with the project
@@ -54,7 +54,10 @@ A privacy-friendly video editor and compressor that runs entirely in your browse
 - A hint appears when three or more videos play at the same time — the preview may stutter on slower devices, the export is not affected
 
 ### Editing
-- Timeline with thumbnail strips; the playhead stays fixed in the centre — scroll the timeline to scrub
+- Timeline with thumbnail strips. **Phones/tablets:** the playhead stays fixed in the centre — scroll the timeline to scrub. **Desktop:** the playhead moves freely — click or drag in the time ruler, or drag the red line; scrolling only moves the view, and during playback the view pages along
+- **Fit** button between the zoom buttons: the whole project, or — with a clip selected — that clip at about 80 % of the width (phones also move the playhead into it)
+- **Exact timing** (clips on free tracks): the *Start* field in the clip panel accepts `0:43.79`, `43.79` or `1:02:03.5` (comma works too); if another clip is in the way, the clip moves to a new track. Nudge buttons move by ±1 s / ±0.1 s / ±0.01 s and stop at neighbouring clips; on desktop `Alt` + `←`/`→` (0.1 s) and `Alt` + `Shift` + `←`/`→` (0.01 s). A series of nudges is one undo step. Clips on the magnetic main track follow their order instead (release the magnet to place them freely)
+- **+** above the track headers adds an empty video track (on top) or audio track (at the bottom) as a drop target; tracks added by hand stay until deleted, automatically created tracks disappear when empty
 - Preview player with play/pause, frame-by-frame stepping and a time display
 - Toolbar: **Undo / Redo** fixed on the left, **Add** (videos & images or a color clip, on the main track or as overlay) fixed on the right; in between **Cut** at the playhead (split icon — splits the selected clip, otherwise the clip of the main track under the playhead), **Copy**, **Paste** at the playhead and **Delete**. Pasting a clip copied from the magnetic main track inserts it there (splitting a clip if necessary); clips from overlay tracks are pasted as overlays. If space ever runs out, only the middle part scrolls
 - **Clip panel:** appears below the timeline while a clip is selected — **Mute** (videos), and for images/color clips the **duration**; for color clips also **color** and **size**
@@ -69,6 +72,7 @@ A privacy-friendly video editor and compressor that runs entirely in your browse
   | `Space` | Play / pause |
   | `←` / `→` | Previous / next frame |
   | `Shift` + `←` / `→` | Jump 1 second |
+  | Click/drag in the ruler | Set the playhead (desktop) |
   | `C` or `S` | Cut at playhead |
   | `M` | Mute / unmute clip |
   | `Delete` / `Backspace` | Delete selected clip |
@@ -76,6 +80,7 @@ A privacy-friendly video editor and compressor that runs entirely in your browse
   | `Ctrl` + `C` / `V` | Copy clip / paste clip or files from the clipboard |
   | `Ctrl` + `Z` / `Y` | Undo / redo |
   | `Home` / `End` | Jump to start / end |
+  | `Alt` + `←` / `→` | Move the selected clip by 0.1 s (`Shift`: 0.01 s) |
   | `Ctrl` + `E` | Open the *Create video* window |
   | `?` | Help & shortcuts |
 

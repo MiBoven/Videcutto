@@ -1,5 +1,12 @@
 # Changelog
 
+### 0.9.2 — 2026-10-30 — Precise placement & free playhead
+- Snapping reacts earlier (14 px desktop, 20 px touch) and shows a blue line across all tracks where the clip docks; short vibration on Android (switchable in Settings)
+- Exact start time per clip (e.g. 0:43.79) in the clip panel; nudge buttons ±1 s / ±0.1 s / ±0.01 s and Alt + ←/→ (Shift: 0.01 s) on desktop
+- Desktop: the playhead moves freely — click or drag in the time ruler or drag the red line; scrolling only moves the view; zooming keeps the playhead (or the time under the mouse) in place
+- Fit button: whole project, or the selected clip
+- + above the track headers adds an empty video or audio track; tracks added by hand stay until deleted
+
 ### 0.9.1 — 2026-10-30 — Fragmented MP4
 - Fragmented MP4 files can be opened (e.g. streaming downloads, Safari or OBS "fragmented" recordings): the demuxer now reads the samples from moof/trun boxes; pre-trimming, working copies and export work as usual (the working copy is written as a normal MP4)
 - Fragmented files with sound only (e.g. .m4a) open as audio

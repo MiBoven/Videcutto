@@ -166,6 +166,7 @@
     <div class="zoom-ctl">
       <button class="icon small snap-btn" id="snapBtn" title="Snap clips to edges and the playhead" aria-label="Snap" aria-pressed="true"><svg viewBox="0 0 24 24"><path d="M6 4v8a6 6 0 0012 0V4"/><path d="M6 4h4v8a2 2 0 004 0V4h4"/><path d="M6 8h4M14 8h4"/></svg></button>
       <button class="icon small" id="zoomOutBtn" title="Zoom out" aria-label="Zoom out"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M8.5 11h5M20 20l-4.5-4.5"/></svg></button>
+      <button class="icon small" id="zoomFitBtn" title="Fit: whole project, or the selected clip" aria-label="Zoom to fit"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/><path d="M8 12h8"/></svg></button>
       <button class="icon small" id="zoomInBtn" title="Zoom in" aria-label="Zoom in"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M8.5 11h5M11 8.5v5M20 20l-4.5-4.5"/></svg></button>
     </div>
   </div>
@@ -218,6 +219,19 @@
 
     <!-- Clip -->
     <div class="cp-pane" data-pane="clip">
+      <div class="field" id="cpStartField">
+        <label for="cpStart">Start</label>
+        <div class="input-unit"><input type="text" id="cpStart" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="0:00.00" title="Exact start on the timeline, e.g. 0:43.79 or 43.79"><span id="cpEnd"></span></div>
+      </div>
+      <div class="nudge-row" id="cpNudge" role="group" aria-label="Move clip">
+        <button type="button" class="btn-chip" data-nudge="-1" title="1 second earlier">−1 s</button>
+        <button type="button" class="btn-chip" data-nudge="-0.1" title="0.1 s earlier (Alt + ←)">−0.1</button>
+        <button type="button" class="btn-chip" data-nudge="-0.01" title="0.01 s earlier (Alt + Shift + ←)">−0.01</button>
+        <button type="button" class="btn-chip" data-nudge="0.01" title="0.01 s later (Alt + Shift + →)">+0.01</button>
+        <button type="button" class="btn-chip" data-nudge="0.1" title="0.1 s later (Alt + →)">+0.1</button>
+        <button type="button" class="btn-chip" data-nudge="1" title="1 second later">+1 s</button>
+      </div>
+      <p class="hint" id="cpMagHint" hidden>On the magnetic main track the order decides where a clip starts. Release the magnet in the main track's settings to place clips freely.</p>
       <div class="cp-actions">
         <button class="tool" id="muteClipBtn" title="Mute clip (M)"><svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg><span>Mute</span></button>
         <button class="tool" id="detachBtn" title="Put the sound on an audio track of its own"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="1.5"/><path d="M4 16.5c1.5-2 2.5 2 4 0s2.5 2 4 0 2.5 2 4 0 2.5 2 4 0"/><path d="M12 11v3"/></svg><span>Detach audio</span></button>
@@ -533,6 +547,7 @@
       <label for="tlRowsInput">Tracks visible before the timeline scrolls</label>
       <input type="number" id="tlRowsInput" min="1" max="20" value="3" inputmode="numeric">
     </div>
+    <label class="check-row"><input type="checkbox" id="hapticsChk" checked> Vibrate when a clip snaps into place <span class="hint-inline">(Android)</span></label>
     <h3 class="settings-h">Project</h3>
     <p class="hint" id="storageInfo">Your project is saved automatically on this device.</p>
     <button class="btn-secondary wide danger-text" id="deleteProjectBtn">Delete project</button>
@@ -669,8 +684,9 @@
     <details id="help-timeline">
       <summary>Timeline &amp; editing</summary>
       <ul>
-        <li>The <strong>playhead stays in the middle</strong> — scroll the timeline to move through the video.</li>
-        <li>Zoom with the 🔍 buttons, two fingers (pinch) or Ctrl + mouse wheel.</li>
+        <li>Phones: the <strong>playhead stays in the middle</strong> — scroll the timeline to move through the video. Desktop: <strong>click or drag in the time ruler</strong> (or drag the red line) to set the playhead; scrolling only moves the view.</li>
+        <li>Zoom with the 🔍 buttons, two fingers (pinch) or Ctrl + mouse wheel. <strong>Fit</strong> (the button between them) shows the whole project — or the selected clip.</li>
+        <li><strong>Exact timing:</strong> the clip panel's <em>Start</em> field takes a time like <em>0:43.79</em>; the buttons below move a clip by ±1 s, ±0.1 s or ±0.01 s (desktop: Alt + ←/→, with Shift for 0.01 s). Clips on the magnetic main track follow their order instead.</li>
         <li><strong>Tap a clip to select it, then drag it.</strong> Unselected clips never move, so scrolling is safe.</li>
         <li><strong>Cut</strong> splits the selected clip at the playhead (or the main track's clip under it).</li>
         <li><strong>Paste</strong> inserts at the playhead — into the main track if copied from there, otherwise as an overlay.</li>
@@ -687,7 +703,8 @@
         <li><strong>Add → As overlay</strong> puts a video, image or color clip at the playhead on a track above — half size, centred. Higher tracks cover lower ones.</li>
         <li>Drag a selected clip <strong>up or down</strong> to another track. No room there, or dropped above the top track? A new track is created.</li>
         <li>Left of each track: 👁 <strong>hide</strong>, 🔊 <strong>mute</strong>. <strong>Tap the track's left edge</strong> for opacity, volume, order and delete.</li>
-        <li>Empty overlay tracks disappear by themselves. Settings → how many tracks are visible before the timeline scrolls.</li>
+        <li><strong>+</strong> above the track headers adds an <strong>empty video or audio track</strong> — handy as a place to drag clips to. Tracks added this way stay until you delete them; tracks that were created automatically disappear when they become empty.</li>
+        <li>Settings → how many tracks are visible before the timeline scrolls.</li>
       </ul>
     </details>
 
@@ -696,7 +713,7 @@
       <ul>
         <li><strong>Add → Audio</strong> (or drop/paste MP3, M4A, WAV, FLAC, OGG) puts music or sound at the playhead on an <strong>audio track</strong> below the main track.</li>
         <li><strong>Detach audio</strong> (clip panel of a video) moves a video's sound onto its own audio track — the video is muted, both can then be cut and moved separately.</li>
-        <li>Audio clips <strong>snap</strong> to the start and end of other clips and to the playhead. The magnet button below the timeline turns snapping off; hold <strong>Alt</strong> to move freely for a moment.</li>
+        <li>Audio clips and overlays <strong>snap</strong> to the start and end of other clips and to the playhead — a blue line shows where (phones vibrate briefly on Android; switchable in Settings). The magnet button below the timeline turns snapping off; hold <strong>Alt</strong> to move freely for a moment.</li>
         <li>The <strong>Audio</strong> tab sets a clip's <strong>volume</strong> (up to 200 % — a limiter prevents distortion) and <strong>fade in / fade out</strong>. Fades show as dark ramps on the clip.</li>
         <li>Track volume and clip volume multiply. 🔊 in the track header mutes a whole track.</li>
       </ul>
@@ -748,6 +765,7 @@
         <tr><td><kbd>Ctrl</kbd> + <kbd>C</kbd> / <kbd>V</kbd></td><td>Copy clip / paste clip or files</td></tr>
         <tr><td><kbd>Ctrl</kbd> + <kbd>Z</kbd> / <kbd>Y</kbd></td><td>Undo / redo</td></tr>
         <tr><td><kbd>Ctrl</kbd> + <kbd>E</kbd></td><td>Create video…</td></tr>
+        <tr><td><kbd>Alt</kbd> + <kbd>←</kbd> <kbd>→</kbd></td><td>Move the selected clip by 0.1 s (with <kbd>Shift</kbd>: 0.01 s)</td></tr>
         <tr><td><kbd>Alt</kbd> while dragging</td><td>Move without snapping (clips and picture)</td></tr>
         <tr><td><kbd>Ctrl</kbd> + wheel</td><td>Zoom the timeline</td></tr>
         <tr><td><kbd>?</kbd></td><td>This help</td></tr>
