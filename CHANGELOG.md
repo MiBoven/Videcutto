@@ -1,5 +1,11 @@
 # Changelog
 
+### 0.9.9 — 2026-10-30 — Trimming & more for several clips
+- Trim handles on the selected clip: drag start or end; ripple on the magnetic main track, stops at neighbours on free tracks; limited to the media for videos and sounds; snapping; one undo step
+- Crop, position, size and rotation for several selected clips at once
+- Several clips incl. clips of the magnetic main track can be dragged together: the main-track clips move as a block, the others shift along
+- View: optional media column on the left in the wide layout
+
 ### 0.9.8 — 2026-10-30 — Multi-selection & media list
 - Select several clips: Ctrl/⌘ + click, Shift + click (range), frame selection in empty timeline space, Ctrl + A; on phones long-press or the Select button, with a bar showing the count (All / Done)
 - For all selected clips: delete, copy/paste (distances and track grouping kept), cut, mute, volume & fades, detach audio, nudging and dragging together on free tracks (with snapping)

@@ -535,18 +535,35 @@ html:has(body.editing.wide) { overflow: hidden; }
 .clip-panel.multi .cp-title { font-weight: 500; }
 
 /* ---------- Media list ---------- */
-.media-list { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.media-list li { display: flex; align-items: center; gap: 10px; padding: 6px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); cursor: pointer; min-width: 0; }
-.media-list li:hover { border-color: var(--accent); }
-.media-list li.dragging { opacity: .5; }
-.media-list .m-thumb { width: 64px; height: 36px; flex-shrink: 0; border-radius: 6px; background: #000 center / cover no-repeat; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 16px; overflow: hidden; }
-.media-list .m-thumb canvas { width: 100%; height: 100%; display: block; background: #1f5a4a; }
-.media-list .m-info { flex: 1; min-width: 0; }
-.media-list .m-name { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.media-list .m-meta { font-size: 12px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.media-list .m-meta .unused { color: var(--warn-text); }
-.media-list .m-meta .gone { color: var(--danger); }
-.media-list .m-acts { display: flex; gap: 4px; flex-shrink: 0; }
-.media-list .m-acts button { min-width: 32px; height: 30px; padding: 0 6px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); cursor: pointer; font-size: 14px; }
-.media-list .m-acts button:hover { border-color: var(--accent); color: var(--accent); }
+#mediaList { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+#mediaList li { display: flex; align-items: center; gap: 10px; padding: 6px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); cursor: pointer; min-width: 0; }
+#mediaList li:hover { border-color: var(--accent); }
+#mediaList li.dragging { opacity: .5; }
+#mediaList .m-thumb { width: 64px; height: 36px; flex-shrink: 0; border-radius: 6px; background: #000 center / cover no-repeat; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 16px; overflow: hidden; }
+#mediaList .m-thumb canvas { width: 100%; height: 100%; display: block; background: #1f5a4a; }
+#mediaList .m-info { flex: 1; min-width: 0; }
+#mediaList .m-name { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#mediaList .m-meta { font-size: 12px; color: var(--text-secondary); line-height: 1.35; }
+#mediaList .m-meta .unused { color: var(--warn-text); }
+#mediaList .m-meta .gone { color: var(--danger); }
+#mediaList .m-acts { display: flex; gap: 4px; flex-shrink: 0; }
+#mediaList .m-acts button { min-width: 32px; height: 30px; padding: 0 6px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); cursor: pointer; font-size: 14px; }
+#mediaList .m-acts button:hover { border-color: var(--accent); color: var(--accent); }
 .tl-row.drop-target { box-shadow: inset 0 0 0 2px var(--accent); }
+
+/* ---------- Trim handles ---------- */
+.trim-h { position: absolute; top: 0; bottom: 0; width: 10px; z-index: 3; cursor: ew-resize; touch-action: none; background: var(--accent); opacity: .85; }
+.trim-h.l { left: 0; border-radius: 5px 0 0 5px; }
+.trim-h.r { right: 0; border-radius: 0 5px 5px 0; }
+.trim-h::after { content: ""; position: absolute; top: 30%; bottom: 30%; left: 4px; width: 2px; border-radius: 1px; background: rgba(255,255,255,.85); }
+body.coarse .trim-h { width: 16px; }
+body.coarse .trim-h::after { left: 7px; }
+
+/* ---------- Media column (wide layout, optional) ---------- */
+.ed-media { display: none; }
+body.editing.wide.media-col #editorScreen {
+  grid-template-columns: var(--media-w, 290px) 10px minmax(0, 1fr) 10px var(--side-w, 380px);
+  grid-template-areas: "media gapm stage splitv side" "splith splith splith splith splith" "tl tl tl tl tl";
+}
+body.editing.wide.media-col .ed-media { display: block; grid-area: media; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+body.editing.wide.media-col .ed-media .media-card { margin-top: 0; }

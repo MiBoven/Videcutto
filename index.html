@@ -90,6 +90,7 @@
 
 <!-- ===================== Editor ===================== -->
 <main id="editorScreen" hidden>
+  <div class="ed-media" id="edMedia"></div>
   <div class="ed-stage" id="edStage">
   <div class="project-bar">
     <input type="text" id="projectName" class="project-name" maxlength="80" aria-label="Project name" title="Rename project" spellcheck="false">
@@ -579,6 +580,7 @@
       <button type="button" class="seg-btn" data-arrange="timeline">Large timeline</button>
     </div>
     <p class="hint">Drag the borders between preview, settings and timeline to resize them.</p>
+    <label class="check-row"><input type="checkbox" id="mediaColChk"> Media list as a column on the left (wide layout)</label>
     <button class="btn-secondary wide" id="resetSizesBtn">Reset panel sizes</button>
   </div>
 </div>
@@ -745,8 +747,9 @@
         <li>Zoom with the 🔍 buttons, two fingers (pinch) or Ctrl + mouse wheel. <strong>Fit</strong> (the button between them) shows the whole project — or the selected clip.</li>
         <li><strong>Exact timing:</strong> the clip panel's <em>Start</em> field takes a time like <em>0:43.79</em>; the buttons below move a clip by ±1 s, ±0.1 s or ±0.01 s (desktop: Alt + ←/→, with Shift for 0.01 s). Clips on the magnetic main track follow their order instead.</li>
         <li><strong>Tap a clip to select it, then drag it.</strong> Unselected clips never move, so scrolling is safe.</li>
-        <li><strong>Several clips:</strong> desktop — Ctrl/⌘ + click adds or removes a clip, Shift + click selects a range, drag a frame in an empty part of the timeline, Ctrl + A selects everything. Phones — long-press a clip or tap <em>Select</em>, then tap clips; <em>Done</em> ends it. Delete, copy/paste, cut, mute, volume &amp; fades, detach audio and moving work on all selected clips (moving together only on free tracks for now).</li>
+        <li><strong>Several clips:</strong> desktop — Ctrl/⌘ + click adds or removes a clip, Shift + click selects a range, drag a frame in an empty part of the timeline, Ctrl + A selects everything. Phones — long-press a clip or tap <em>Select</em>, then tap clips; <em>Done</em> ends it. Delete, copy/paste, cut, mute, volume &amp; fades, detach audio and moving work on all selected clips Several clips can be dragged together; clips of the magnetic main track move as a block. Crop, position and rotation apply to all selected pictures.</li>
         <li><strong>Media</strong> (fold-out list in the settings column) shows every file of the project, also unused ones: tap one to select its clips, ＋ / ⧉ adds it again, 🗑 removes an unused file; on desktop drag it onto the timeline.</li>
+        <li><strong>Trim:</strong> drag the blue handles at the start or end of the selected clip. On the magnetic main track the following clips move along; elsewhere a clip stops at its neighbours. Videos and sounds can't grow beyond their file; images and color clips can. The edges snap like dragged clips.</li>
         <li><strong>Cut</strong> splits the selected clip at the playhead (or the main track's clip under it).</li>
         <li><strong>Paste</strong> inserts at the playhead — into the main track if copied from there, otherwise as an overlay.</li>
         <li>The speaker next to the time mutes everything; <em>Mute</em> in the clip panel mutes one clip.</li>

@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.9.8';
+  const VERSION = '0.9.9';
   const $ = (id) => document.getElementById(id);
 
   // ---------------------------------------------------------------------------
@@ -1383,11 +1383,16 @@
     const mag = list.some((f) => f.tr.magnetic);
     $('cpNudge').querySelectorAll('button').forEach((b) => { b.disabled = mag; });
     $('cpMagHint').hidden = !mag;
-    $('cpTabCrop').hidden = true;
-    $('cpTabPosition').hidden = true;
-    $('cpTabRotate').hidden = true;
+    // Crop, position and rotation apply to all selected pictures (crop not to color clips).
+    const pics = list.filter((f) => f.clip.kind !== 'audio');
+    const croppable = pics.filter((f) => f.clip.kind !== 'color');
+    $('cpTabCrop').hidden = !croppable.length;
+    $('cpTabPosition').hidden = !pics.length;
+    $('cpTabRotate').hidden = !pics.length;
     $('cpTabAudio').hidden = !sound.length;
-    if (cpTab !== 'clip' && !(cpTab === 'audio' && sound.length)) showTab('clip');
+    const ok = { clip: true, audio: sound.length > 0, crop: croppable.length > 0, position: pics.length > 0, rotate: pics.length > 0 };
+    if (!ok[cpTab]) showTab('clip');
+    if (pics.length) syncTransformUI();
     if (sound.length) syncAudioUI(sound.find((f) => f.clip.id === selectedId) ? selClip() : sound[0].clip);
     updateTransformingClass();
   }
@@ -1959,6 +1964,16 @@
       label.textContent = `${fmtTime(len, false)}${w > 140 && nm ? ' · ' + nm : ''}`;
       el.appendChild(label);
     }
+    // Trim handles on the (single) selected clip.
+    if (selIds.size === 1 && c.id === selectedId) {
+      for (const side of ['l', 'r']) {
+        const hd = document.createElement('span');
+        hd.className = 'trim-h ' + side;
+        hd.dataset.side = side;
+        hd.title = side === 'l' ? 'Drag to trim the start' : 'Drag to trim the end';
+        el.appendChild(hd);
+      }
+    }
     if (c.muted) {
       const m = document.createElement('span');
       m.className = 'clip-muted';
@@ -2278,7 +2293,7 @@
   // resizable). Menu → View.
   // ---------------------------------------------------------------------------
   const ARRANGE = { balanced: { top: 58, side: 380 }, preview: { top: 68, side: 340 }, timeline: { top: 44, side: 380 } };
-  const view = { layout: store.get('layout', 'auto'), arrange: store.get('arrange', 'balanced'), sizes: store.get('panelSizes', null) };
+  const view = { layout: store.get('layout', 'auto'), arrange: store.get('arrange', 'balanced'), sizes: store.get('panelSizes', null), mediaCol: store.get('mediaCol', false) };
   const isWide = () => view.layout === 'wide' || (view.layout === 'auto' && window.innerWidth >= 1200);
   function syncPvH() {
     const wrap = $('previewWrap');
@@ -2288,6 +2303,12 @@
   function applyLayout() {
     const wide = isWide();
     document.body.classList.toggle('wide', wide);
+    // Optional media column on the left: the media card moves there and opens.
+    const col = wide && view.mediaCol;
+    document.body.classList.toggle('media-col', col);
+    const card = $('mediaCard');
+    if (col && card.parentNode !== $('edMedia')) { $('edMedia').appendChild(card); if ($('mediaCard').classList.contains('collapsed')) setMediaFolded(false); }
+    else if (!col && card.parentNode === $('edMedia')) $('edSide').insertBefore(card, $('canvasCard'));
     const sz = view.sizes || ARRANGE[view.arrange] || ARRANGE.balanced;
     const ed = $('editorScreen');
     ed.style.setProperty('--top-h', sz.top + '%');
@@ -2301,8 +2322,10 @@
   function syncViewUI() {
     $('layoutSeg').querySelectorAll('.seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.layout === view.layout));
     $('arrangeSeg').querySelectorAll('.seg-btn').forEach((b) => b.classList.toggle('active', !view.sizes && b.dataset.arrange === view.arrange));
+    $('mediaColChk').checked = !!view.mediaCol;
   }
-  const saveView = () => { store.set('layout', view.layout); store.set('arrange', view.arrange); store.set('panelSizes', view.sizes); };
+  const saveView = () => { store.set('layout', view.layout); store.set('arrange', view.arrange); store.set('panelSizes', view.sizes); store.set('mediaCol', view.mediaCol); };
+  $('mediaColChk').addEventListener('change', (e) => { view.mediaCol = e.target.checked; if (view.mediaCol && view.layout === 'classic') view.layout = 'auto'; saveView(); applyLayout(); });
   $('layoutSeg').addEventListener('click', (e) => { const b = e.target.closest('[data-layout]'); if (!b) return; view.layout = b.dataset.layout; saveView(); applyLayout(); });
   $('arrangeSeg').addEventListener('click', (e) => {
     const b = e.target.closest('[data-arrange]');
@@ -2389,6 +2412,95 @@
     afterSelect();
   });
 
+  // ---------------------------------------------------------------------------
+  // Trimming: drag the start or end edge of the selected clip. On the magnetic
+  // main track the following clips move along; on free tracks a clip stops at
+  // its neighbours. Videos and sounds can't grow beyond their media; images and
+  // color clips can. Edges snap like dragged clips. One undo step per drag.
+  // ---------------------------------------------------------------------------
+  const MIN_LEN = 0.05;
+  let trim = null;
+  function startTrim(e, handle) {
+    e.preventDefault();
+    e.stopPropagation();
+    const f = findClip(handle.closest('.clip').dataset.id);
+    if (!f) return;
+    const src = srcOf(f.clip);
+    const c = f.clip;
+    const still = c.kind === 'image' || c.kind === 'color';
+    // Media limits in media time.
+    let minIn = -Infinity, maxOut = Infinity;
+    if (!still && src) {
+      if (src.kind === 'audio') { minIn = 0; maxOut = src.duration; }
+      else { minIn = src.rangeIn; maxOut = src.rangeOut; }
+    }
+    pause();
+    trim = { id: c.id, side: handle.dataset.side, x0: e.clientX, scroll0: timeline.scrollLeft, pointerId: e.pointerId, orig: { ...c }, still, minIn, maxOut, moved: false };
+  }
+  window.addEventListener('pointermove', (e) => {
+    if (!trim || e.pointerId !== trim.pointerId) return;
+    const f = findClip(trim.id);
+    if (!f) return;
+    const dx = e.clientX - trim.x0 + (timeline.scrollLeft - trim.scroll0);
+    if (!trim.moved && Math.abs(dx) < 3) return;
+    if (!trim.moved) { trim.moved = true; if (!clipLiveBefore) clipLiveBefore = snapshot(); }
+    const o = trim.orig, len0 = o.out - o.in, end0 = o.start + len0;
+    const others = f.tr.clips.filter((c) => c.id !== o.id);
+    const prevEnd = f.tr.magnetic ? 0 : Math.max(0, ...others.filter((c) => clipEnd(c) <= o.start + 1e-6).map(clipEnd));
+    const nextStart = f.tr.magnetic ? Infinity : Math.min(Infinity, ...others.filter((c) => c.start >= end0 - 1e-6).map((c) => c.start));
+    let dt = dx / pps;
+    const thr = (isCoarse ? 20 : 14) / pps;
+    const snapTo = (t) => {
+      if (!settings.snap || e.altKey) return null;
+      let best = null;
+      const cands = [playhead];
+      for (const c of allClips()) if (c.id !== o.id) cands.push(c.start, clipEnd(c));
+      for (const cnd of cands) { const d = Math.abs(t - cnd); if (d < thr && (!best || d < best.d)) best = { d, t: cnd }; }
+      return best;
+    };
+    const c = { ...f.clip };
+    let snapAt = null;
+    if (trim.side === 'r') {
+      let end = end0 + dt;
+      const sn = snapTo(end);
+      if (sn) { end = sn.t; snapAt = sn.t; }
+      end = clamp(end, o.start + MIN_LEN, Math.min(nextStart, o.start + (trim.maxOut - o.in)));
+      c.out = o.in + (end - o.start);
+    } else {
+      let start = o.start + dt;
+      if (!f.tr.magnetic) { const sn = snapTo(start); if (sn) { start = sn.t; snapAt = sn.t; } }
+      // The start can't move before the previous clip, the media's start or 0.
+      const lo = f.tr.magnetic ? o.start - (o.in - trim.minIn) : Math.max(prevEnd, o.start - (o.in - trim.minIn));
+      start = clamp(start, lo, end0 - MIN_LEN);
+      const d = start - o.start;
+      if (trim.still) { c.in = 0; c.out = len0 - d; } else { c.in = o.in + d; c.out = o.out; }
+      c.start = f.tr.magnetic ? o.start : start; // magnetic: the clip stays put and the rest follows
+    }
+    // Fades never get longer than the clip.
+    const len = c.out - c.in;
+    if ((c.fadeIn || 0) + (c.fadeOut || 0) > len) { c.fadeIn = Math.min(c.fadeIn || 0, len / 2); c.fadeOut = Math.min(c.fadeOut || 0, len / 2); }
+    f.tr.clips[f.idx] = c;
+    layoutTrack(f.tr);
+    if (snapAt != null) { renderClips(); showSnapLine(snapAt); } else renderClips();
+    syncTimeUI();
+    updateTime();
+    renderPreview();
+  });
+  const endTrim = (e) => {
+    if (!trim || e.pointerId !== trim.pointerId) return;
+    const t = trim;
+    trim = null;
+    suppressClick = true;
+    setTimeout(() => { suppressClick = false; }, 50);
+    if (!t.moved) return;
+    const now = findClip(t.id);
+    if (now && now.clip.in === t.orig.in && now.clip.out === t.orig.out && now.clip.start === t.orig.start) { clipLiveBefore = null; renderTimeline(); return; } // nothing changed
+    if (canvasState.cropClipId === t.id) syncCropCanvas();
+    liveClipCommit();
+  };
+  window.addEventListener('pointerup', endTrim);
+  window.addEventListener('pointercancel', endTrim);
+
   // Desktop: drag a frame in an empty part of the timeline to select the clips in it.
   let marquee = null;
   // Phones: a long press on a clip starts the multi-selection.
@@ -2398,6 +2510,8 @@
 
   tlRows.addEventListener('pointerdown', (e) => {
     if (e.button > 0) return;
+    const handle = e.target.closest('.trim-h');
+    if (handle) { startTrim(e, handle); return; }
     const el = e.target.closest('.clip');
     if (!el) {
       if (freeHead && e.pointerType === 'mouse') {
@@ -2425,10 +2539,8 @@
     let group = null;
     if (multi()) {
       group = selFinds();
-      if (group.some((g) => g.tr.magnetic)) {
-        if (group.length > 1) toast('Clips on the magnetic main track can\'t be moved together yet — only this clip moves.', 3500);
-        group = null;
-      }
+      // Only the main track can be magnetic; other magnetic cases don't exist.
+      if (group.some((g) => g.tr.magnetic && g.ti !== 0)) group = null;
     }
     drag = { el, id: el.dataset.id, group, startX: e.clientX, startY: e.clientY, pointerId: e.pointerId, active: false, marker: null, raf: 0, lastX: e.clientX, lastY: e.clientY, target: null };
   });
@@ -2484,6 +2596,7 @@
       drag.origLeft = parseFloat(drag.el.style.left);
       drag.scroll0 = timeline.scrollLeft;
       if (drag.group) {
+        drag.main = tracks[0].magnetic ? drag.group.filter((g) => g.ti === 0).sort((a, b) => a.clip.start - b.clip.start) : [];
         drag.els = drag.group.map((g) => { const el = tlRows.querySelector(`.clip[data-id="${g.clip.id}"]`); if (el) el.classList.add('dragging'); return { el, left: el ? parseFloat(el.style.left) : 0 }; });
         drag.g0 = Math.min(...drag.group.map((g) => g.clip.start));
         drag.g1 = Math.max(...drag.group.map((g) => clipEnd(g.clip)));
@@ -2512,6 +2625,34 @@
     const f = findClip(drag.id);
     if (!f) return;
     const dx = drag.lastX - drag.startX + (timeline.scrollLeft - drag.scroll0);
+    if (drag.group && drag.main.length) {
+      // Several clips incl. some of the magnetic main track: those move as a block to
+      // a new place in the main track, the others shift by the same amount of time.
+      const ids = new Set(drag.group.map((g) => g.clip.id));
+      const main = tracks[0];
+      const others = main.clips.filter((c) => !ids.has(c.id));
+      const rect = timeline.getBoundingClientRect();
+      const time = (drag.lastX - rect.left + timeline.scrollLeft - pad()) / pps - (f.clip.start - drag.main[0].clip.start);
+      let idx = 0;
+      for (const c of others) if (time > c.start + clipLen(c) / 2) idx++;
+      let boundary = 0;
+      for (let i = 0; i < idx; i++) boundary += clipLen(others[i]);
+      drag.dropIdx = idx;
+      drag.delta = boundary - drag.main[0].clip.start;
+      const mainIds = new Set(drag.main.map((g) => g.clip.id));
+      drag.els.forEach((x, i) => {
+        if (!x.el) return;
+        const g = drag.group[i];
+        x.el.style.left = (mainIds.has(g.clip.id) ? x.left + dx : x.left + drag.delta * pps) + 'px';
+      });
+      const row = tlRows.querySelector('.tl-row.main');
+      const rb = row.getBoundingClientRect(), pb = tlRows.getBoundingClientRect();
+      drag.marker.hidden = false;
+      drag.marker.style.left = (pad() + boundary * pps - 1) + 'px';
+      drag.marker.style.top = (rb.top - pb.top) + 'px';
+      drag.marker.style.height = rb.height + 'px';
+      return;
+    }
     if (drag.group) {
       // Several clips: they move together in time and keep their tracks.
       const ids = new Set(drag.group.map((g) => g.clip.id));
@@ -2587,6 +2728,15 @@
     }
   }
 
+  // Snap line while trimming (a vibration on each new snap point).
+  let lastTrimSnap = null;
+  function showSnapLine(t) {
+    const line = document.createElement('div');
+    line.className = 'snap-line';
+    line.style.left = (timeX(t) - 1) + 'px';
+    tlRows.appendChild(line);
+    if (lastTrimSnap !== t) { lastTrimSnap = t; if (settings.haptics && navigator.vibrate) { try { navigator.vibrate(12); } catch (e) { /* ignore */ } } }
+  }
   // Blue line across all tracks where a clip snaps; a short vibration (Android) on each new snap.
   let snapLine = null;
   function showSnap(t) {
@@ -2636,7 +2786,15 @@
       commit(() => {
         const items = d.group.map((g) => findClip(g.clip.id)).filter(Boolean).map((g) => ({ c: g.clip, tr: g.tr }));
         for (const it of items) it.tr.clips.splice(it.tr.clips.indexOf(it.c), 1);
+        // Main-track block: back in at the new place, in its order.
+        const mainIds = new Set((d.main || []).map((g) => g.clip.id));
+        if (mainIds.size) {
+          const block = items.filter((it) => mainIds.has(it.c.id)).map((it) => it.c).sort((a, b) => a.start - b.start);
+          tracks[0].clips.splice(clamp(d.dropIdx, 0, tracks[0].clips.length), 0, ...block);
+          layoutTrack(tracks[0]);
+        }
         for (const it of items) {
+          if (mainIds.has(it.c.id)) continue;
           it.c.start = Math.max(0, it.c.start + d.delta);
           let tr = it.tr;
           if (overlaps(tr, it.c.start, clipLen(it.c), it.c.id)) {
@@ -3335,12 +3493,20 @@
 
   // Live edits (drags, sliders) change the clip directly; one undo step is recorded at the end.
   let liveBefore = null;
+  // Clips a transform change applies to: the selected one, or all selected pictures
+  // (crop only for videos and images).
+  function tfTargets(patch) {
+    const list = multi() ? selFinds() : [findClip(selectedId)].filter(Boolean);
+    return list.filter((f) => f.clip.kind !== 'audio' && !(('crop' in patch || 'cropRatio' in patch) && f.clip.kind === 'color'));
+  }
   function liveEdit(patch) {
-    const f = findClip(selectedId);
-    if (!f) return;
+    const list = tfTargets(patch);
+    if (!list.length) return;
     if (!liveBefore) liveBefore = snapshot();
-    const c = f.clip;
-    f.tr.clips[f.idx] = { ...c, tf: { ...Render.tfOf(c.tf), ...patch } };
+    for (const f of list) {
+      const i = f.tr.clips.indexOf(f.clip);
+      f.tr.clips[i] = { ...f.clip, tf: { ...Render.tfOf(f.clip.tf), ...patch } };
+    }
     renderPreview();
     syncTransformUI();
   }
@@ -3357,12 +3523,21 @@
     const c = selClip();
     if (!c) return;
     liveCommit();
-    updateSelected({ tf: { ...Render.tfOf(c.tf), ...patch } });
+    if (!multi()) { updateSelected({ tf: { ...Render.tfOf(c.tf), ...patch } }); return; }
+    const list = tfTargets(patch);
+    commit(() => list.forEach((f) => { f.clip.tf = { ...Render.tfOf(f.clip.tf), ...patch }; }));
   }
 
-  function syncTransformUI() {
+  // The clip whose transform the tabs show: the selected one, or (several selected) the first picture.
+  function tfRef() {
     const c = selClip();
-    if (!c || c.kind === 'audio') return;
+    if (c && c.kind !== 'audio') return c;
+    const f = selFinds().find((x) => x.clip.kind !== 'audio');
+    return f ? f.clip : null;
+  }
+  function syncTransformUI() {
+    const c = tfRef();
+    if (!c) return;
     const t = Render.tfOf(c.tf);
     $('anchorGrid').querySelectorAll('button').forEach((b) => {
       const on = b.dataset.anchor === t.anchor;
@@ -3382,9 +3557,9 @@
   }
 
   function showTab(tab) {
-    const c = selClip();
+    const c = tfRef();
     if (tab === 'crop' && c && c.kind === 'color') tab = 'clip';
-    if (c && c.kind === 'audio' && tab !== 'audio') tab = tab === 'clip' ? 'clip' : 'audio';
+    if (c && c.kind === 'audio' && !multi() && tab !== 'audio') tab = tab === 'clip' ? 'clip' : 'audio';
     cpTab = tab;
     $('cpTabs').querySelectorAll('.seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
     document.querySelectorAll('#clipPanel .cp-pane').forEach((p) => { p.hidden = p.dataset.pane !== tab; });
@@ -3417,7 +3592,7 @@
   let nudgeTimer = 0;
   $('nudgePad').addEventListener('click', (e) => {
     const b = e.target.closest('button');
-    const c = selClip();
+    const c = tfRef();
     if (!b || !c) return;
     ensureVisible();
     if (b.dataset.nudge === 'reset') { setTf({ dx: 0, dy: 0 }); return; }
@@ -3430,7 +3605,7 @@
   });
   $('fitToggle').addEventListener('click', (e) => {
     const b = e.target.closest('.seg-btn');
-    const c = selClip();
+    const c = tfRef();
     if (!b || !c) return;
     ensureVisible();
     if (b.dataset.fit === 'free') setTf({ fit: 'free', scale: effectiveScale(c) });
@@ -3444,10 +3619,10 @@
 
   // Rotate & flip
   const normAngle = (a) => { a = ((a + 180) % 360 + 360) % 360 - 180; return a === -180 ? 180 : a; };
-  $('rotLeftBtn').addEventListener('click', () => { const c = selClip(); if (!c) return; ensureVisible(); setTf({ rot: normAngle(Render.tfOf(c.tf).rot - 90) }); });
-  $('rotRightBtn').addEventListener('click', () => { const c = selClip(); if (!c) return; ensureVisible(); setTf({ rot: normAngle(Render.tfOf(c.tf).rot + 90) }); });
-  $('flipHBtn').addEventListener('click', () => { const c = selClip(); if (!c) return; ensureVisible(); setTf({ flipH: !Render.tfOf(c.tf).flipH }); });
-  $('flipVBtn').addEventListener('click', () => { const c = selClip(); if (!c) return; ensureVisible(); setTf({ flipV: !Render.tfOf(c.tf).flipV }); });
+  $('rotLeftBtn').addEventListener('click', () => { const c = tfRef(); if (!c) return; ensureVisible(); setTf({ rot: normAngle(Render.tfOf(c.tf).rot - 90) }); });
+  $('rotRightBtn').addEventListener('click', () => { const c = tfRef(); if (!c) return; ensureVisible(); setTf({ rot: normAngle(Render.tfOf(c.tf).rot + 90) }); });
+  $('flipHBtn').addEventListener('click', () => { const c = tfRef(); if (!c) return; ensureVisible(); setTf({ flipH: !Render.tfOf(c.tf).flipH }); });
+  $('flipVBtn').addEventListener('click', () => { const c = tfRef(); if (!c) return; ensureVisible(); setTf({ flipV: !Render.tfOf(c.tf).flipV }); });
   $('rotRange').addEventListener('input', (e) => {
     ensureVisible();
     let a = Number(e.target.value);
@@ -3469,7 +3644,7 @@
   }
   $('cropPresets').addEventListener('click', (e) => {
     const b = e.target.closest('.btn-chip');
-    const c = selClip();
+    const c = tfRef();
     if (!b || !c) return;
     ensureVisible();
     const key = b.dataset.ratio;
@@ -3477,7 +3652,7 @@
     setTf({ crop: centeredCrop(c, ratioValue(key)), cropRatio: key });
   });
   $('cropAsCanvas').addEventListener('click', () => {
-    const c = selClip();
+    const c = tfRef();
     if (!c || c.kind === 'color') return;
     setCropCanvas(c);
     exportState.res = 'crop';
@@ -3587,7 +3762,7 @@
     try { pv.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
     const p = pvPoint(e);
     pointers.set(e.pointerId, p);
-    const c = selClip();
+    const c = tfRef();
     const t = Render.tfOf(c.tf);
     if (mode === 'move') {
       if (pointers.size === 2) gesture = { type: 'pinch', d0: pdist(), s0: effectiveScale(c) };
@@ -3611,7 +3786,7 @@
     const p = pvPoint(e);
     pointers.set(e.pointerId, p);
     if (!gesture) return;
-    const c = selClip();
+    const c = tfRef();
     if (!c) return;
     const W = pv.width, H = pv.height;
     if (gesture.type === 'pinch' && pointers.size === 2) {
@@ -3677,7 +3852,7 @@
     if (pointers.size === 1 && gesture && gesture.type === 'pinch') {
       // Continue as a move with the remaining finger.
       const [p] = pointers.values();
-      const t = Render.tfOf((selClip() || {}).tf);
+      const t = Render.tfOf((tfRef() || {}).tf);
       gesture = { type: 'move', start: p, dx0: t.dx, dy0: t.dy };
       return;
     }
@@ -3694,7 +3869,7 @@
   pv.addEventListener('wheel', (e) => {
     if (editMode() !== 'move') return;
     e.preventDefault();
-    const c = selClip();
+    const c = tfRef();
     liveEdit({ fit: 'free', scale: clamp(effectiveScale(c) * Math.exp(-e.deltaY * 0.0015), 0.05, 10) });
     clearTimeout(wheelTimer);
     wheelTimer = setTimeout(liveCommit, 400);
