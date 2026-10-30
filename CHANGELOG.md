@@ -1,5 +1,12 @@
 # Changelog
 
+### 0.9.8 — 2026-10-30 — Multi-selection & media list
+- Select several clips: Ctrl/⌘ + click, Shift + click (range), frame selection in empty timeline space, Ctrl + A; on phones long-press or the Select button, with a bar showing the count (All / Done)
+- For all selected clips: delete, copy/paste (distances and track grouping kept), cut, mute, volume & fades, detach audio, nudging and dragging together on free tracks (with snapping)
+- Media list (fold-out, folded by default): all files of the project incl. unused ones, with usage count; select a file's clips, add again (＋ / ⧉), remove unused files, relink missing ones, drag onto the timeline (desktop)
+- Files are no longer removed automatically when their last clip is deleted; unused missing files don't block opening a project anymore
+- "Selected clip only" export needs exactly one selected clip
+
 ### 0.9.7 — 2026-10-30 — Preview never stops
 - Fix: the preview could stop (and not continue) when a video stuttered. Playback now always carries on: a lagging or stuck video is re-synced in the background, only the start waits up to ½ s for loading
 - The ⚠ note names the reason for stuttering (which video couldn't keep up, had to be re-synced or loaded too slowly)

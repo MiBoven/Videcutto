@@ -62,6 +62,8 @@ A privacy-friendly video editor and compressor that runs entirely in your browse
 - Toolbar: **Undo / Redo** fixed on the left, **Add** (videos & images or a color clip, on the main track or as overlay) fixed on the right; in between **Cut** at the playhead (split icon — splits the selected clip, otherwise the clip of the main track under the playhead), **Copy**, **Paste** at the playhead and **Delete**. Pasting a clip copied from the magnetic main track inserts it there (splitting a clip if necessary); clips from overlay tracks are pasted as overlays. If space ever runs out, only the middle part scrolls
 - **Clip panel:** appears below the timeline while a clip is selected — **Mute** (videos), and for images/color clips the **duration**; for color clips also **color** and **size**
 - **Reorder / move** clips by dragging the selected clip (tap or click to select first)
+- **Multi-selection:** desktop — `Ctrl`/`⌘` + click adds or removes a clip, `Shift` + click selects the clips between two clips (on one track by order, across tracks by time), dragging a frame in an empty part of the timeline selects the clips in it, `Ctrl` + `A` selects all, `Esc` clears. Phones — long-press a clip or tap **Select** in the toolbar, then tap clips; a bar shows the count with *All* and *Done*. Works on all selected clips: Delete, Copy/Paste (distances kept; clips that shared a track share one again; main-track clips are inserted as a block), Cut (all selected clips under the playhead), Mute, volume & fades, Detach audio, nudging (±1 s / ±0.1 s / ±0.01 s, Alt + arrows) and dragging together in time (free tracks; with snapping). Not yet for several clips: crop/position/rotate and moving clips of the magnetic main track together (comes with grouping)
+- **Media list** (fold-out card in the settings column, folded by default): every file of the project with preview/waveform, length or size and how often it's used — also files no clip uses anymore (they now stay until removed). Tap a file to select all its clips; ＋ adds it again at the playhead (⧉ as overlay); 🗑 removes an unused file (undo steps that still need it are dropped); missing files can be relinked right there; on desktop drag a file onto a track. Unused missing files no longer block opening a project
 - Mute all audio at once with the speaker button
 - **Undo / Redo** — 10 steps by default (adjustable in Settings, 1–100); the steps are saved with the project, so they still work after a reload. Files that older steps refer to are kept until those steps are gone
 - Zoom the timeline with the zoom buttons, pinch, or Ctrl + mouse wheel
@@ -77,7 +79,9 @@ A privacy-friendly video editor and compressor that runs entirely in your browse
   | `M` | Mute / unmute clip |
   | `Delete` / `Backspace` | Delete selected clip |
   | `Esc` | Deselect clip |
-  | `Ctrl` + `C` / `V` | Copy clip / paste clip or files from the clipboard |
+  | `Ctrl` + `C` / `V` | Copy clip(s) / paste clip(s) or files from the clipboard |
+  | `Ctrl` + click, `Shift` + click | Add to the selection / select a range |
+  | `Ctrl` + `A` | Select all clips |
   | `Ctrl` + `Z` / `Y` | Undo / redo |
   | `Home` / `End` | Jump to start / end |
   | `Alt` + `←` / `→` | Move the selected clip by 0.1 s (`Shift`: 0.01 s) |

@@ -141,6 +141,7 @@
       <button class="tool" id="splitBtn" title="Cut at playhead — split the clip (C / S)"><svg viewBox="0 0 24 24"><rect x="2.5" y="7" width="7" height="10" rx="1.5"/><rect x="14.5" y="7" width="7" height="10" rx="1.5"/><path d="M12 3v18"/></svg><span>Cut</span></button>
       <button class="tool" id="copyBtn" title="Copy clip (Ctrl+C)"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 012-2h9"/></svg><span>Copy</span></button>
       <button class="tool" id="pasteBtn" title="Paste at playhead (Ctrl+V)"><svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="16" rx="2"/><path d="M9 5V3h6v2"/><path d="M9 12h6M9 16h4"/></svg><span>Paste</span></button>
+      <button class="tool" id="selectBtn" title="Select several clips (or long-press a clip; desktop: Ctrl/Shift + click, drag a frame)" aria-pressed="false"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/><path d="M5 7l1.5 1.5L9 5.5M15 17l1.5 1.5 2.5-3"/></svg><span>Select</span></button>
       <button class="tool" id="deleteBtn" title="Delete clip (Del)"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg><span>Delete</span></button>
     </div>
     <span class="tool-sep"></span>
@@ -160,6 +161,11 @@
     </div>
   </div>
 
+  <div class="sel-bar" id="selBar" hidden>
+    <span id="selCount">0 clips selected</span>
+    <button type="button" class="btn-chip" id="selAllBtn">All</button>
+    <button type="button" class="btn-chip" id="selDoneBtn">Done</button>
+  </div>
   <div class="timeline-wrap">
     <div class="track-heads" id="trackHeads"></div>
     <div class="timeline" id="timeline">
@@ -370,6 +376,16 @@
   </section>
 
   <!-- Canvas -->
+  <section class="card media-card" id="mediaCard">
+    <button type="button" class="card-toggle" id="mediaToggle" aria-expanded="false" aria-controls="mediaBody">
+      <span class="ct-chev" aria-hidden="true">▾</span><h2>Media</h2><span class="ct-summary" id="mediaSummary"></span>
+    </button>
+    <div class="card-body" id="mediaBody">
+      <ul class="media-list" id="mediaList"></ul>
+      <p class="hint" id="mediaHint">Tap a file to select its clips. ＋ adds it again at the playhead (⧉ as overlay); on desktop you can also drag it onto the timeline.</p>
+    </div>
+  </section>
+
   <section class="card canvas-card" id="canvasCard">
     <button type="button" class="card-toggle" id="canvasToggle" aria-expanded="true" aria-controls="canvasBody">
       <span class="ct-chev" aria-hidden="true">▾</span><h2>Canvas</h2><span class="ct-summary" id="canvasSummary"></span>
@@ -729,6 +745,8 @@
         <li>Zoom with the 🔍 buttons, two fingers (pinch) or Ctrl + mouse wheel. <strong>Fit</strong> (the button between them) shows the whole project — or the selected clip.</li>
         <li><strong>Exact timing:</strong> the clip panel's <em>Start</em> field takes a time like <em>0:43.79</em>; the buttons below move a clip by ±1 s, ±0.1 s or ±0.01 s (desktop: Alt + ←/→, with Shift for 0.01 s). Clips on the magnetic main track follow their order instead.</li>
         <li><strong>Tap a clip to select it, then drag it.</strong> Unselected clips never move, so scrolling is safe.</li>
+        <li><strong>Several clips:</strong> desktop — Ctrl/⌘ + click adds or removes a clip, Shift + click selects a range, drag a frame in an empty part of the timeline, Ctrl + A selects everything. Phones — long-press a clip or tap <em>Select</em>, then tap clips; <em>Done</em> ends it. Delete, copy/paste, cut, mute, volume &amp; fades, detach audio and moving work on all selected clips (moving together only on free tracks for now).</li>
+        <li><strong>Media</strong> (fold-out list in the settings column) shows every file of the project, also unused ones: tap one to select its clips, ＋ / ⧉ adds it again, 🗑 removes an unused file; on desktop drag it onto the timeline.</li>
         <li><strong>Cut</strong> splits the selected clip at the playhead (or the main track's clip under it).</li>
         <li><strong>Paste</strong> inserts at the playhead — into the main track if copied from there, otherwise as an overlay.</li>
         <li>The speaker next to the time mutes everything; <em>Mute</em> in the clip panel mutes one clip.</li>
@@ -802,7 +820,9 @@
         <tr><td><kbd>C</kbd> or <kbd>S</kbd></td><td>Cut at playhead</td></tr>
         <tr><td><kbd>M</kbd></td><td>Mute / unmute clip</td></tr>
         <tr><td><kbd>Del</kbd> / <kbd>Backspace</kbd></td><td>Delete selected clip</td></tr>
-        <tr><td><kbd>Esc</kbd></td><td>Deselect clip / close window</td></tr>
+        <tr><td><kbd>Esc</kbd></td><td>Deselect clips / close window</td></tr>
+        <tr><td><kbd>Ctrl</kbd> + click / <kbd>Shift</kbd> + click</td><td>Add a clip to the selection / select a range</td></tr>
+        <tr><td><kbd>Ctrl</kbd> + <kbd>A</kbd></td><td>Select all clips</td></tr>
         <tr><td><kbd>Ctrl</kbd> + <kbd>C</kbd> / <kbd>V</kbd></td><td>Copy clip / paste clip or files</td></tr>
         <tr><td><kbd>Ctrl</kbd> + <kbd>Z</kbd> / <kbd>Y</kbd></td><td>Undo / redo</td></tr>
         <tr><td><kbd>Ctrl</kbd> + <kbd>E</kbd></td><td>Create video…</td></tr>
