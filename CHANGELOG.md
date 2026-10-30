@@ -1,5 +1,12 @@
 # Changelog
 
+### 0.9.5 — 2026-10-30 — Wide layout & smoother preview
+- Wide layout (automatically from ~1200 px, also outside fullscreen; full screen width in fullscreen): preview left, settings column right, timeline across the full width with all remaining height; no page scrolling
+- Menu → View: layout Auto / Wide / Classic, arrangements Balanced / Large preview / Large timeline, Reset panel sizes; draggable borders (remembered, double-click resets)
+- Notes button ⚠ (amber) next to the time instead of hint texts; shows notes only when needed — incl. detected preview stutter
+- Smoother preview: the bottom-most playing video drives the playhead again; other videos and sounds follow by adjusting their speed slightly instead of jumping
+- Fix: with a clip volume above 100 % the whole preview sound could go silent in Chrome — the preview now checks that the amplified sound arrives and otherwise falls back to max. 100 % (the created video keeps the full volume)
+
 ### 0.9.4 — 2026-10-30 — Fit fills the width
 - Fix: *Fit* (and the automatic zoom) stopped at 160 px per second, so short projects didn't fill the timeline's width; zooming in now goes up to 3000 px per second
 

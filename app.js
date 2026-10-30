@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.9.4';
+  const VERSION = '0.9.5';
   const $ = (id) => document.getElementById(id);
 
   // ---------------------------------------------------------------------------
@@ -51,6 +51,40 @@
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => { el.hidden = true; }, ms);
   }
+
+  // Notes about the preview: a small ⚠ button next to the time shows them on demand.
+  const previewNotes = new Map(); // key -> text
+  function setHint(key, text) {
+    const before = previewNotes.get(key) || null;
+    if (text) previewNotes.set(key, text); else previewNotes.delete(key);
+    if (before === (text || null)) return;
+    const btn = $('hintBtn');
+    btn.hidden = !previewNotes.size;
+    if (!previewNotes.size) { $('hintPop').hidden = true; btn.setAttribute('aria-expanded', 'false'); return; }
+    btn.title = previewNotes.size === 1 ? 'A note about the preview' : `${previewNotes.size} notes about the preview`;
+    if (!$('hintPop').hidden) renderHints();
+    // A new note makes the button pulse briefly.
+    if (text && !before) { btn.classList.remove('pulse'); void btn.offsetWidth; btn.classList.add('pulse'); }
+  }
+  function renderHints() {
+    const pop = $('hintPop');
+    pop.replaceChildren(...[...previewNotes.values()].map((t) => Object.assign(document.createElement('p'), { textContent: t })));
+  }
+  $('hintBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const pop = $('hintPop');
+    pop.hidden = !pop.hidden;
+    $('hintBtn').setAttribute('aria-expanded', String(!pop.hidden));
+    if (!pop.hidden) {
+      renderHints();
+      const r = $('hintBtn').getBoundingClientRect();
+      pop.style.top = (r.bottom + 8) + 'px';
+      pop.style.left = Math.max(8, Math.min(window.innerWidth - pop.offsetWidth - 8, r.left + r.width / 2 - pop.offsetWidth / 2)) + 'px';
+    }
+  });
+  const closeHints = () => { if (!$('hintPop').hidden) { $('hintPop').hidden = true; $('hintBtn').setAttribute('aria-expanded', 'false'); } };
+  document.addEventListener('click', (e) => { if (!e.target.closest('#hintPop')) closeHints(); });
+  window.addEventListener('scroll', closeHints, { passive: true });
 
   function once(target, event, timeout = 0) {
     return new Promise((resolve) => {
@@ -260,7 +294,7 @@
     $('startScreen').hidden = true;
     $('editorScreen').hidden = false;
     document.body.classList.add('editing');
-    requestAnimationFrame(() => { renderTimeline(); seek(playhead); });
+    requestAnimationFrame(() => { applyLayout(); seek(playhead); });
   }
   const brand = $('brand');
   brand.addEventListener('click', showStart);
@@ -1510,8 +1544,10 @@
     // Height: show `settings.rows` tracks before scrolling vertically.
     const shown = [tracks[0], ...tracks.slice(1)].slice(0, settings.rows);
     const maxH = RULER_H + shown.reduce((s, t) => s + rowH(t), 0) + 6;
-    timeline.style.maxHeight = maxH + 'px';
-    trackHeads.style.maxHeight = maxH + 'px';
+    // The wide layout gives the timeline all the remaining height.
+    const wideNow = document.body.classList.contains('wide');
+    timeline.style.maxHeight = wideNow ? '' : maxH + 'px';
+    trackHeads.style.maxHeight = wideNow ? '' : maxH + 'px';
 
     // Ruler
     const steps = [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800];
@@ -1541,9 +1577,7 @@
     updateToolbar();
     updateTime();
     updatePreviewAspect();
-    const vids2 = allClips().filter(isVideoClip);
-    $('stutterHint').hidden = vids2.length < 2;
-    $('perfHint').hidden = maxConcurrentVideos() < 3;
+    setHint('many', maxConcurrentVideos() >= 3 ? 'Three or more videos play at the same time here — the preview may stutter on this device. The created video is not affected.' : null);
     $('previewEmpty').hidden = allClips().length > 0;
   }
 
@@ -1871,7 +1905,88 @@
   timeline.addEventListener('touchend', (e) => { if (e.touches.length < 2) pinch = null; });
 
   let resizeTimer = 0;
-  window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(renderTimeline, 120); });
+  window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(applyLayout, 120); });
+
+  // ---------------------------------------------------------------------------
+  // Layout: classic (one column) or wide (preview | settings, timeline below,
+  // resizable). Menu → View.
+  // ---------------------------------------------------------------------------
+  const ARRANGE = { balanced: { top: 58, side: 380 }, preview: { top: 68, side: 340 }, timeline: { top: 44, side: 380 } };
+  const view = { layout: store.get('layout', 'auto'), arrange: store.get('arrange', 'balanced'), sizes: store.get('panelSizes', null) };
+  const isWide = () => view.layout === 'wide' || (view.layout === 'auto' && window.innerWidth >= 1200);
+  function syncPvH() {
+    const wrap = $('previewWrap');
+    if (document.body.classList.contains('wide') && wrap.clientHeight) preview.style.setProperty('--pv-h', wrap.clientHeight + 'px');
+    else preview.style.removeProperty('--pv-h');
+  }
+  function applyLayout() {
+    const wide = isWide();
+    document.body.classList.toggle('wide', wide);
+    const sz = view.sizes || ARRANGE[view.arrange] || ARRANGE.balanced;
+    const ed = $('editorScreen');
+    ed.style.setProperty('--top-h', sz.top + '%');
+    ed.style.setProperty('--side-w', sz.side + 'px');
+    syncPvH();
+    renderTimeline();
+    updatePreviewAspect();
+    syncViewUI();
+  }
+  if (window.ResizeObserver) new ResizeObserver(() => { syncPvH(); renderPreview(); }).observe($('previewWrap'));
+  function syncViewUI() {
+    $('layoutSeg').querySelectorAll('.seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.layout === view.layout));
+    $('arrangeSeg').querySelectorAll('.seg-btn').forEach((b) => b.classList.toggle('active', !view.sizes && b.dataset.arrange === view.arrange));
+  }
+  const saveView = () => { store.set('layout', view.layout); store.set('arrange', view.arrange); store.set('panelSizes', view.sizes); };
+  $('layoutSeg').addEventListener('click', (e) => { const b = e.target.closest('[data-layout]'); if (!b) return; view.layout = b.dataset.layout; saveView(); applyLayout(); });
+  $('arrangeSeg').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-arrange]');
+    if (!b) return;
+    view.arrange = b.dataset.arrange;
+    view.sizes = null;
+    if (view.layout === 'classic') view.layout = 'auto';
+    saveView(); applyLayout();
+  });
+  const resetSizes = () => { view.sizes = null; saveView(); applyLayout(); };
+  $('resetSizesBtn').addEventListener('click', resetSizes);
+  $('viewItem').addEventListener('click', () => { closeMenu(); syncViewUI(); openModal('viewModal'); });
+  $('viewCloseBtn').addEventListener('click', () => closeModal('viewModal'));
+  $('viewModal').addEventListener('click', (e) => { if (e.target.id === 'viewModal') closeModal('viewModal'); });
+
+  // Drag the borders between the areas; double-click resets.
+  function splitDrag(el, axis) {
+    el.addEventListener('dblclick', resetSizes);
+    el.addEventListener('pointerdown', (e) => {
+      if (e.button > 0) return;
+      e.preventDefault();
+      el.setPointerCapture(e.pointerId);
+      el.classList.add('active');
+      const r = $('editorScreen').getBoundingClientRect();
+      const cur = { ...(view.sizes || ARRANGE[view.arrange] || ARRANGE.balanced) };
+      const move = (ev) => {
+        if (axis === 'x') cur.side = Math.round(clamp(r.right - ev.clientX - 4, 260, Math.max(300, r.width * 0.55)));
+        else cur.top = Math.round(clamp(((ev.clientY - r.top) / r.height) * 100, 22, 82) * 10) / 10;
+        view.sizes = cur;
+        const ed = $('editorScreen');
+        ed.style.setProperty('--top-h', cur.top + '%');
+        ed.style.setProperty('--side-w', cur.side + 'px');
+        syncPvH();
+        renderPreview();
+      };
+      const up = () => {
+        el.removeEventListener('pointermove', move);
+        el.removeEventListener('pointerup', up);
+        el.removeEventListener('pointercancel', up);
+        el.classList.remove('active');
+        saveView();
+        applyLayout();
+      };
+      el.addEventListener('pointermove', move);
+      el.addEventListener('pointerup', up);
+      el.addEventListener('pointercancel', up);
+    });
+  }
+  splitDrag($('splitV'), 'x');
+  splitDrag($('splitH'), 'y');
 
   // ---------------------------------------------------------------------------
   // Clip selection and dragging (only the selected clip can be dragged):
@@ -2097,25 +2212,75 @@
   // It's switched on in the first play gesture that needs it; from then on
   // every element plays through its own gain node.
   let actx = null;
-  const gains = new WeakMap();
+  let boostBroken = false;           // Web Audio stayed silent here: preview at most 100 %
+  const gains = new WeakMap();       // element -> { g: GainNode, an: AnalyserNode }
+  const boost = { ok: false, silent: 0, last: 0 };
   function ensureAudioCtx() {
+    if (boostBroken) return;
     const Ctx = window.AudioContext || window.webkitAudioContext;
     if (!actx && Ctx) {
       try { actx = new Ctx(); allEls().forEach(connectGain); } catch (e) { actx = null; }
     }
-    if (actx && actx.state === 'suspended') actx.resume().catch(() => {});
+    if (actx && actx.state !== 'running') actx.resume().catch(() => {});
   }
   function connectGain(el) {
-    if (!actx || gains.has(el)) return;
+    if (!actx || boostBroken || gains.has(el)) return;
     try {
       const g = actx.createGain();
-      actx.createMediaElementSource(el).connect(g).connect(actx.destination);
-      gains.set(el, g);
+      const an = actx.createAnalyser();
+      an.fftSize = 256;
+      actx.createMediaElementSource(el).connect(g).connect(an).connect(actx.destination);
+      gains.set(el, { g, an });
     } catch (e) { /* stays on element volume */ }
   }
   function setGain(el, g) {
     const node = gains.get(el);
-    if (node) { el.volume = 1; node.gain.value = Math.max(0, g); } else el.volume = clamp(g, 0, 1);
+    if (node) { el.volume = 1; node.g.gain.value = Math.max(0, g); } else el.volume = clamp(g, 0, 1);
+  }
+  /**
+   * Some setups play nothing through Web Audio. While playing, check that sound
+   * that should be audible actually arrives; if it stays silent (or the audio
+   * context doesn't run), replace the elements with plain ones and play at most 100 %.
+   */
+  const probeBuf = new Float32Array(256);
+  function checkBoost(now) {
+    if (!actx || boost.ok || boostBroken || !playing) return;
+    const dt = boost.last ? Math.min(0.2, (now - boost.last) / 1000) : 0;
+    boost.last = now;
+    let expect = false;
+    for (const el of allEls()) {
+      const node = gains.get(el);
+      if (!node || el.paused || el.muted || node.g.gain.value <= 0.05 || el.readyState < 3) continue;
+      const src = sources.get(el.dataset.src);
+      if (!src || !src.hasAudio) continue;
+      expect = true;
+      node.an.getFloatTimeDomainData(probeBuf);
+      for (let i = 0; i < probeBuf.length; i++) if (Math.abs(probeBuf[i]) > 1e-4) { boost.ok = true; return; }
+    }
+    if (actx.state !== 'running') expect = true;
+    boost.silent = expect ? boost.silent + dt : 0;
+    if (boost.silent > 2) disableBoost();
+  }
+  function disableBoost() {
+    boostBroken = true;
+    const old = actx;
+    actx = null;
+    // Elements routed into Web Audio can't be taken out again — replace them.
+    const fresh = (el) => {
+      const n = el.cloneNode(false);
+      n.removeAttribute('src');
+      delete n.dataset.src; delete n.dataset.url; delete n.dataset.clip;
+      n.muted = true;
+      el.pause();
+      el.replaceWith(n);
+      hookVideo(n);
+      return n;
+    };
+    for (let i = 0; i < vids.length; i++) if (gains.has(vids[i])) vids[i] = fresh(vids[i]);
+    for (let i = 0; i < auds.length; i++) if (gains.has(auds[i])) auds[i] = fresh(auds[i]);
+    try { old.close(); } catch (e) { /* ignore */ }
+    setHint('boost', 'This browser stayed silent with volumes above 100 % in the preview, so the preview now plays them at 100 %. The created video uses the full volume.');
+    syncPool(true);
   }
 
   const isVideoClip = (c) => !!c && c.kind === 'video';
@@ -2196,7 +2361,21 @@
       const isActive = activeIds.has(clip.id);
       const target = isActive ? clip.in + (t - clip.start) : clip.in;
       if (w.fresh) loadInto(el, clip, target);
-      else if (isActive && (forceTime || Math.abs(mediaTime(el) - target) > (playing ? 0.25 : 0.01))) setVideoTime(el, Math.max(0, target - (srcOf(clip).base || 0)));
+      else if (isActive) {
+        const drift = mediaTime(el) - target;
+        if (!playing || forceTime) {
+          if (forceTime || Math.abs(drift) > 0.01) setVideoTime(el, Math.max(0, target - (srcOf(clip).base || 0)));
+          el.playbackRate = 1;
+        } else if (clip.id === masterId) {
+          el.playbackRate = 1; // the master gives the time
+        } else if (Math.abs(drift) > 0.5 && !el.seeking) {
+          setVideoTime(el, Math.max(0, target - (srcOf(clip).base || 0)));
+          noteStutter();
+        } else {
+          // Followers are nudged gently instead of jumping (a jump is visible as a stutter).
+          el.playbackRate = Math.abs(drift) < 0.03 ? 1 : clamp(1 - drift * 0.8, 0.85, 1.15);
+        }
+      }
       const g = (tr.volume == null ? 1 : tr.volume) * Render.clipGain(clip, t - clip.start);
       el.muted = !isActive || muteAll || !!clip.muted || tr.muted || g <= 0;
       setGain(el, g);
@@ -2266,15 +2445,35 @@
   }
   $('playBtn').addEventListener('click', () => (playing ? pause() : play()));
 
+  // The bottom-most playing video gives the time (its own smooth playback is
+  // the reference); without a video a wall clock runs. Everything else follows.
+  let masterId = null;
+  const stutter = [];
+  function noteStutter() {
+    const now = performance.now();
+    stutter.push(now);
+    while (stutter.length && now - stutter[0] > 8000) stutter.shift();
+    if (stutter.length >= 3) setHint('stutter', 'The preview had to wait for or re-sync videos a few times — this device is struggling with the preview here. The created video is not affected.');
+  }
   function tick() {
     if (!playing) return;
     const now = performance.now();
     const total = totalDuration();
-    // Wait while a playing clip is still loading, so pictures and sound stay together.
     const act = activeMedia(viewTime());
-    const waiting = act.some((a) => { const el = elOf(a.clip.id); return el && (el.seeking || el.readyState < 3); });
-    if (waiting) clock = { t0: now, ph0: playhead };
-    else playhead = Math.min(total, clock.ph0 + (now - clock.t0) / 1000);
+    const m = act.find((a) => a.clip.kind === 'video' && (() => { const el = elOf(a.clip.id); return el && !el.paused && !el.seeking && el.readyState >= 2; })());
+    const mEl = m ? elOf(m.clip.id) : null;
+    if (m && masterId === m.clip.id) {
+      // Follow the master video; it may run past its clip's end into the next clip.
+      playhead = Math.min(total, Math.max(playhead, m.clip.start + (mediaTime(mEl) - m.clip.in)));
+      clock = { t0: now, ph0: playhead };
+    } else {
+      // No master (yet): wait while something that should play is still loading.
+      const waiting = act.some((a) => { const el = elOf(a.clip.id); return el && (el.seeking || el.readyState < 3); });
+      if (waiting) { clock = { t0: now, ph0: playhead }; if (!tick.waitStart) tick.waitStart = now; else if (now - tick.waitStart > 400) { noteStutter(); tick.waitStart = now; } }
+      else { playhead = Math.min(total, clock.ph0 + (now - clock.t0) / 1000); tick.waitStart = 0; }
+    }
+    masterId = m ? m.clip.id : null;
+    checkBoost(now);
     if (playhead >= total - 1e-4) {
       playhead = total;
       pause();

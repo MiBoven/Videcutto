@@ -41,6 +41,7 @@
       </button>
       <div class="dropdown" id="menu" style="display:none" role="menu">
         <button type="button" role="menuitem" id="themeItem"><span class="mi-icon">◐</span><span id="themeLabel">Light mode</span></button>
+        <button type="button" role="menuitem" id="viewItem"><span class="mi-icon">▦</span>View</button>
         <button type="button" role="menuitem" id="settingsItem"><span class="mi-icon">⚙</span>Settings</button>
         <button type="button" role="menuitem" id="helpItem"><span class="mi-icon">?</span>Help &amp; shortcuts</button>
         <button type="button" role="menuitem" id="aboutItem"><span class="mi-icon">ⓘ</span>About</button>
@@ -89,12 +90,13 @@
 
 <!-- ===================== Editor ===================== -->
 <main id="editorScreen" hidden>
+  <div class="ed-stage" id="edStage">
   <div class="project-bar">
     <input type="text" id="projectName" class="project-name" maxlength="80" aria-label="Project name" title="Rename project" spellcheck="false">
     <button class="icon small" id="projectExportBtn" title="Save project file" aria-label="Save project file"><svg viewBox="0 0 24 24"><path d="M12 3v12M7 8l5-5 5 5"/><path d="M5 13v6a2 2 0 002 2h10a2 2 0 002-2v-6"/></svg></button>
     <button class="icon small" id="projectFilesBtn" title="Files &amp; storage" aria-label="Files and storage"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6"/><path class="fill" d="M12 6.6a1.2 1.2 0 110 2.4 1.2 1.2 0 010-2.4z"/></svg></button>
   </div>
-  <div class="preview-wrap">
+  <div class="preview-wrap" id="previewWrap">
     <div class="preview" id="preview">
       <video id="vidA" playsinline preload="auto" muted></video>
       <video id="vidB" playsinline preload="auto" muted></video>
@@ -115,13 +117,20 @@
       <svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/><path d="M17 6v12"/></svg>
     </button>
     <span class="timecode"><span id="curTime">0:00.00</span> / <span id="totalTime">0:00.00</span></span>
+    <button class="tbtn hint-btn" id="hintBtn" title="Notes about the preview" aria-label="Notes" aria-expanded="false" hidden>
+      <svg viewBox="0 0 24 24"><path d="M12 3.5L2.8 19.5h18.4z"/><path d="M12 10v4.5"/><path d="M12 17.2v.1"/></svg>
+    </button>
     <button class="tbtn" id="muteAllBtn" title="Mute all audio" aria-label="Mute all audio" aria-pressed="false">
       <svg viewBox="0 0 24 24" id="muteAllIcon"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path class="sound" d="M16 9a4 4 0 010 6M18.5 6.5a7.5 7.5 0 010 11"/><path class="cross" d="M16 9.5l5 5M21 9.5l-5 5"/></svg>
     </button>
   </div>
-  <p class="hint warn-hint" id="perfHint" hidden>Three or more videos play at the same time here — the preview may stutter on this device. The exported video is not affected.</p>
-  <p class="hint" id="stutterHint" hidden>The preview may stutter briefly where two clips meet — the browser has to switch videos there. The exported video plays smoothly.</p>
+  <div class="hint-pop" id="hintPop" role="status" hidden></div>
+  </div>
 
+  <div class="split split-v" id="splitV" title="Drag to resize · double-click to reset" aria-hidden="true"></div>
+  <div class="split split-h" id="splitH" title="Drag to resize · double-click to reset" aria-hidden="true"></div>
+
+  <div class="ed-timeline" id="edTimeline">
   <div class="toolbar" id="toolbar">
     <div class="tool-group fixed">
       <button class="tool" id="undoBtn" title="Undo (Ctrl+Z)"><svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 010 12h-3"/></svg><span>Undo</span></button>
@@ -170,7 +179,9 @@
       <button class="icon small" id="zoomInBtn" title="Zoom in" aria-label="Zoom in"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M8.5 11h5M11 8.5v5M20 20l-4.5-4.5"/></svg></button>
     </div>
   </div>
+  </div>
 
+  <div class="ed-side" id="edSide">
   <!-- Clip panel: shown while a clip is selected -->
   <section class="card clip-panel track-panel" id="trackPanel" hidden>
     <div class="cp-head">
@@ -408,6 +419,7 @@
       <span id="openExportLabel">Create video…</span>
     </button>
   </div>
+  </div>
 </main>
 
 <!-- ===================== Create video (export) ===================== -->
@@ -523,6 +535,31 @@
       <button class="btn-primary" id="trimApplyBtn">Use selection</button>
     </div>
     <button class="link-btn danger center" id="trimCancelBtn">Don't add this video</button>
+  </div>
+</div>
+
+<!-- ===================== View ===================== -->
+<div class="modal-bg" id="viewModal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="viewTitle">
+    <div class="modal-head">
+      <h2 id="viewTitle">View</h2>
+      <button class="icon small" id="viewCloseBtn" title="Close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <span class="mini-label">Layout</span>
+    <div class="segment small view-seg" id="layoutSeg">
+      <button type="button" class="seg-btn" data-layout="auto">Auto</button>
+      <button type="button" class="seg-btn" data-layout="wide">Wide</button>
+      <button type="button" class="seg-btn" data-layout="classic">Classic</button>
+    </div>
+    <p class="hint">Auto: side by side from about 1200 px window width, otherwise one column. Wide: preview and settings side by side, timeline across the full width. Classic: everything in one column.</p>
+    <span class="mini-label">Arrangement (wide layout)</span>
+    <div class="segment small view-seg" id="arrangeSeg">
+      <button type="button" class="seg-btn" data-arrange="balanced">Balanced</button>
+      <button type="button" class="seg-btn" data-arrange="preview">Large preview</button>
+      <button type="button" class="seg-btn" data-arrange="timeline">Large timeline</button>
+    </div>
+    <p class="hint">Drag the borders between preview, settings and timeline to resize them.</p>
+    <button class="btn-secondary wide" id="resetSizesBtn">Reset panel sizes</button>
   </div>
 </div>
 

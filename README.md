@@ -148,9 +148,18 @@ The clip panel has four tabs — **Clip**, **Crop**, **Position**, **Rotate**. O
 - **Whole timeline** (all tracks) or **Selected clip only** — export just one clip without deleting the others (prepared for special exports such as GIF or audio-only later). *Selected clip only* is greyed out while no clip is selected
 - **Create video** starts the export; **Download** the result, or **Share** it directly (e.g. to a messenger) on devices that support sharing files
 
+### Layout (Menu → View)
+- **Wide layout** (automatically from about 1200 px window width, also outside fullscreen): preview on the left, clip/track panel, canvas and *Create video…* in a column on the right, timeline across the full width below; the page itself doesn't scroll and the timeline gets all the remaining height. In fullscreen it uses the whole screen without margins
+- **Classic layout:** everything in one column (as on phones)
+- **View** in the menu: Layout *Auto / Wide / Classic*; arrangement *Balanced*, *Large preview* or *Large timeline*; **Reset panel sizes**
+- The borders between preview and right column and between top and timeline can be dragged; sizes are remembered, double-click a border to reset
+
+### Notes button (⚠)
+- Instead of permanent hint texts, a small amber **⚠** button appears next to the time only when there's something to know; a click shows the note(s): the preview really stuttered (detected while playing), three or more videos play at once, or amplified sound had to be limited in the preview
+
 ### General
 - Dark mode by default, light mode via the menu
-- Menu with theme toggle, Settings, **Help & shortcuts** and About; fullscreen toggle in the header
+- Menu with theme toggle, View, Settings, **Help & shortcuts** and About; fullscreen toggle in the header
 - **Help & shortcuts:** a short guide in collapsible sections — getting started, timeline & editing, tracks & overlays, crop/position/rotate, canvas & creating the video, saving & other devices, and (desktop only) the keyboard shortcuts. Small **?** buttons in the track settings, the clip panel and the *Create video* window open the matching section; `?` opens it on desktop
 - Mobile-first layout; the editor gets more width on desktop screens
 - Installable as an app (PWA) and works offline after the first visit
@@ -159,7 +168,7 @@ The clip panel has four tabs — **Clip**, **Crop**, **Position**, **Rotate**. O
 ## Hints shown in the app
 
 - **HEVC videos** (e.g. iPhone "High Efficiency") can't be decoded by every browser (Firefox, some Linux setups). The app tells you so instead of failing silently — use Chrome, Edge or Safari, or record in "Most compatible" (H.264).
-- **Preview stutter:** with two or more clips, the preview may stutter briefly where clips meet, because the browser switches between video elements there. With three or more videos playing at once, a separate hint warns that slower devices may stutter. The exported file is not affected.
+- **Preview stutter:** the app notices when the preview has to wait for or re-sync videos repeatedly and shows a note (⚠); with three or more videos playing at once a note warns that slower devices may stutter. The exported file is not affected.
 - Sound that can't be decoded, unsupported files and audio fallbacks are reported with a short message.
 
 ## How it works
@@ -169,7 +178,7 @@ Videcutto uses no third-party libraries — everything is vanilla HTML/CSS/JS, s
 - **`mp4.js`** — a small ISO-BMFF demuxer and muxer. The demuxer reads only the `moov` box (plus the `moof` boxes of fragmented files, whose `trun` entries are turned into ordinary sample tables) and the exact byte ranges of the samples it needs (via `Blob.slice()` with an 8 MB read window), supporting H.264, HEVC, VP9 and AV1 video, AAC and Opus audio, rotation metadata and edit lists. The muxer writes a "fast start" MP4 (moov before mdat, interleaved in 0.5 s chunks, 64-bit offsets for files > 4 GB).
 - **`render.js`** — the export engine and the shared drawing code (`clipLayout` / `drawClip` / `composite`: crop, size, anchor + offset, rotation and flip, track opacity and layering, used identically by preview and export). The export walks a fixed frame grid: for every output frame it looks up the visible clip of each track, takes the matching frame from a forward-decoding **WebCodecs** reader per video clip (`VideoDecoder`, hardware-accelerated where available, started at the nearest keyframe), composites all tracks bottom to top onto a canvas (background color or blur from the main track) and encodes it with `VideoEncoder`. Audio of all audible clips is decoded, resampled to 48 kHz stereo, mixed per track volume in 0.1 s blocks (clamped) and encoded with `AudioEncoder`; silence fills the gaps so audio and video stay in sync.
 - **`project.js`** — persistence: the projects in IndexedDB (`project:<id>`), shared/duplicated working copies with reference checks, working copies in the Origin Private File System, file handles of originals on desktop. `mp4.js` provides the lossless range copy (`remuxRange`) used for trimmed working copies: it copies the samples from the keyframe before the in-point, keeps the original sample descriptions and rotation, and streams straight to storage without holding the video in memory.
-- **`app.js`** — the UI: file and clipboard loading, pre-trim dialog, timeline, canvas and export settings, clip panel, undo/redo and the preview. The preview draws onto a `<canvas>` with the same compositing code as the export. A pool of `<video>` elements supplies frames and sound — one per video clip playing at the playhead plus the clips starting within the next 1.5 s (preloaded); a wall clock drives the playhead and waits while a playing video buffers, and elements drifting more than 0.25 s are re-synced.
+- **`app.js`** — the UI: file and clipboard loading, pre-trim dialog, timeline, canvas and export settings, clip panel, undo/redo and the preview. The preview draws onto a `<canvas>` with the same compositing code as the export. A pool of `<video>`/`<audio>` elements supplies frames and sound — one per clip playing at the playhead plus the clips starting within the next 1.5 s (preloaded). The bottom-most playing video is the master clock (its own smooth playback drives the playhead; without a video a wall clock runs); other elements follow by slightly changing their playback rate and are only re-positioned when they drift more than 0.5 s. Volumes above 100 % use Web Audio; if no sound arrives that way (some setups), the preview falls back to plain elements at most 100 % and says so.
 
 The preview uses the browser's native `<video>` decoding; the export uses WebCodecs, so what plays in the preview and what can be exported is decided by each browser's codec support.
 
