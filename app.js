@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.9.9';
+  const VERSION = '0.9.10';
   const $ = (id) => document.getElementById(id);
 
   // ---------------------------------------------------------------------------
@@ -2535,7 +2535,7 @@
       }, 500) };
     }
     syncSel();
-    if (!selIds.has(el.dataset.id) || selectMode) return;
+    if (!selIds.has(el.dataset.id)) return; // only selected clips can be dragged (also in select mode)
     let group = null;
     if (multi()) {
       group = selFinds();

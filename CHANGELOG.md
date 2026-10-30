@@ -1,5 +1,8 @@
 # Changelog
 
+### 0.9.10 — 2026-10-31 — Drag in select mode
+- Fix: on phones, selected clips couldn't be dragged while the selection mode (long press / Select button) was on. Now a tap still adds or removes a clip, and dragging a selected clip moves all selected clips
+
 ### 0.9.9 — 2026-10-30 — Trimming & more for several clips
 - Trim handles on the selected clip: drag start or end; ripple on the magnetic main track, stops at neighbours on free tracks; limited to the media for videos and sounds; snapping; one undo step
 - Crop, position, size and rotation for several selected clips at once
