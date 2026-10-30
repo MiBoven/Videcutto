@@ -1,5 +1,9 @@
 # Changelog
 
+### 0.9.3 — 2026-10-30 — Cutting close to a clip's edge
+- Fix: Cut refused to split when the playhead was less than 0.05 s from a clip's start or end (e.g. one frame before the end) and wrongly asked to move the playhead onto the clip. Cuts now work down to a few milliseconds from the edge
+- Clearer messages when the playhead is exactly at a clip's edge or at the very end
+
 ### 0.9.2 — 2026-10-30 — Precise placement & free playhead
 - Snapping reacts earlier (14 px desktop, 20 px touch) and shows a blue line across all tracks where the clip docks; short vibration on Android (switchable in Settings)
 - Exact start time per clip (e.g. 0:43.79) in the clip panel; nudge buttons ±1 s / ±0.1 s / ±0.01 s and Alt + ←/→ (Shift: 0.01 s) on desktop

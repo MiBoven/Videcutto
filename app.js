@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.9.2';
+  const VERSION = '0.9.3';
   const $ = (id) => document.getElementById(id);
 
   // ---------------------------------------------------------------------------
@@ -989,7 +989,8 @@
   // ---------------------------------------------------------------------------
   // Editing operations
   // ---------------------------------------------------------------------------
-  const EDGE = 0.05;
+  const EDGE = 0.05;      // paste: this close to a clip edge counts as the edge
+  const CUT_EDGE = 0.005; // cut: pieces must be at least this long
   const OVERLAY_TF = { fit: 'free', scale: 0.5 }; // new overlays: half size, centred
 
   // Does [start, start+len) collide with a clip of the track (ignoring one id)?
@@ -1039,7 +1040,7 @@
   // main track's clip (or the topmost clip) under the playhead.
   function splitTarget() {
     const sel = findClip(selectedId);
-    if (sel && playhead > sel.clip.start + EDGE && playhead < clipEnd(sel.clip) - EDGE) return sel;
+    if (sel && playhead > sel.clip.start + CUT_EDGE && playhead < clipEnd(sel.clip) - CUT_EDGE) return sel;
     const nVis = firstAudioIndex();
     const order = [0, ...tracks.map((_, i) => i).slice(1, nVis).reverse(), ...tracks.map((_, i) => i).slice(nVis)];
     for (const ti of order) {
@@ -1050,10 +1051,10 @@
   }
   function splitAtPlayhead() {
     const f = splitTarget();
-    if (!f) { toast('Move the playhead over a clip to cut it.'); return; }
+    if (!f) { toast(allClips().length && playhead >= totalDuration() - 1e-6 ? 'The playhead is at the very end — there is nothing to cut there.' : 'Move the playhead over a clip to cut it.'); return; }
     const c = f.clip;
     const offset = playhead - c.start;
-    if (offset < EDGE || offset > clipLen(c) - EDGE) { toast('Move the playhead inside a clip to cut it.'); return; }
+    if (offset < CUT_EDGE || offset > clipLen(c) - CUT_EDGE) { toast('The playhead is exactly at the edge of the clip — there is nothing to cut off there.'); return; }
     commit(() => {
       const left = { ...c, id: newId(), out: c.in + offset };
       const right = { ...c, id: newId(), in: c.in + offset, start: c.start + offset };
