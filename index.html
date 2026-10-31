@@ -152,6 +152,7 @@
         <div class="dropdown" id="addMenu" style="display:none" role="menu">
           <button type="button" role="menuitem" id="addMediaItem"><span class="mi-icon">▶</span>Videos &amp; images</button>
           <button type="button" role="menuitem" id="addColorItem"><span class="mi-icon">■</span>Color clip</button>
+          <button type="button" role="menuitem" id="addTextItem"><span class="mi-icon">T</span>Text</button>
           <button type="button" role="menuitem" id="addAudioItem"><span class="mi-icon">♪</span>Audio (music, sound)</button>
           <div class="menu-sep" role="separator"></div>
           <span class="menu-label">As overlay at the playhead</span>
@@ -263,6 +264,7 @@
     </div>
     <div class="segment small cp-tabs" id="cpTabs" role="tablist">
       <button type="button" class="seg-btn active" data-tab="clip" role="tab">Clip</button>
+      <button type="button" class="seg-btn" data-tab="text" role="tab" id="cpTabText" hidden>Text</button>
       <button type="button" class="seg-btn" data-tab="crop" role="tab" id="cpTabCrop">Crop</button>
       <button type="button" class="seg-btn" data-tab="position" role="tab" id="cpTabPosition">Position</button>
       <button type="button" class="seg-btn" data-tab="rotate" role="tab" id="cpTabRotate">Rotate</button>
@@ -375,6 +377,58 @@
     </div>
 
     <!-- Rotate & flip -->
+    <div class="cp-pane" data-pane="text" hidden>
+      <textarea id="txContent" rows="2" spellcheck="true" aria-label="Text"></textarea>
+      <div class="tx-presets" id="txPresets">
+        <span class="mini-label">Style</span>
+        <button type="button" class="btn-chip" data-preset="title">Title</button>
+        <button type="button" class="btn-chip" data-preset="subtitle">Subtitle</button>
+        <button type="button" class="btn-chip" data-preset="lower">Lower third</button>
+      </div>
+      <div class="field">
+        <label for="txFont">Font</label>
+        <select id="txFont"></select>
+      </div>
+      <div class="tx-row">
+        <button type="button" class="tx-toggle" id="txBold" title="Bold"><b>B</b></button>
+        <button type="button" class="tx-toggle" id="txItalic" title="Italic"><i>I</i></button>
+        <div class="segment small" id="txAlign">
+          <button type="button" class="seg-btn" data-align="left" title="Align left">⯇ Left</button>
+          <button type="button" class="seg-btn" data-align="center" title="Center">Center</button>
+          <button type="button" class="seg-btn" data-align="right" title="Align right">Right ⯈</button>
+        </div>
+        <input type="color" id="txColor" title="Text color" value="#ffffff">
+      </div>
+      <span class="mini-label">Size (of the canvas height)</span>
+      <div class="range-row"><input type="range" id="txSize" min="1" max="30" step="0.1" aria-label="Font size"><span class="range-val" id="txSizeVal">8%</span></div>
+      <div class="tx-two">
+        <div><span class="mini-label">Line spacing</span><div class="range-row"><input type="range" id="txLine" min="0.7" max="2.5" step="0.05" aria-label="Line spacing"><span class="range-val" id="txLineVal">1.15</span></div></div>
+        <div><span class="mini-label">Letter spacing</span><div class="range-row"><input type="range" id="txLetter" min="-0.1" max="0.5" step="0.01" aria-label="Letter spacing"><span class="range-val" id="txLetterVal">0%</span></div></div>
+      </div>
+      <span class="mini-label">Opacity</span>
+      <div class="range-row"><input type="range" id="txOpacity" min="0" max="100" step="1" aria-label="Text opacity"><span class="range-val" id="txOpacityVal">100%</span></div>
+      <div class="tx-sect" id="txStrokeRow">
+        <label class="check-row"><input type="checkbox" id="txStroke"> Outline <input type="color" id="txStrokeColor" value="#000000" title="Outline color"></label>
+        <div class="range-row"><input type="range" id="txStrokeW" min="1" max="25" step="1" aria-label="Outline width"><span class="range-val" id="txStrokeWVal">6%</span></div>
+      </div>
+      <div class="tx-sect" id="txShadowRow">
+        <label class="check-row"><input type="checkbox" id="txShadow"> Shadow <input type="color" id="txShadowColor" value="#000000" title="Shadow color"></label>
+        <div class="tx-two">
+          <div><span class="mini-label">Softness</span><div class="range-row"><input type="range" id="txShadowBlur" min="0" max="50" step="1" aria-label="Shadow softness"><span class="range-val" id="txShadowBlurVal">12%</span></div></div>
+          <div><span class="mini-label">Distance</span><div class="range-row"><input type="range" id="txShadowDist" min="0" max="30" step="1" aria-label="Shadow distance"><span class="range-val" id="txShadowDistVal">4%</span></div></div>
+        </div>
+      </div>
+      <div class="tx-sect" id="txBoxRow">
+        <label class="check-row"><input type="checkbox" id="txBox"> Background box <input type="color" id="txBoxColor" value="#000000" title="Box color"></label>
+        <div class="tx-three">
+          <div><span class="mini-label">Opacity</span><div class="range-row"><input type="range" id="txBoxOpacity" min="0" max="100" step="1" aria-label="Box opacity"><span class="range-val" id="txBoxOpacityVal">60%</span></div></div>
+          <div><span class="mini-label">Padding</span><div class="range-row"><input type="range" id="txBoxPad" min="0" max="1.5" step="0.05" aria-label="Box padding"><span class="range-val" id="txBoxPadVal">0.35</span></div></div>
+          <div><span class="mini-label">Corners</span><div class="range-row"><input type="range" id="txBoxRadius" min="0" max="1" step="0.05" aria-label="Box corners"><span class="range-val" id="txBoxRadiusVal">0.20</span></div></div>
+        </div>
+      </div>
+      <p class="hint">Move, size and rotate the text in the Position and Rotate tabs or directly in the preview; Fade fades it in and out.</p>
+    </div>
+
     <div class="cp-pane" data-pane="fade" hidden>
       <span class="mini-label">Picture fade in</span>
       <div class="range-row">
@@ -609,6 +663,17 @@
   </div>
 </div>
 
+<!-- ===================== Installed fonts ===================== -->
+<div class="modal-bg" id="localFontModal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="lfTitle">
+    <h2 id="lfTitle">Use an installed font</h2>
+    <p class="modal-sub">The chosen font is copied into the project, so the text looks the same on other devices. Please make sure the font's license allows this.</p>
+    <input type="search" id="lfSearch" class="lf-search" placeholder="Search fonts…" autocomplete="off">
+    <ul class="lf-list" id="lfList"></ul>
+    <button class="btn-secondary wide" id="lfCancel">Cancel</button>
+  </div>
+</div>
+
 <!-- ===================== View ===================== -->
 <div class="modal-bg" id="viewModal" hidden>
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="viewTitle">
@@ -817,6 +882,15 @@
         <li>Left of each track: 👁 <strong>hide</strong>, 🔊 <strong>mute</strong>. <strong>Tap the track's left edge</strong> for opacity, volume, order and delete.</li>
         <li><strong>+</strong> above the track headers adds an <strong>empty video or audio track</strong> — handy as a place to drag clips to. Tracks added this way stay until you delete them; tracks that were created automatically disappear when they become empty.</li>
         <li>Settings → how many tracks are visible before the timeline scrolls.</li>
+      </ul>
+    </details>
+
+    <details id="help-text">
+      <summary>Text &amp; fonts</summary>
+      <ul>
+        <li><strong>Add → Text</strong> puts a text clip at the playhead on an upper track. Edit it in the <strong>Text</strong> tab: content (several lines, emojis), font, size, bold/italic, alignment, spacing, color, opacity, outline, shadow and a background box. Styles: <em>Title</em>, <em>Subtitle</em>, <em>Lower third</em>.</li>
+        <li>The size is a share of the canvas height, so the text looks the same at every resolution. Move it in the preview or with the Position tab (the slider scales it further), turn it in Rotate, fade it in Fade.</li>
+        <li><strong>Fonts:</strong> 11 fonts are included (loaded on first use, then available offline). <em>Add a font file…</em> (TTF, OTF, WOFF) or, in Chrome/Edge on a computer, <em>Use an installed font…</em> copies a font into the project — it then works on other devices too and appears in the media list. Check that the font's license allows this.</li>
       </ul>
     </details>
 

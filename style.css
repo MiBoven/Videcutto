@@ -580,3 +580,25 @@ body.coarse .junction { width: 22px; height: 22px; margin: 0 0 0 -11px; opacity:
 .trans-grid button.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 600; }
 #trDirRow .segment { margin-bottom: 10px; }
 @media (max-width: 420px) { .trans-grid { grid-template-columns: repeat(2, 1fr); } }
+
+/* ---------- Text ---------- */
+.clip.text-clip { background: #5b3e8f; }
+#txContent { width: 100%; min-height: 54px; resize: vertical; background: var(--surface-2); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 8px 10px; font-size: 16px; margin-bottom: 8px; }
+.tx-presets { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.tx-presets .mini-label { margin: 0 4px 0 0; }
+.tx-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.tx-row .segment { flex: 1; margin: 0; min-width: 200px; }
+.tx-toggle { width: 38px; height: 34px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); color: var(--text); font-size: 16px; cursor: pointer; }
+.tx-toggle.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.tx-row input[type=color], .tx-sect input[type=color] { width: 38px; height: 30px; padding: 0 2px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); }
+.tx-two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.tx-three { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.tx-sect { border-top: 1px solid var(--border); padding-top: 8px; margin-top: 4px; }
+.tx-sect .check-row { display: flex; align-items: center; gap: 8px; }
+.tx-sect.off > :not(.check-row) { opacity: .45; pointer-events: none; }
+@media (max-width: 420px) { .tx-three { grid-template-columns: 1fr; } }
+#mediaList .m-thumb.font { background: var(--surface); color: var(--text); font-size: 20px; }
+.lf-search { width: 100%; padding: 9px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font-size: 14px; margin-bottom: 8px; }
+.lf-list { list-style: none; margin: 0 0 10px; padding: 0; max-height: 50vh; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; }
+.lf-list li { padding: 8px 10px; cursor: pointer; border-bottom: 1px solid var(--border); font-size: 14px; }
+.lf-list li:hover { background: var(--accent-soft); }

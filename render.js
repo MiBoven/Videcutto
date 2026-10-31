@@ -141,7 +141,8 @@
     const bw0 = cw * c + ch * s, bh0 = cw * s + ch * c;
     const fitS = Math.min(W / bw0, H / bh0);
     const fillS = Math.max(W / bw0, H / bh0);
-    const sc = t.fit === 'fill' ? fillS : t.fit === 'free' ? fitS * t.scale : fitS;
+    // 'abs': the picture already has its size for an output width of absW (text).
+    const sc = t.fit === 'abs' ? (W / (t.absW || W)) * t.scale : t.fit === 'fill' ? fillS : t.fit === 'free' ? fitS * t.scale : fitS;
     const bbW = bw0 * sc, bbH = bh0 * sc;
     const [ax, ay] = ANCHORS[t.anchor] || ANCHORS.c;
     return {

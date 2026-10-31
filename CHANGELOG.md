@@ -1,5 +1,11 @@
 # Changelog
 
+### 0.11.0 — 2026-10-31 — Text & fonts
+- Text clips (Add → Text) with a new Text tab: content, font, size (share of the canvas height), bold/italic, alignment, line/letter spacing, color, opacity, outline, shadow, background box; styles Title, Subtitle, Lower third
+- Text works with Position (incl. size slider, pinch, wheel), Rotate, Fade, transitions, trimming and multi-selection
+- 11 built-in fonts (Inter, Poppins, Montserrat, Oswald, Bebas Neue, Lora, Playfair Display, Pacifico, Dancing Script, Permanent Marker, JetBrains Mono), loaded on first use and cached for offline use
+- Own fonts from a file (TTF/OTF/WOFF/WOFF2, also drag & drop) or from the installed fonts (Chrome/Edge desktop) — copied into the project, shown in the media list, included in project files
+
 ### 0.10.0 — 2026-10-31 — Transitions
 - Transitions on cuts between clips (main track and upper tracks): cross-fade, dip to black, dip to white, wipe, slide, zoom, circle, blur; direction and duration 0.1–3 s
 - + on every cut to add one, ⧓ marker to edit; transition panel with Apply to all cuts on this track and Remove

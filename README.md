@@ -29,6 +29,14 @@ A privacy-friendly video editor and compressor that runs entirely in your browse
 - Pre-trimming is instant — nothing is re-encoded; it simply limits which part of the file goes onto the timeline
 - Configurable in **Settings**: offer for large videos (default), for every video, or never
 
+### Text & fonts
+- **Add → Text** creates a text clip (4 s) at the playhead on an upper track; it behaves like an image clip (trim, move, copy, transitions, Position/Rotate/Fade tabs, multi-selection)
+- **Text tab:** content (multi-line, emojis), font, size (in % of the canvas height, so it looks the same at any resolution), bold, italic, alignment, line and letter spacing, color, opacity, outline (color, width), shadow (color, softness, distance), background box (color, opacity, padding, corners); styles *Title*, *Subtitle* (bottom centre with box) and *Lower third* (bottom left). Several selected text clips get style changes together
+- Size in the Position tab, pinch and mouse wheel scale the text relative to its font size; text has no crop and no Fit/Fill
+- **Built-in fonts** (in `fonts/`, Latin subset, WOFF): Inter, Poppins, Montserrat, Oswald, Bebas Neue, Lora, Playfair Display, Pacifico, Dancing Script, JetBrains Mono (SIL Open Font License) and Permanent Marker (Apache License 2.0); licenses in `fonts/licenses/`. They are loaded on first use; the service worker keeps them in a separate cache that survives app updates
+- **Own fonts:** *Add a font file…* (TTF, OTF, WOFF, WOFF2; also by drag & drop into the editor) or *Use an installed font…* (Local Font Access API, Chrome/Edge desktop). The font is copied into the project (working copy), listed in the media list (＋ adds a text in it), saved in project files and restored on other devices
+- Text is drawn into its own canvas at output resolution and composited like an image — identical in preview and export; fonts are loaded before exporting
+
 ### Transitions & picture fades
 - Where two clips of a visual track meet, a small **+** sits on the cut; tap it to add a transition, tap the **⧓** marker to edit it in the transition panel
 - Types: **Cross-fade, Dip to black, Dip to white, Wipe** (left/right/up/down), **Slide** (left/right/up/down), **Zoom** (in/out), **Circle** and **Blur** (falls back to a cross-fade where the browser can't blur canvases)
@@ -206,6 +214,7 @@ The preview uses the browser's native `<video>` decoding; the export uses WebCod
 - `render.js` — WebCodecs export engine
 - `project.js` — autosave, working copies and file handles
 - `zip.js` — streaming ZIP writer/reader for project files
+- `fonts/` — built-in fonts (WOFF) and their licenses
 - `sw.js` — service worker (offline, stale-while-revalidate)
 - `manifest.json` — PWA manifest
 - `netlify.toml` — security headers (no `Permissions-Policy` on purpose)

@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.10.0';
+  const VERSION = '0.11.0';
   const $ = (id) => document.getElementById(id);
 
   // ---------------------------------------------------------------------------
@@ -368,12 +368,13 @@
     accept: { 'video/*': ['.mp4', '.mov', '.m4v', '.3gp'], 'image/*': ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.avif', '.heic'], 'audio/*': AUDIO_EXTS },
   }];
   const AUDIO_PICKER_TYPES = [{ description: 'Audio', accept: { 'audio/*': AUDIO_EXTS } }];
+  const FONT_PICKER_TYPES = [{ description: 'Fonts', accept: { 'font/*': ['.ttf', '.otf', '.woff', '.woff2'] } }];
 
   /** @returns {Promise<{file: File, handle?: FileSystemFileHandle}[]>} */
   async function pickFiles(multiple, audioOnly) {
     if (useHandlePicker()) {
       try {
-        const hs = await window.showOpenFilePicker({ multiple, types: audioOnly ? AUDIO_PICKER_TYPES : PICKER_TYPES });
+        const hs = await window.showOpenFilePicker({ multiple, types: audioOnly === 'font' ? FONT_PICKER_TYPES : audioOnly ? AUDIO_PICKER_TYPES : PICKER_TYPES });
         return Promise.all(hs.map(async (h) => ({ file: await h.getFile(), handle: h })));
       } catch (e) {
         if (e && e.name === 'AbortError') return [];
@@ -383,7 +384,7 @@
     return new Promise((resolve) => {
       const inp = document.createElement('input');
       inp.type = 'file';
-      inp.accept = audioOnly ? (isCoarse && fileInput.accept === '*/*' ? '*/*' : 'audio/*,' + AUDIO_EXTS.join(',')) : fileInput.accept;
+      inp.accept = audioOnly === 'font' ? (isCoarse ? '*/*' : '.ttf,.otf,.woff,.woff2') : audioOnly ? (isCoarse && fileInput.accept === '*/*' ? '*/*' : 'audio/*,' + AUDIO_EXTS.join(',')) : fileInput.accept;
       inp.multiple = multiple;
       inp.addEventListener('change', () => resolve([...inp.files].map((file) => ({ file }))));
       inp.addEventListener('cancel', () => resolve([]));
@@ -414,6 +415,7 @@
   $('addColorItem').addEventListener('click', () => { closeAddMenu(); addColorClip(); });
   $('addOverlayMediaItem').addEventListener('click', () => { closeAddMenu(); pickAndAdd(true); });
   $('addOverlayColorItem').addEventListener('click', () => { closeAddMenu(); addColorClip(true); });
+  $('addTextItem').addEventListener('click', () => { closeAddMenu(); addTextClip('title'); });
   $('addAudioItem').addEventListener('click', async () => {
     closeAddMenu();
     const list = await pickFiles(true, true);
@@ -440,6 +442,14 @@
     if (projFiles.length) {
       loadingQueue = loadingQueue.then(async () => { for (const pf of projFiles) await importProjectFile(pf.file); }).catch(() => {});
       entries = entries.filter((x) => !projFiles.includes(x));
+      if (!entries.length) return;
+    }
+    // Font files are added to the project's fonts (editor only).
+    const fontFiles = entries.filter((x) => isFontFile(x.file));
+    if (fontFiles.length) {
+      entries = entries.filter((x) => !fontFiles.includes(x));
+      if ($('editorScreen').hidden || !projectId) toast('Open a project first to add fonts.');
+      else loadingQueue = loadingQueue.then(async () => { for (const ff of fontFiles) await addFontFile(ff.file, ff.handle); }).catch(() => {});
       if (!entries.length) return;
     }
     const media = entries.filter((x) => isVideoFile(x.file) || isImageFile(x.file) || isAudioFile(x.file));
@@ -539,6 +549,7 @@
       base: src.base, start: src.start, duration: src.duration, rangeIn: src.rangeIn, rangeOut: src.rangeOut,
       width: src.width, height: src.height, rotation: src.rotation, storage: src.storage, copyName: src.copyName,
     };
+    if (src.fontName) m.fontName = src.fontName;
     // Waveform overview, so it doesn't have to be computed again after a reload.
     if (src.peaks && src.peaks.length) { m.peaks = toB64(src.peaks); m.peaksRate = src.peaksRate; m.peaksFrom = src.peaksFrom || 0; }
     return m;
@@ -827,7 +838,7 @@
   function queueThumbs(src) { thumbQueue = thumbQueue.then(() => makeThumbs(src)).catch(() => {}); }
 
   async function makeThumbs(src) {
-    if (src.kind === 'audio') return;
+    if (src.kind === 'audio' || src.kind === 'font') return;
     if (src.kind === 'image') {
       if (!src.bitmap) return;
       const th = 72, tw = Math.round(clamp(th * src.width / src.height, 40, 128));
@@ -1087,7 +1098,7 @@
       return;
     }
     if (overlay && allClips().length) {
-      clip.tf = { ...Render.tfOf(clip.tf), ...OVERLAY_TF };
+      if (clip.kind !== 'text') clip.tf = { ...Render.tfOf(clip.tf), ...OVERLAY_TF }; // text keeps its own size
       placeOverlay(clip, playhead);
       selectedId = clip.id;
       return;
@@ -1359,8 +1370,8 @@
     panel.classList.toggle('multi', multi());
     if (multi()) { updateMultiPanel(); updateTrackPanel(); return; }
     $('cpStartField').hidden = false;
-    $('cpKind').textContent = { video: 'Video', image: 'Image', color: 'Color clip', audio: src && src.kind === 'video' ? 'Audio of video' : 'Audio' }[c.kind] || '';
-    $('cpTitle').textContent = src ? src.name : `${(c.color || DEFAULT_COLOR).toUpperCase()} · ${c.size === 'canvas' ? 'canvas size' : `${c.w}×${c.h}`}`;
+    $('cpKind').textContent = { video: 'Video', image: 'Image', color: 'Color clip', text: 'Text', audio: src && src.kind === 'video' ? 'Audio of video' : 'Audio' }[c.kind] || '';
+    $('cpTitle').textContent = src ? src.name : c.kind === 'text' ? `${fontName(textOf(c).font)} · “${textOf(c).content.split('\n')[0].slice(0, 30)}”` : `${(c.color || DEFAULT_COLOR).toUpperCase()} · ${c.size === 'canvas' ? 'canvas size' : `${c.w}×${c.h}`}`;
     $('muteClipBtn').hidden = !isSoundClip(c);
     $('detachBtn').hidden = !(c.kind === 'video' && src && src.hasAudio && src.audioDecodable);
     $('muteClipBtn').classList.toggle('on', !!c.muted);
@@ -1371,7 +1382,10 @@
     $('cpSizeField').hidden = c.kind !== 'color';
     $('cpCustomField').hidden = !(c.kind === 'color' && c.size === 'custom');
     const audio = c.kind === 'audio';
-    $('cpTabCrop').hidden = c.kind === 'color' || audio;
+    $('cpTabCrop').hidden = c.kind === 'color' || c.kind === 'text' || audio;
+    $('cpTabText').hidden = c.kind !== 'text';
+    if (cpTab === 'text' && c.kind !== 'text') showTab('clip');
+    if (c.kind === 'text') syncTextUI();
     $('cpTabPosition').hidden = audio;
     $('cpTabRotate').hidden = audio;
     $('cpTabAudio').hidden = !isSoundClip(c);
@@ -1412,14 +1426,17 @@
     $('cpMagHint').hidden = !mag;
     // Crop, position and rotation apply to all selected pictures (crop not to color clips).
     const pics = list.filter((f) => f.clip.kind !== 'audio');
-    const croppable = pics.filter((f) => f.clip.kind !== 'color');
+    const croppable = pics.filter((f) => f.clip.kind !== 'color' && f.clip.kind !== 'text');
+    const texts = list.filter((f) => f.clip.kind === 'text');
+    $('cpTabText').hidden = !texts.length;
+    if (texts.length) { if (!texts.some((f) => f.clip.id === selectedId)) selectedId = texts[0].clip.id; syncTextUI(); }
     $('cpTabCrop').hidden = !croppable.length;
     $('cpTabPosition').hidden = !pics.length;
     $('cpTabRotate').hidden = !pics.length;
     $('cpTabAudio').hidden = !sound.length;
     $('cpTabFade').hidden = !pics.length;
     if (pics.length) syncFadeUI(pics.find((f) => f.clip.id === selectedId) ? selClip() : pics[0].clip);
-    const ok = { clip: true, audio: sound.length > 0, crop: croppable.length > 0, position: pics.length > 0, rotate: pics.length > 0, fade: pics.length > 0 };
+    const ok = { clip: true, audio: sound.length > 0, crop: croppable.length > 0, position: pics.length > 0, rotate: pics.length > 0, fade: pics.length > 0, text: texts.length > 0 };
     if (!ok[cpTab]) showTab('clip');
     if (pics.length) syncTransformUI();
     if (sound.length) syncAudioUI(sound.find((f) => f.clip.id === selectedId) ? selClip() : sound[0].clip);
@@ -1640,6 +1657,320 @@
   $('cpNudge').addEventListener('click', (e) => { const b = e.target.closest('[data-nudge]'); if (b) nudge(+b.dataset.nudge); });
 
   // ---------------------------------------------------------------------------
+  // Text clips & fonts
+  // ---------------------------------------------------------------------------
+  // Built-in fonts (OFL / Apache 2.0, Latin subset) are loaded when first used;
+  // the service worker keeps them for offline use. Own fonts (font files or
+  // installed fonts) are stored with the project like media (kind 'font').
+  const BUILTIN_FONTS = [
+    { id: 'inter', name: 'Inter', cat: 'Sans serif', faces: [['inter.woff', 'normal', '100 900'], ['inter-italic.woff', 'italic', '100 900']] },
+    { id: 'poppins', name: 'Poppins', cat: 'Sans serif', faces: [['poppins-400.woff', 'normal', '400'], ['poppins-700.woff', 'normal', '700'], ['poppins-400-italic.woff', 'italic', '400'], ['poppins-700-italic.woff', 'italic', '700']] },
+    { id: 'montserrat', name: 'Montserrat', cat: 'Sans serif', faces: [['montserrat.woff', 'normal', '100 900'], ['montserrat-italic.woff', 'italic', '100 900']] },
+    { id: 'oswald', name: 'Oswald', cat: 'Condensed', faces: [['oswald.woff', 'normal', '200 700']] },
+    { id: 'bebas', name: 'Bebas Neue', cat: 'Display', faces: [['bebas.woff', 'normal', '400']] },
+    { id: 'lora', name: 'Lora', cat: 'Serif', faces: [['lora.woff', 'normal', '400 700'], ['lora-italic.woff', 'italic', '400 700']] },
+    { id: 'playfair', name: 'Playfair Display', cat: 'Serif', faces: [['playfair.woff', 'normal', '400 900'], ['playfair-italic.woff', 'italic', '400 900']] },
+    { id: 'pacifico', name: 'Pacifico', cat: 'Script', faces: [['pacifico.woff', 'normal', '400']] },
+    { id: 'dancing', name: 'Dancing Script', cat: 'Script', faces: [['dancing.woff', 'normal', '400 700']] },
+    { id: 'marker', name: 'Permanent Marker', cat: 'Handwriting', faces: [['marker.woff', 'normal', '400']] },
+    { id: 'jetbrains', name: 'JetBrains Mono', cat: 'Monospace', faces: [['jetbrains.woff', 'normal', '100 800'], ['jetbrains-italic.woff', 'italic', '100 800']] },
+  ];
+  const fontLoads = new Map(); // font key -> Promise
+  const fontReady = new Set();
+  const fontFamily = (key) => (String(key || '').startsWith('src:') ? `vc-${key.slice(4)}` : `vc-${key || 'inter'}`);
+  const familyCss = (key) => `"${fontFamily(key)}", "Inter", "Noto Color Emoji", sans-serif`;
+  function fontName(key) {
+    if (String(key).startsWith('src:')) { const s = sources.get(key.slice(4)); return s ? s.fontName || s.name : 'Missing font'; }
+    const f = BUILTIN_FONTS.find((x) => x.id === key);
+    return f ? f.name : key;
+  }
+  /** Load a font (all its faces) once; redraw when it's there. */
+  function ensureFont(key) {
+    key = key || 'inter';
+    if (fontLoads.has(key)) return fontLoads.get(key);
+    let p;
+    if (key.startsWith('src:')) {
+      const src = sources.get(key.slice(4));
+      p = src ? registerUserFont(src) : Promise.resolve(false);
+    } else {
+      const f = BUILTIN_FONTS.find((x) => x.id === key);
+      p = !f ? Promise.resolve(false) : Promise.all(f.faces.map(([file, style, weight]) => {
+        const face = new FontFace(fontFamily(key), `url(/fonts/${file})`, { style, weight });
+        document.fonts.add(face);
+        return face.load();
+      })).then(() => true).catch((e) => { console.warn('font', key, e); return false; });
+    }
+    p = p.then((ok) => {
+      if (ok) { fontReady.add(key); textCache.clear(); renderPreview(); }
+      else fontLoads.delete(key); // try again later (e.g. offline)
+      return ok;
+    });
+    fontLoads.set(key, p);
+    return p;
+  }
+  async function registerUserFont(src) {
+    if (!src.file || src.missing) return false;
+    try {
+      const face = new FontFace(fontFamily('src:' + src.id), await src.file.arrayBuffer());
+      document.fonts.add(face);
+      await face.load();
+      return true;
+    } catch (e) {
+      toast(`"${src.name}" couldn't be used as a font.`, 5000);
+      return false;
+    }
+  }
+
+  const TEXT_DEFAULTS = {
+    content: 'Your text', font: 'inter', size: 8, bold: true, italic: false, align: 'center', lineHeight: 1.15, letter: 0,
+    color: '#ffffff', opacity: 1,
+    stroke: false, strokeColor: '#000000', strokeW: 6,
+    shadow: true, shadowColor: '#000000', shadowOpacity: 0.55, shadowBlur: 12, shadowDist: 4,
+    box: false, boxColor: '#000000', boxOpacity: 0.6, boxPad: 0.35, boxRadius: 0.2,
+  };
+  const TEXT_PRESETS = {
+    title: { text: { size: 10, bold: true, italic: false, align: 'center', shadow: true, box: false, stroke: false, color: '#ffffff' }, tf: { anchor: 'c', dx: 0, dy: 0 } },
+    subtitle: { text: { size: 5, bold: false, italic: false, align: 'center', shadow: false, box: true, boxColor: '#000000', boxOpacity: 0.6, boxPad: 0.35, boxRadius: 0.2, stroke: false, color: '#ffffff' }, tf: { anchor: 'b', dx: 0, dy: -0.06 } },
+    lower: { text: { size: 4.5, bold: true, italic: false, align: 'left', shadow: false, box: true, boxColor: '#1f4fd8', boxOpacity: 0.9, boxPad: 0.45, boxRadius: 0.1, stroke: false, color: '#ffffff' }, tf: { anchor: 'bl', dx: 0.05, dy: -0.1 } },
+  };
+  const textOf = (c) => ({ ...TEXT_DEFAULTS, ...(c.text || {}) });
+  const textTf = (c, outW) => ({ ...Render.tfOf(c.tf), fit: 'abs', absW: outW });
+  const hexA = (hex, a) => { const n = parseInt(String(hex).replace('#', ''), 16) || 0; return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`; };
+
+  // The text drawn into its own canvas, at the size it has in the output.
+  const textCache = new Map();
+  let measureCtx = null;
+  function renderTextCanvas(c, outW, outH) {
+    const t = textOf(c);
+    if (!fontReady.has(t.font)) ensureFont(t.font);
+    const key = JSON.stringify([t, outH, fontReady.has(t.font)]);
+    const hit = textCache.get(key);
+    if (hit) return hit;
+    const px = Math.max(4, (t.size / 100) * outH);
+    const font = `${t.italic ? 'italic ' : ''}${t.bold ? 700 : 400} ${px.toFixed(2)}px ${familyCss(t.font)}`;
+    if (!measureCtx) measureCtx = document.createElement('canvas').getContext('2d');
+    const m = measureCtx;
+    m.font = font;
+    if ('letterSpacing' in m) m.letterSpacing = `${(t.letter * px).toFixed(2)}px`;
+    const lines = String(t.content || '').split('\n');
+    const widths = lines.map((l) => m.measureText(l || ' ').width);
+    const lineH = px * t.lineHeight;
+    const sw = t.stroke ? (t.strokeW / 100) * px : 0;
+    const pad = t.box ? t.boxPad * px : 0;
+    const innerW = Math.max(...widths) + sw * 2, innerH = lines.length * lineH + sw * 2;
+    const boxW = innerW + pad * 2, boxH = innerH + pad * 2;
+    const blur = t.shadow ? (t.shadowBlur / 100) * px : 0, dist = t.shadow ? (t.shadowDist / 100) * px : 0;
+    const margin = Math.ceil(blur * 2 + dist + 2);
+    const W = Math.max(2, Math.ceil(boxW + margin * 2)), H = Math.max(2, Math.ceil(boxH + margin * 2));
+    const cv = document.createElement('canvas');
+    cv.width = W; cv.height = H;
+    const x = cv.getContext('2d');
+    if (t.box) {
+      x.fillStyle = hexA(t.boxColor, t.boxOpacity * t.opacity);
+      x.beginPath();
+      if (x.roundRect) x.roundRect(margin, margin, boxW, boxH, Math.min(boxW, boxH) / 2 * Math.min(1, t.boxRadius * px / (Math.min(boxW, boxH) / 2)));
+      else x.rect(margin, margin, boxW, boxH);
+      x.fill();
+    }
+    x.font = font;
+    if ('letterSpacing' in x) x.letterSpacing = `${(t.letter * px).toFixed(2)}px`;
+    x.textBaseline = 'middle';
+    x.textAlign = t.align === 'left' ? 'left' : t.align === 'right' ? 'right' : 'center';
+    x.lineJoin = 'round';
+    const tx = t.align === 'left' ? margin + pad + sw : t.align === 'right' ? margin + boxW - pad - sw : margin + boxW / 2;
+    const shadowOn = () => { if (t.shadow) { x.shadowColor = hexA(t.shadowColor, t.shadowOpacity * t.opacity); x.shadowBlur = blur; x.shadowOffsetX = dist * 0.7; x.shadowOffsetY = dist; } };
+    const shadowOff = () => { x.shadowColor = 'transparent'; x.shadowBlur = 0; x.shadowOffsetX = 0; x.shadowOffsetY = 0; };
+    lines.forEach((l, i) => {
+      const y = margin + pad + sw + lineH * (i + 0.5);
+      if (sw) { shadowOn(); x.strokeStyle = hexA(t.strokeColor, t.opacity); x.lineWidth = sw * 2; x.strokeText(l, tx, y); shadowOff(); }
+      else shadowOn();
+      x.fillStyle = hexA(t.color, t.opacity);
+      x.fillText(l, tx, y);
+      shadowOff();
+    });
+    const r = { canvas: cv, w: W, h: H };
+    if (textCache.size > 60) textCache.clear();
+    textCache.set(key, r);
+    return r;
+  }
+
+  function addTextClip(preset, font) {
+    const pr = TEXT_PRESETS[preset || 'title'];
+    const c = { id: newId(), kind: 'text', srcId: null, in: 0, out: STILL_DURATION, muted: true, text: { ...TEXT_DEFAULTS, ...pr.text, ...(font ? { font } : {}) }, tf: { fit: 'abs', scale: 1, ...pr.tf } };
+    saveEnabled = true;
+    commit(() => { addClipToTimeline(c, true); selectedId = c.id; });
+    ensureFont(c.text.font);
+    showTab('text');
+    showEditor();
+    setTimeout(() => { const ta = $('txContent'); if (ta && !isCoarse) { ta.focus(); ta.select(); } }, 50);
+  }
+
+  // Text tab: live edits, one undo step per change (typing: after a pause).
+  let textTimer = 0;
+  function liveText(patch, commitNow) {
+    // Several text clips selected: style changes apply to all (the content only to the shown one).
+    const list = (multi() ? selFinds() : [findClip(selectedId)].filter(Boolean)).filter((f) => f.clip.kind === 'text');
+    if (!list.length) return;
+    if (!clipLiveBefore) clipLiveBefore = snapshot();
+    for (const f of list) {
+      const p = 'content' in patch && f.clip.id !== selectedId ? (({ content, ...r }) => r)(patch) : patch;
+      f.tr.clips[f.tr.clips.indexOf(f.clip)] = { ...f.clip, text: { ...textOf(f.clip), ...p } };
+    }
+    if (patch.font) ensureFont(patch.font);
+    renderPreview();
+    renderClips();
+    syncTextUI();
+    clearTimeout(textTimer);
+    if (commitNow) liveClipCommit();
+    else textTimer = setTimeout(liveClipCommit, 800);
+  }
+  function fillFontSelect(current) {
+    const sel = $('txFont');
+    const groups = [];
+    const cats = [...new Set(BUILTIN_FONTS.map((f) => f.cat))];
+    const og = (label, opts) => { const g = document.createElement('optgroup'); g.label = label; opts.forEach((o) => g.appendChild(o)); return g; };
+    const opt = (v, t) => Object.assign(document.createElement('option'), { value: v, textContent: t });
+    groups.push(og('Built-in', BUILTIN_FONTS.map((f) => opt(f.id, `${f.name} · ${f.cat}`))));
+    void cats;
+    const own = [...sources.values()].filter((s) => s.kind === 'font');
+    if (own.length) groups.push(og('Project fonts', own.map((s) => opt('src:' + s.id, (s.fontName || s.name) + (s.missing ? ' (missing)' : '')))));
+    const more = [opt('+file', '＋ Add a font file…')];
+    if (window.queryLocalFonts && !isCoarse) more.push(opt('+local', '＋ Use an installed font…'));
+    groups.push(og('More', more));
+    sel.replaceChildren(...groups);
+    sel.value = current;
+    sel.style.fontFamily = familyCss(current);
+  }
+  function syncTextUI() {
+    const c = selClip();
+    if (!c || c.kind !== 'text') return;
+    const t = textOf(c);
+    if (document.activeElement !== $('txContent')) $('txContent').value = t.content;
+    $('txContent').style.fontFamily = familyCss(t.font);
+    if (document.activeElement !== $('txFont')) fillFontSelect(t.font);
+    const setR = (id, v, label) => { if (document.activeElement !== $(id)) $(id).value = v; if (label != null) $(id + 'Val').textContent = label; };
+    setR('txSize', t.size, t.size.toFixed(1) + '%');
+    setR('txLine', t.lineHeight, t.lineHeight.toFixed(2));
+    setR('txLetter', t.letter, (t.letter * 100).toFixed(0) + '%');
+    setR('txOpacity', Math.round(t.opacity * 100), Math.round(t.opacity * 100) + '%');
+    $('txBold').classList.toggle('active', t.bold);
+    $('txItalic').classList.toggle('active', t.italic);
+    $('txAlign').querySelectorAll('.seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.align === t.align));
+    $('txColor').value = t.color;
+    $('txStroke').checked = t.stroke; $('txStrokeColor').value = t.strokeColor; setR('txStrokeW', t.strokeW, t.strokeW.toFixed(0) + '%');
+    $('txShadow').checked = t.shadow; $('txShadowColor').value = t.shadowColor; setR('txShadowBlur', t.shadowBlur, t.shadowBlur.toFixed(0) + '%'); setR('txShadowDist', t.shadowDist, t.shadowDist.toFixed(0) + '%');
+    $('txBox').checked = t.box; $('txBoxColor').value = t.boxColor; setR('txBoxOpacity', Math.round(t.boxOpacity * 100), Math.round(t.boxOpacity * 100) + '%'); setR('txBoxPad', t.boxPad, t.boxPad.toFixed(2)); setR('txBoxRadius', t.boxRadius, t.boxRadius.toFixed(2));
+    $('txStrokeRow').classList.toggle('off', !t.stroke);
+    $('txShadowRow').classList.toggle('off', !t.shadow);
+    $('txBoxRow').classList.toggle('off', !t.box);
+  }
+  $('txContent').addEventListener('input', (e) => liveText({ content: e.target.value }));
+  $('txContent').addEventListener('change', () => { clearTimeout(textTimer); liveClipCommit(); });
+  $('txFont').addEventListener('change', async (e) => {
+    const v = e.target.value;
+    const c = selClip();
+    const cur = c ? textOf(c).font : 'inter';
+    if (v === '+file') { e.target.value = cur; const key = await pickFontFile(); if (key) liveText({ font: key }, true); return; }
+    if (v === '+local') { e.target.value = cur; const key = await pickLocalFont(); if (key) liveText({ font: key }, true); return; }
+    liveText({ font: v }, true);
+  });
+  const rangeText = (id, prop, f = (v) => +v) => {
+    $(id).addEventListener('input', (e) => liveText({ [prop]: f(e.target.value) }));
+    $(id).addEventListener('change', () => { clearTimeout(textTimer); liveClipCommit(); });
+  };
+  rangeText('txSize', 'size'); rangeText('txLine', 'lineHeight'); rangeText('txLetter', 'letter');
+  rangeText('txOpacity', 'opacity', (v) => v / 100);
+  rangeText('txStrokeW', 'strokeW'); rangeText('txShadowBlur', 'shadowBlur'); rangeText('txShadowDist', 'shadowDist');
+  rangeText('txBoxOpacity', 'boxOpacity', (v) => v / 100); rangeText('txBoxPad', 'boxPad'); rangeText('txBoxRadius', 'boxRadius');
+  $('txBold').addEventListener('click', () => { const c = selClip(); if (c) liveText({ bold: !textOf(c).bold }, true); });
+  $('txItalic').addEventListener('click', () => { const c = selClip(); if (c) liveText({ italic: !textOf(c).italic }, true); });
+  $('txAlign').addEventListener('click', (e) => { const b = e.target.closest('[data-align]'); if (b) liveText({ align: b.dataset.align }, true); });
+  // Colour pickers preview live; one undo step when the picker closes.
+  [['txColor', 'color'], ['txStrokeColor', 'strokeColor'], ['txShadowColor', 'shadowColor'], ['txBoxColor', 'boxColor']].forEach(([id, prop]) => {
+    $(id).addEventListener('input', (e) => liveText({ [prop]: e.target.value }));
+    $(id).addEventListener('change', () => { clearTimeout(textTimer); liveClipCommit(); });
+  });
+  [['txStroke', 'stroke'], ['txShadow', 'shadow'], ['txBox', 'box']].forEach(([id, prop]) => $(id).addEventListener('change', (e) => liveText({ [prop]: e.target.checked }, true)));
+  $('txPresets').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-preset]');
+    if (!b) return;
+    const pr = TEXT_PRESETS[b.dataset.preset];
+    const list = (multi() ? selFinds() : [findClip(selectedId)].filter(Boolean)).filter((f) => f.clip.kind === 'text');
+    commit(() => list.forEach((f) => {
+      f.tr.clips[f.tr.clips.indexOf(f.clip)] = { ...f.clip, text: { ...textOf(f.clip), ...pr.text }, tf: { ...Render.tfOf(f.clip.tf), ...pr.tf, fit: 'abs' } };
+    }));
+  });
+
+  // Own fonts: a file, or (Chrome/Edge desktop) an installed font — copied into the project.
+  const isFontFile = (f) => /\.(ttf|otf|woff2?)$/i.test(f.name) || /^font\//.test(f.type);
+  function makeFontSource(meta, file) {
+    return {
+      id: meta.id, kind: 'font', name: meta.name, fontName: meta.fontName || baseName(meta.name), origSize: meta.origSize, origLastModified: meta.origLastModified,
+      file, url: null, demux: null, base: 0, width: 0, height: 0, rotation: 0, frameRate: 30, fileDuration: 0, start: 0, duration: 0,
+      hasAudio: false, audioDecodable: false, videoBitrate: 0, audioBitrate: 0, rangeIn: 0, rangeOut: 0,
+      storage: meta.storage || 'none', copyName: meta.copyName || null, thumbs: [], thumbStep: Infinity, missing: false,
+    };
+  }
+  async function addFontFile(file, handle, fontNameHint) {
+    const meta = { id: nextSrcId(), name: file.name || 'Font', fontName: fontNameHint || baseName(file.name || 'Font'), origSize: file.size, origLastModified: file.lastModified };
+    const src = makeFontSource(meta, file);
+    if (Project.canCopy()) {
+      const name = `${src.id}-${Date.now().toString(36)}-${++copyCounter}${(/\.[a-z0-9]+$/i.exec(file.name || '') || ['.font'])[0]}`;
+      try { src.file = await Project.copyWhole(name, file); src.storage = 'opfs'; src.copyName = name; Project.requestPersist(); } catch (e) { /* keep the original */ }
+    }
+    if (src.storage === 'none' && handle) { src.storage = 'handle'; await Project.saveHandle(src.id, handle); }
+    if (!(await registerUserFont(src))) return null;
+    sources.set(src.id, src);
+    saveEnabled = true;
+    const key = 'src:' + src.id;
+    fontLoads.set(key, Promise.resolve(true));
+    fontReady.add(key);
+    renderMediaList();
+    scheduleSave();
+    toast(`Font "${src.fontName}" added to the project.`, 2500);
+    return key;
+  }
+  async function pickFontFile() {
+    const list = await pickFiles(false, 'font');
+    if (!list.length) return null;
+    return addFontFile(list[0].file, list[0].handle);
+  }
+  async function pickLocalFont() {
+    let fonts;
+    try { fonts = await window.queryLocalFonts(); } catch (e) { toast('The browser didn\'t allow access to the installed fonts.', 4000); return null; }
+    if (!fonts.length) { toast('No installed fonts available.'); return null; }
+    return new Promise((resolve) => {
+      const modal = $('localFontModal');
+      const list = $('lfList');
+      const render = () => {
+        const q = $('lfSearch').value.trim().toLowerCase();
+        const shown = fonts.filter((f) => !q || f.fullName.toLowerCase().includes(q)).slice(0, 300);
+        list.replaceChildren(...shown.map((f) => {
+          const li = document.createElement('li');
+          li.textContent = f.fullName;
+          li.title = f.family + ' · ' + f.style;
+          li.addEventListener('click', async () => {
+            close();
+            try {
+              const blob = await f.blob();
+              const file = new File([blob], `${f.postscriptName || f.fullName}.ttf`, { type: 'font/ttf' });
+              resolve(await addFontFile(file, null, f.fullName));
+            } catch (e) { toast('This font couldn\'t be read.'); resolve(null); }
+          });
+          return li;
+        }));
+      };
+      const close = () => { modal.hidden = true; $('lfSearch').oninput = null; $('lfCancel').onclick = null; };
+      $('lfSearch').value = '';
+      $('lfSearch').oninput = render;
+      $('lfCancel').onclick = () => { close(); resolve(null); };
+      render();
+      modal.hidden = false;
+      setTimeout(() => $('lfSearch').focus(), 50);
+    });
+  }
+
+  // ---------------------------------------------------------------------------
   // Media list: every file of the project, also when no clip uses it
   // ---------------------------------------------------------------------------
   function missingStub(m) {
@@ -1650,7 +1981,7 @@
     if (src.kind === 'image') return { id: newId(), kind: 'image', srcId: src.id, in: 0, out: STILL_DURATION, muted: false };
     return { id: newId(), kind: 'video', srcId: src.id, in: src.rangeIn, out: src.rangeOut, muted: false };
   }
-  const usesOf = (id) => allClips().filter((c) => c.srcId === id);
+  const usesOf = (id) => allClips().filter((c) => c.srcId === id || (c.text && c.text.font === 'src:' + id));
   function setMediaFolded(folded) {
     $('mediaCard').classList.toggle('collapsed', folded);
     $('mediaBody').hidden = folded;
@@ -1664,6 +1995,12 @@
     const box = document.createElement('div');
     box.className = 'm-thumb';
     if (src.missing) { box.textContent = '⚠'; return box; }
+    if (src.kind === 'font') {
+      box.textContent = 'Aa';
+      box.classList.add('font');
+      box.style.fontFamily = familyCss('src:' + src.id);
+      return box;
+    }
     if (src.kind === 'audio') {
       const fake = { in: 0, out: src.duration || 1, volume: 1 };
       const cv = waveform(fake, src, 64, 40);
@@ -1683,7 +2020,7 @@
     ul.replaceChildren(...list.map((src) => {
       const li = document.createElement('li');
       li.dataset.src = src.id;
-      li.draggable = !isCoarse && !src.missing;
+      li.draggable = !isCoarse && !src.missing && src.kind !== 'font';
       li.title = src.missing ? 'Missing — select the file again' : 'Select its clips' + (isCoarse ? '' : ' · drag onto the timeline to add it');
       const info = document.createElement('div');
       info.className = 'm-info';
@@ -1693,7 +2030,7 @@
       const meta = document.createElement('div');
       meta.className = 'm-meta';
       const n = usesOf(src.id).length;
-      const what = src.kind === 'image' ? `Image · ${src.width}×${src.height}` : src.kind === 'audio' ? `Audio · ${fmtTime(src.duration, false)}` : `Video · ${fmtTime((src.rangeOut || 0) - (src.rangeIn || 0), false)} · ${src.width}×${src.height}`;
+      const what = src.kind === 'font' ? `Font · ${src.fontName || src.name}` : src.kind === 'image' ? `Image · ${src.width}×${src.height}` : src.kind === 'audio' ? `Audio · ${fmtTime(src.duration, false)}` : `Video · ${fmtTime((src.rangeOut || 0) - (src.rangeIn || 0), false)} · ${src.width}×${src.height}`;
       meta.innerHTML = '';
       meta.append(what + ' · ');
       const use = document.createElement('span');
@@ -1706,8 +2043,8 @@
       const btn = (label, title, act) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = label; b.title = title; b.dataset.act = act; acts.append(b); };
       if (src.missing) btn('Relink…', 'Select this file again', 'relink');
       else {
-        btn('＋', src.kind === 'audio' ? 'Add at the playhead' : 'Add to the main track', 'add');
-        if (src.kind !== 'audio') btn('⧉', 'Add as overlay at the playhead', 'overlay');
+        btn('＋', src.kind === 'font' ? 'Add a text in this font' : src.kind === 'audio' ? 'Add at the playhead' : 'Add to the main track', 'add');
+        if (src.kind !== 'audio' && src.kind !== 'font') btn('⧉', 'Add as overlay at the playhead', 'overlay');
       }
       if (!n) btn('🗑', 'Remove from the project', 'remove');
       li.append(mediaThumb(src), info, acts);
@@ -1739,7 +2076,8 @@
     if (!src) return;
     const act = e.target.closest('[data-act]');
     if (act) {
-      if (act.dataset.act === 'add') addFromMedia(src, false);
+      if (act.dataset.act === 'add' && src.kind === 'font') addTextClip('title', 'src:' + src.id);
+      else if (act.dataset.act === 'add') addFromMedia(src, false);
       else if (act.dataset.act === 'overlay') addFromMedia(src, true);
       else if (act.dataset.act === 'remove') removeMedia(src);
       else if (act.dataset.act === 'relink') {
@@ -2105,7 +2443,7 @@
     const src = srcOf(c);
     const p = pad();
     const el = document.createElement('div');
-    el.className = 'clip' + (selIds.has(c.id) ? ' selected' : '') + (selIds.size > 1 && c.id === selectedId ? ' primary' : '') + (c.kind === 'color' ? ' color-clip' : '') + (c.kind === 'audio' ? ' audio-clip' : tr.main ? '' : ' overlay');
+    el.className = 'clip' + (selIds.has(c.id) ? ' selected' : '') + (selIds.size > 1 && c.id === selectedId ? ' primary' : '') + (c.kind === 'color' ? ' color-clip' : '') + (c.kind === 'text' ? ' text-clip' : '') + (c.kind === 'audio' ? ' audio-clip' : tr.main ? '' : ' overlay');
     if (c.kind === 'color') el.style.background = c.color || DEFAULT_COLOR;
     el.dataset.id = c.id;
     el.dataset.idx = i;
@@ -2133,7 +2471,7 @@
     if (w > 50) {
       const label = document.createElement('span');
       label.className = 'clip-label';
-      const nm = src ? src.name : c.kind === 'color' ? 'Color' : '';
+      const nm = src ? src.name : c.kind === 'color' ? 'Color' : c.kind === 'text' ? textOf(c).content.split('\n')[0].slice(0, 40) : '';
       label.textContent = `${fmtTime(len, false)}${w > 140 && nm ? ' · ' + nm : ''}`;
       el.appendChild(label);
     }
@@ -3587,6 +3925,10 @@
       const d = colorDims(clip, outW, outH);
       return { drawable: colorCanvas(clip.color || DEFAULT_COLOR, d.w, d.h), w: d.w, h: d.h, isColor: true };
     }
+    if (clip.kind === 'text') {
+      const r = renderTextCanvas(clip, outW, outH);
+      return { drawable: r.canvas, w: r.w, h: r.h, isColor: false, tf: textTf(clip, outW) };
+    }
     return null;
   }
 
@@ -3621,7 +3963,7 @@
         const d = currentDrawable(c, out.w, out.h);
         if (!d) { if (playableVideo(c) && elOf(c.id)) wait = true; return null; }
         if (sel && c.id === sel.id) selLayer = { clip: c, d };
-        return { drawable: d.drawable, w: d.w, h: d.h, rot: 0, tf: c.tf, opacity: tr.opacity, isMain: ti === 0, isColor: d.isColor, alpha: Render.pictureAlpha(c, t - c.start) };
+        return { drawable: d.drawable, w: d.w, h: d.h, rot: 0, tf: d.tf || c.tf, opacity: tr.opacity, isMain: ti === 0, isColor: d.isColor, alpha: Render.pictureAlpha(c, t - c.start) };
       };
       const b = cs[cs.length - 1];
       if (cs.length > 1 && b.tIn) {
@@ -3689,17 +4031,19 @@
   // Display size of a clip's picture (before crop).
   function srcDims(c) {
     if (c.kind === 'color') { const o = outputDims(); return colorDims(c, o.w, o.h); }
+    if (c.kind === 'text') { const o = outputDims(); const r = renderTextCanvas(c, o.w, o.h); return { w: r.w, h: r.h }; }
     const s = srcOf(c);
     if (!s) return { w: 16, h: 9 };
     return c.kind === 'video' ? Render.displaySize(s) : { w: s.width, h: s.height };
   }
   function layoutFor(c, W, H, tf) {
     const d = srcDims(c);
-    const t = Render.tfOf(tf || c.tf);
+    const t = Render.tfOf(c.kind === 'text' ? { ...(tf || c.tf), fit: 'abs', absW: outputDims().w } : tf || c.tf);
     return Render.clipLayout(d.w * t.crop.w, d.h * t.crop.h, W, H, t);
   }
   // Size relative to "fit" (1 = fit), whatever the size mode is.
   function effectiveScale(c) {
+    if (c.kind === 'text') return Render.tfOf(c.tf).scale; // text: relative to its font size
     const o = outputDims();
     const g = layoutFor(c, o.w, o.h);
     return g.s / g.fitS;
@@ -3711,15 +4055,21 @@
   // (crop only for videos and images).
   function tfTargets(patch) {
     const list = multi() ? selFinds() : [findClip(selectedId)].filter(Boolean);
-    return list.filter((f) => f.clip.kind !== 'audio' && !(('crop' in patch || 'cropRatio' in patch) && f.clip.kind === 'color'));
+    return list.filter((f) => f.clip.kind !== 'audio' && !(('crop' in patch || 'cropRatio' in patch) && (f.clip.kind === 'color' || f.clip.kind === 'text')));
   }
+  // Text keeps its own size mode (font size × scale); Fit/Fill don't apply.
+  const tfPatchFor = (c, patch) => {
+    if (c.kind !== 'text' || !('fit' in patch)) return patch;
+    const { fit, ...rest } = patch;
+    return fit === 'free' ? rest : ('scale' in rest ? rest : {});
+  };
   function liveEdit(patch) {
     const list = tfTargets(patch);
     if (!list.length) return;
     if (!liveBefore) liveBefore = snapshot();
     for (const f of list) {
       const i = f.tr.clips.indexOf(f.clip);
-      f.tr.clips[i] = { ...f.clip, tf: { ...Render.tfOf(f.clip.tf), ...patch } };
+      f.tr.clips[i] = { ...f.clip, tf: { ...Render.tfOf(f.clip.tf), ...tfPatchFor(f.clip, patch) } };
     }
     renderPreview();
     syncTransformUI();
@@ -3737,9 +4087,9 @@
     const c = selClip();
     if (!c) return;
     liveCommit();
-    if (!multi()) { updateSelected({ tf: { ...Render.tfOf(c.tf), ...patch } }); return; }
+    if (!multi()) { updateSelected({ tf: { ...Render.tfOf(c.tf), ...tfPatchFor(c, patch) } }); return; }
     const list = tfTargets(patch);
-    commit(() => list.forEach((f) => { f.clip.tf = { ...Render.tfOf(f.clip.tf), ...patch }; }));
+    commit(() => list.forEach((f) => { f.clip.tf = { ...Render.tfOf(f.clip.tf), ...tfPatchFor(f.clip, patch) }; }));
   }
 
   // The clip whose transform the tabs show: the selected one, or (several selected) the first picture.
@@ -3752,6 +4102,7 @@
   function syncTransformUI() {
     const c = tfRef();
     if (!c) return;
+    $('fitToggle').hidden = c.kind === 'text'; // text: size = font size × slider
     const t = Render.tfOf(c.tf);
     $('anchorGrid').querySelectorAll('button').forEach((b) => {
       const on = b.dataset.anchor === t.anchor;
@@ -3883,7 +4234,7 @@
   let snapGuides = null; // { x: [...], y: [...] } in preview pixels
 
   function drawMoveOverlay(clip, d, W, H, dpr) {
-    const t = Render.tfOf(clip.tf);
+    const t = Render.tfOf(d.tf || clip.tf);
     const g = Render.clipLayout(d.w * t.crop.w, d.h * t.crop.h, W, H, t);
     pvCtx.save();
     pvCtx.translate(g.cx, g.cy);
@@ -4372,6 +4723,9 @@
     abortCtl = new AbortController();
     try { if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) { wakeLock = null; }
 
+    // Fonts of text clips must be loaded before the text is drawn.
+    await Promise.all([...new Set(allClips().filter((c) => c.kind === 'text').map((c) => textOf(c).font))].map(ensureFont));
+    textCache.clear();
     const s = getExportSettings();
     // Clip times are in media time; the export reads the actual (possibly trimmed-copy) file.
     const scopeSelected = exportState.scope === 'selected';
@@ -4386,7 +4740,8 @@
     const expClip0 = (c, start) => {
       if (isVideoClip(c)) { const src = srcOf(c); return { kind: 'video', source: src, start, in: c.in - src.base, out: c.out - src.base, muted: c.muted, tf: c.tf, ...sound(c) }; }
       if (c.kind === 'audio') { const src = srcOf(c); const b = src.base || 0; return { kind: 'audio', source: src, start, in: c.in - b, out: c.out - b, muted: c.muted, ...sound(c) }; }
-      return { kind: c.kind, source: srcOf(c) || null, start, in: c.in, out: c.out, muted: true, still: stillFor(c, s.width, s.height), tf: c.tf, vFadeIn: c.vFadeIn || 0, vFadeOut: c.vFadeOut || 0 };
+      const still = stillFor(c, s.width, s.height);
+      return { kind: c.kind, source: srcOf(c) || null, start, in: c.in, out: c.out, muted: true, still, tf: (still && still.tf) || c.tf, vFadeIn: c.vFadeIn || 0, vFadeOut: c.vFadeOut || 0 };
     };
     const sel = selClip();
     const expTracks = scopeSelected && sel
@@ -4510,7 +4865,10 @@
 
   function referencedIds() {
     const ids = new Set();
-    const add = (list) => list.forEach((tr) => tr.clips.forEach((c) => { if (c.srcId) ids.add(c.srcId); }));
+    const add = (list) => list.forEach((tr) => tr.clips.forEach((c) => {
+      if (c.srcId) ids.add(c.srcId);
+      if (c.text && String(c.text.font).startsWith('src:')) ids.add(c.text.font.slice(4)); // fonts of text clips
+    }));
     add(tracks);
     undoStack.forEach(add);
     redoStack.forEach(add);
@@ -4780,6 +5138,13 @@
   }
 
   async function attach(m, file, base, extra = {}) {
+    if (m.kind === 'font') {
+      const src = Object.assign(makeFontSource(m, file), extra);
+      const key = 'src:' + m.id;
+      const p = registerUserFont(src).then((ok) => { if (ok) { fontReady.add(key); textCache.clear(); renderPreview(); } else fontLoads.delete(key); return ok; });
+      fontLoads.set(key, p);
+      return src;
+    }
     if (m.kind === 'audio') {
       let duration = m.duration;
       if (!(duration > 0)) duration = (await decodeAudioFile(file)).duration; // project file from elsewhere
@@ -5265,7 +5630,7 @@
       name.textContent = m.name;
       const where = document.createElement('div');
       where.className = 'm-meta';
-      const kind = m.kind === 'image' ? 'Image' : m.kind === 'audio' ? 'Audio' : 'Video';
+      const kind = m.kind === 'image' ? 'Image' : m.kind === 'audio' ? 'Audio' : m.kind === 'font' ? 'Font' : 'Video';
       if (m.missing) where.textContent = `${kind} · missing — select it again`;
       else if (m.storage === 'opfs') where.textContent = `${kind} · working copy in this browser's storage · ${fmtSize(sizes.get(m.copyName) || 0)}`;
       else if (m.storage === 'handle') where.textContent = `${kind} · linked to the original file "${m.name}" on this computer`;
