@@ -29,6 +29,14 @@ A privacy-friendly video editor and compressor that runs entirely in your browse
 - Pre-trimming is instant — nothing is re-encoded; it simply limits which part of the file goes onto the timeline
 - Configurable in **Settings**: offer for large videos (default), for every video, or never
 
+### Transitions & picture fades
+- Where two clips of a visual track meet, a small **+** sits on the cut; tap it to add a transition, tap the **⧓** marker to edit it in the transition panel
+- Types: **Cross-fade, Dip to black, Dip to white, Wipe** (left/right/up/down), **Slide** (left/right/up/down), **Zoom** (in/out), **Circle** and **Blur** (falls back to a cross-fade where the browser can't blur canvases)
+- Duration 0.1–3 s (default 0.5 s, at most half the shorter clip). The two clips **overlap** by the duration, so the project gets that much shorter; on the magnetic main track the following clips move up, on free tracks the second clip moves into the first (moving one of them later removes the transition)
+- The sound is cross-faded (equal power) during the transition; switch it off for a hard cut in the middle
+- **Apply to all cuts on this track**; a new transition starts with the type and duration chosen last; transitions are saved with the project, undoable and included in the export (preview and export use the same drawing code). On the main track each clip keeps its own background (color or blur) during the transition
+- **Fade tab** (videos, images, color clips): picture fade in/out from/to the background (upper tracks: to transparent); for videos *Picture and sound together* (on by default) keeps the picture and sound fades the same
+
 ### Audio
 - **Audio files** — MP3, M4A/AAC, WAV, FLAC, OGG/Opus (whatever the browser can decode; Safari has no OGG) — via *Add → Audio*, drag & drop or paste. They land at the playhead on the topmost **audio track** with room, or on a new one
 - **Audio tracks** lie below the main track; they hold sound only (pictures can't be dragged onto them and vice versa). Clips sit freely in time, gaps are silent. Track header: 🔊 mute; tap it for volume, order and delete

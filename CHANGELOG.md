@@ -1,5 +1,12 @@
 # Changelog
 
+### 0.10.0 — 2026-10-31 — Transitions
+- Transitions on cuts between clips (main track and upper tracks): cross-fade, dip to black, dip to white, wipe, slide, zoom, circle, blur; direction and duration 0.1–3 s
+- + on every cut to add one, ⧓ marker to edit; transition panel with Apply to all cuts on this track and Remove
+- The clips overlap by the transition's length (the project gets shorter); the sound is cross-faded, or cut hard in the middle if switched off
+- New Fade tab: picture fade in/out for videos, images and color clips; "Picture and sound together" for videos
+- Export and preview draw transitions and fades identically
+
 ### 0.9.10 — 2026-10-31 — Drag in select mode
 - Fix: on phones, selected clips couldn't be dragged while the selection mode (long press / Select button) was on. Now a tap still adds or removes a clip, and dragging a selected clip moves all selected clips
 

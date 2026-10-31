@@ -320,22 +320,141 @@
   /**
    * Draw one frame of the composition: background, optional blur from the main
    * track's picture, then every layer bottom to top with its track opacity.
-   * layers: [{ drawable, w, h, rot, tf, opacity, isMain, isColor }]
+   * layers: [{ drawable, w, h, rot, tf, opacity, alpha, isMain, isColor }]
+   *   or a transition between two clips of one track:
+   *   { trans: { a: layer, b: layer, type, dir, p }, opacity, isMain }
    */
   function composite(ctx, W, H, layers, bgMode, bg) {
     ctx.save();
     ctx.globalAlpha = 1;
     ctx.fillStyle = bg || '#000';
     ctx.fillRect(0, 0, W, H);
-    const main = layers.find((l) => l.isMain);
+    let main = layers.find((l) => l.isMain);
+    if (main && main.trans) main = main.trans.p < 0.5 ? main.trans.a : main.trans.b;
     if (bgMode === 'blur' && main && !main.isColor) {
       const r = ((main.rot || 0) % 360 + 360) % 360;
       const rotated = r === 90 || r === 270;
       drawBlurBg(ctx, main.drawable, main.w, main.h, r, rotated ? main.h : main.w, rotated ? main.w : main.h, W, H);
     }
     for (const l of layers) {
-      ctx.globalAlpha = l.opacity == null ? 1 : l.opacity;
+      if (l.trans) { drawTransition(ctx, W, H, l, bg, bgMode); continue; }
+      ctx.globalAlpha = (l.opacity == null ? 1 : l.opacity) * (l.alpha == null ? 1 : l.alpha);
       drawClip(ctx, l.drawable, l.w, l.h, l.rot, W, H, l.tf, 'none', null);
+    }
+    ctx.restore();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Transitions: both clips are drawn into their own canvas, then combined.
+  // ---------------------------------------------------------------------------
+  const TRANSITIONS = ['fade', 'black', 'white', 'wipe', 'slide', 'zoom', 'circle', 'blur'];
+  const transCanvases = [null, null];
+  function transCanvas(i, W, H) {
+    let c = transCanvases[i];
+    if (!c || c.width !== W || c.height !== H) { c = makeCanvas(W, H); transCanvases[i] = c; }
+    const x = c.getContext('2d');
+    x.setTransform(1, 0, 0, 1, 0, 0);
+    x.globalAlpha = 1;
+    x.clearRect(0, 0, W, H);
+    return c;
+  }
+  // Main track: each clip of a transition carries its own background (color or blur).
+  function paintLayer(c, l, W, H, bg, bgMode) {
+    if (!l) return;
+    const x = c.getContext('2d');
+    if (bg != null) {
+      x.fillStyle = bg || '#000';
+      x.fillRect(0, 0, W, H);
+      if (bgMode === 'blur' && !l.isColor) {
+        const r = ((l.rot || 0) % 360 + 360) % 360;
+        const rotated = r === 90 || r === 270;
+        drawBlurBg(x, l.drawable, l.w, l.h, r, rotated ? l.h : l.w, rotated ? l.w : l.h, W, H);
+      }
+    }
+    x.globalAlpha = l.alpha == null ? 1 : l.alpha;
+    drawClip(x, l.drawable, l.w, l.h, l.rot, W, H, l.tf, 'none', null);
+    x.globalAlpha = 1;
+  }
+  const smooth = (p) => p * p * (3 - 2 * p);
+  let filterOk = null;
+  function drawTransition(ctx, W, H, l, bg, bgMode) {
+    const { a, b, type, dir } = l.trans;
+    const p = Math.min(1, Math.max(0, l.trans.p));
+    const e = smooth(p);
+    const op = l.opacity == null ? 1 : l.opacity;
+    const ta = transCanvas(0, W, H), tb = transCanvas(1, W, H);
+    paintLayer(ta, a, W, H, l.isMain ? bg : null, bgMode);
+    paintLayer(tb, b, W, H, l.isMain ? bg : null, bgMode);
+    const draw = (c, alpha, dx = 0, dy = 0, scale = 1) => {
+      if (alpha <= 0) return;
+      ctx.save();
+      ctx.globalAlpha = op * Math.min(1, alpha);
+      if (scale !== 1) { ctx.translate(W / 2, H / 2); ctx.scale(scale, scale); ctx.translate(-W / 2, -H / 2); }
+      ctx.drawImage(c, dx, dy);
+      ctx.restore();
+    };
+    ctx.save();
+    switch (type) {
+      case 'black': case 'white': {
+        // Over the main track through a color; overlays fade through transparency.
+        const col = type === 'black' ? '#000' : '#fff';
+        if (p < 0.5) {
+          draw(ta, l.isMain ? 1 : 1 - p * 2);
+          if (l.isMain) { ctx.globalAlpha = op * Math.min(1, p * 2); ctx.fillStyle = col; ctx.fillRect(0, 0, W, H); }
+        } else {
+          draw(tb, l.isMain ? 1 : p * 2 - 1);
+          if (l.isMain) { ctx.globalAlpha = op * Math.min(1, (1 - p) * 2); ctx.fillStyle = col; ctx.fillRect(0, 0, W, H); }
+        }
+        break;
+      }
+      case 'wipe': {
+        draw(ta, 1);
+        ctx.save();
+        ctx.beginPath();
+        if (dir === 'right') ctx.rect(0, 0, W * e, H);
+        else if (dir === 'up') ctx.rect(0, H * (1 - e), W, H * e);
+        else if (dir === 'down') ctx.rect(0, 0, W, H * e);
+        else ctx.rect(W * (1 - e), 0, W * e, H); // left: the edge moves to the left
+        ctx.clip();
+        draw(tb, 1);
+        ctx.restore();
+        break;
+      }
+      case 'slide': {
+        const v = { left: [-1, 0], right: [1, 0], up: [0, -1], down: [0, 1] }[dir] || [-1, 0];
+        draw(ta, 1, v[0] * e * W, v[1] * e * H);
+        draw(tb, 1, -v[0] * (1 - e) * W, -v[1] * (1 - e) * H);
+        break;
+      }
+      case 'zoom': {
+        if (dir === 'out') { draw(ta, 1 - e, 0, 0, 1 - 0.3 * e); draw(tb, e, 0, 0, 1.6 - 0.6 * e); }
+        else { draw(ta, 1 - e, 0, 0, 1 + 0.6 * e); draw(tb, e, 0, 0, 0.7 + 0.3 * e); }
+        break;
+      }
+      case 'circle': {
+        draw(ta, 1);
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(W / 2, H / 2, e * Math.hypot(W, H) / 2, 0, Math.PI * 2);
+        ctx.clip();
+        draw(tb, 1);
+        ctx.restore();
+        break;
+      }
+      case 'blur': {
+        if (filterOk === null) filterOk = typeof ctx.filter === 'string';
+        if (filterOk) {
+          const amt = Math.sin(Math.PI * p) * Math.max(4, W * 0.025);
+          ctx.filter = `blur(${amt.toFixed(1)}px)`;
+        }
+        draw(ta, l.isMain ? 1 : 1 - e);
+        draw(tb, e);
+        ctx.filter = 'none';
+        break;
+      }
+      default: // fade (cross-dissolve)
+        draw(ta, l.isMain ? 1 : 1 - e);
+        draw(tb, e);
     }
     ctx.restore();
   }
@@ -344,6 +463,10 @@
   function clipAtTime(trackClips, t) {
     for (const c of trackClips) if (t >= c.start - 1e-6 && t < c.start + (c.out - c.in) - 1e-6) return c;
     return null;
+  }
+  // All clips of a track at time t (two during a transition).
+  function clipsAtTime(trackClips, t) {
+    return trackClips.filter((c) => t >= c.start - 1e-6 && t < c.start + (c.out - c.in) - 1e-6);
   }
 
   /** Decodes one video clip forward and hands out the frame for a given time. */
@@ -513,7 +636,24 @@
     let g = c.volume == null ? 1 : c.volume;
     if (c.fadeIn > 0 && x < c.fadeIn) g *= fadeCurve(x / c.fadeIn);
     if (c.fadeOut > 0 && x > len - c.fadeOut) g *= fadeCurve((len - x) / c.fadeOut);
+    // Transitions: the sound crosses over (equal power), or cuts hard in the middle.
+    if (c.tIn && c.tIn.dur > 0) {
+      const d = c.tIn.dur;
+      if (c.tIn.audio === false) { if (x < d / 2) g = 0; } else if (x < d) g *= Math.sin((Math.max(0, x) / d) * Math.PI / 2);
+    }
+    if (c.tOut && c.tOut.dur > 0) {
+      const d = c.tOut.dur, r = len - x;
+      if (c.tOut.audio === false) { if (r <= d / 2) g = 0; } else if (r < d) g *= Math.sin((Math.max(0, r) / d) * Math.PI / 2);
+    }
     return g;
+  }
+  /** Opacity of a clip's picture at local time x (picture fade in/out). */
+  function pictureAlpha(c, x) {
+    const len = c.out - c.in;
+    let a = 1;
+    if (c.vFadeIn > 0 && x < c.vFadeIn) a *= fadeCurve(x / c.vFadeIn);
+    if (c.vFadeOut > 0 && x > len - c.vFadeOut) a *= fadeCurve((len - x) / c.vFadeOut);
+    return a;
   }
   // Soft limiter: quiet signals pass unchanged, peaks above 0.9 are bent smoothly towards 1.
   const limit = (x) => {
@@ -611,16 +751,28 @@
         for (let ti = 0; ti < tracks.length; ti++) {
           const tr = tracks[ti];
           if (tr.kind === 'audio' || tr.hidden || tr.opacity === 0) continue;
-          const c = clipAtTime(tr.clips, t);
-          if (!c) continue;
-          const base = { tf: c.tf, opacity: tr.opacity == null ? 1 : tr.opacity, isMain: ti === 0 };
-          if (c.kind === 'video') {
-            let r = readers.get(c);
-            if (!r) { r = new VideoReader(c); readers.set(c, r); }
-            const f = await r.frameAt(c.in + (t - c.start), signal);
-            if (f) layers.push({ ...base, drawable: f, w: f.displayWidth, h: f.displayHeight, rot: c.source.rotation, isColor: false });
-          } else if (c.still) {
-            layers.push({ ...base, drawable: c.still.drawable, w: c.still.w, h: c.still.h, rot: 0, isColor: c.still.isColor });
+          const cs = clipsAtTime(tr.clips, t);
+          if (!cs.length) continue;
+          const opacity = tr.opacity == null ? 1 : tr.opacity, isMain = ti === 0;
+          const layerOf = async (c) => {
+            const base = { tf: c.tf, opacity, isMain, alpha: pictureAlpha(c, t - c.start) };
+            if (c.kind === 'video') {
+              let r = readers.get(c);
+              if (!r) { r = new VideoReader(c); readers.set(c, r); }
+              const f = await r.frameAt(c.in + (t - c.start), signal);
+              return f ? { ...base, drawable: f, w: f.displayWidth, h: f.displayHeight, rot: c.source.rotation, isColor: false } : null;
+            }
+            if (c.still) return { ...base, drawable: c.still.drawable, w: c.still.w, h: c.still.h, rot: 0, isColor: c.still.isColor };
+            return null;
+          };
+          const b = cs[cs.length - 1];
+          if (cs.length > 1 && b.tIn) {
+            const la = await layerOf(cs[cs.length - 2]), lb = await layerOf(b);
+            if (la && lb) layers.push({ trans: { a: la, b: lb, type: b.tIn.type, dir: b.tIn.dir, p: (t - b.start) / b.tIn.dur }, opacity, isMain });
+            else if (la || lb) layers.push(la || lb);
+          } else {
+            const l = await layerOf(b);
+            if (l) layers.push(l);
           }
         }
         composite(ctx, out.width, out.height, layers, bgMode, settings.bg);
@@ -735,6 +887,6 @@
 
   global.Render = {
     QUALITY, presetBitrate, computeOutput, estimateSize, drawClip, composite, clipAtTime, clipLayout, tfOf, DEFAULT_TF, ANCHORS, displaySize,
-    hasWebCodecs, canDecodeVideo, canDecodeAudio, canEncodeHevc, exportTimeline, audioPeaks, clipGain,
+    hasWebCodecs, canDecodeVideo, canDecodeAudio, canEncodeHevc, exportTimeline, audioPeaks, clipGain, pictureAlpha, clipsAtTime, TRANSITIONS,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

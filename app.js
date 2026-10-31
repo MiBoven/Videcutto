@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.9.10';
+  const VERSION = '0.10.0';
   const $ = (id) => document.getElementById(id);
 
   // ---------------------------------------------------------------------------
@@ -218,6 +218,7 @@
   const selIds = new Set();    // all selected clips (multi-selection)
   let selAnchor = null;        // last clicked clip, for Shift + click ranges
   let selectMode = false;      // phones: taps add/remove clips (long press or the Select button)
+  let selTrans = null;         // selected cut/transition: { track, clip } (clip = the one after the cut)
   let selectedTrackId = null;
   let clipboard = null;
   let undoStack = [];
@@ -237,14 +238,36 @@
   const clipLen = (c) => c.out - c.in;
   const clipEnd = (c) => c.start + clipLen(c);
   const allClips = () => tracks.flatMap((t) => t.clips);
+  // A transition belongs to the clip after the cut (clip.tIn = { type, dir, dur, audio }):
+  // the two clips overlap by its duration.
+  const maxTransDur = (a, b) => Math.max(0.1, Math.min(3, clipLen(a) / 2, clipLen(b) / 2));
   function layoutTrack(tr) {
     if (tr.magnetic) {
       let s = 0;
-      for (const c of tr.clips) { c.start = s; s += clipLen(c); }
+      tr.clips.forEach((c, i) => {
+        if (c.tIn) {
+          if (i === 0) delete c.tIn;
+          else c.tIn.dur = Math.min(c.tIn.dur, maxTransDur(tr.clips[i - 1], c));
+        }
+        if (c.tIn) s -= c.tIn.dur;
+        c.start = Math.max(0, s);
+        s = c.start + clipLen(c);
+      });
     } else {
       for (const c of tr.clips) if (!(c.start >= 0)) c.start = 0;
       tr.clips.sort((a, b) => a.start - b.start);
+      // On free tracks a transition stays only while the clips still meet exactly.
+      tr.clips.forEach((c, i) => {
+        if (!c.tIn) return;
+        const prev = tr.clips[i - 1];
+        if (!prev || Math.abs(clipEnd(prev) - c.tIn.dur - c.start) > 0.01 || c.tIn.dur > maxTransDur(prev, c) + 0.01) delete c.tIn;
+      });
     }
+  }
+  // Transition after a clip (its sound and picture are faded out there).
+  function tOutOf(tr, c) {
+    const i = tr.clips.indexOf(c), n = tr.clips[i + 1];
+    return n && n.tIn ? { dur: n.tIn.dur, audio: n.tIn.audio } : null;
   }
   const relayout = () => tracks.forEach(layoutTrack);
   function setTracks(t) {
@@ -971,7 +994,8 @@
   // ---------------------------------------------------------------------------
   // Undo / redo (snapshots of all tracks)
   // ---------------------------------------------------------------------------
-  const snapshot = () => tracks.map((t) => ({ ...t, clips: t.clips.map((c) => ({ ...c })) }));
+  const copyClip = (c) => (c.tIn ? { ...c, tIn: { ...c.tIn } } : { ...c });
+  const snapshot = () => tracks.map((t) => ({ ...t, clips: t.clips.map(copyClip) }));
   function pushUndo(before) {
     undoStack.push(before);
     while (undoStack.length > settings.undoSteps) undoStack.shift();
@@ -1097,7 +1121,7 @@
         for (const f of hits) {
           const c = f.clip, offset = playhead - c.start, i = f.tr.clips.indexOf(c);
           const left = { ...c, id: newId(), out: c.in + offset };
-          const right = { ...c, id: newId(), in: c.in + offset, start: c.start + offset };
+          const right = { ...c, id: newId(), in: c.in + offset, start: c.start + offset, tIn: undefined };
           f.tr.clips.splice(i, 1, left, right);
           rights.push(right.id);
           if (canvasState.cropClipId === c.id) canvasState.cropClipId = left.id;
@@ -1114,7 +1138,7 @@
     if (offset < CUT_EDGE || offset > clipLen(c) - CUT_EDGE) { toast('The playhead is exactly at the edge of the clip — there is nothing to cut off there.'); return; }
     commit(() => {
       const left = { ...c, id: newId(), out: c.in + offset };
-      const right = { ...c, id: newId(), in: c.in + offset, start: c.start + offset };
+      const right = { ...c, id: newId(), in: c.in + offset, start: c.start + offset, tIn: undefined };
       f.tr.clips.splice(f.idx, 1, left, right);
       selectedId = right.id;
       if (canvasState.cropClipId === c.id) canvasState.cropClipId = left.id;
@@ -1194,7 +1218,7 @@
     const t0 = Math.min(...list.map((f) => f.clip.start));
     clipboard = {
       items: list.sort((x, y) => x.clip.start - y.clip.start).map((f) => {
-        const { id, ...data } = f.clip;
+        const { id, tIn, ...data } = f.clip;
         return { data, rel: f.clip.start - t0, fromMain: f.ti === 0, track: f.tr.id, kind: f.tr.kind || 'video' };
       }),
     };
@@ -1218,7 +1242,7 @@
           const c = a.clip, len = clipLen(c);
           if (a.offset <= EDGE) { insertAt = a.idx; insertTime = a.start; } else if (a.offset >= len - EDGE) { insertAt = a.idx + 1; insertTime = a.start + len; } else {
             const left = { ...c, id: newId(), out: c.in + a.offset };
-            const right = { ...c, id: newId(), in: c.in + a.offset };
+            const right = { ...c, id: newId(), in: c.in + a.offset, tIn: undefined };
             main.clips.splice(a.idx, 1, left, right);
             insertAt = a.idx + 1; insertTime = a.start + a.offset;
           }
@@ -1328,6 +1352,7 @@
   function updateClipPanel() {
     const c = selClip();
     const panel = $('clipPanel');
+    updateTransPanel();
     if (!c) { panel.hidden = true; updateTransformingClass(); updateTrackPanel(); return; }
     const src = srcOf(c);
     panel.hidden = false;
@@ -1350,8 +1375,10 @@
     $('cpTabPosition').hidden = audio;
     $('cpTabRotate').hidden = audio;
     $('cpTabAudio').hidden = !isSoundClip(c);
-    if ((cpTab === 'crop' && (c.kind === 'color' || audio)) || (audio && (cpTab === 'position' || cpTab === 'rotate')) || (cpTab === 'audio' && !isSoundClip(c))) showTab('clip');
+    $('cpTabFade').hidden = audio;
+    if ((cpTab === 'crop' && (c.kind === 'color' || audio)) || (audio && (cpTab === 'position' || cpTab === 'rotate' || cpTab === 'fade')) || (cpTab === 'audio' && !isSoundClip(c))) showTab('clip');
     syncAudioUI(c);
+    syncFadeUI(c);
     syncTimeUI();
     updateTransformingClass();
     syncTransformUI();
@@ -1390,7 +1417,9 @@
     $('cpTabPosition').hidden = !pics.length;
     $('cpTabRotate').hidden = !pics.length;
     $('cpTabAudio').hidden = !sound.length;
-    const ok = { clip: true, audio: sound.length > 0, crop: croppable.length > 0, position: pics.length > 0, rotate: pics.length > 0 };
+    $('cpTabFade').hidden = !pics.length;
+    if (pics.length) syncFadeUI(pics.find((f) => f.clip.id === selectedId) ? selClip() : pics[0].clip);
+    const ok = { clip: true, audio: sound.length > 0, crop: croppable.length > 0, position: pics.length > 0, rotate: pics.length > 0, fade: pics.length > 0 };
     if (!ok[cpTab]) showTab('clip');
     if (pics.length) syncTransformUI();
     if (sound.length) syncAudioUI(sound.find((f) => f.clip.id === selectedId) ? selClip() : sound[0].clip);
@@ -1416,7 +1445,8 @@
   let clipLiveBefore = null;
   function liveClip(patch) {
     // Volume and fades apply to every selected clip with sound.
-    const list = multi() ? selFinds().filter((x) => isSoundClip(x.clip)) : [findClip(selectedId)].filter(Boolean);
+    const pic = 'vFadeIn' in patch || 'vFadeOut' in patch;
+    const list = multi() ? selFinds().filter((x) => isSoundClip(x.clip) || (pic && x.clip.kind !== 'audio')) : [findClip(selectedId)].filter(Boolean);
     if (!list.length) return;
     if (!clipLiveBefore) clipLiveBefore = snapshot();
     let shown = null;
@@ -1424,14 +1454,17 @@
       const c = { ...f.clip, ...patch };
       // Fades never overlap.
       const len = clipLen(c);
-      if ((c.fadeIn || 0) + (c.fadeOut || 0) > len) {
-        if ('fadeIn' in patch) c.fadeOut = Math.max(0, len - c.fadeIn); else c.fadeIn = Math.max(0, len - c.fadeOut);
-        c.fadeIn = Math.min(c.fadeIn, len); c.fadeOut = Math.min(c.fadeOut, len);
+      for (const [i, o] of [['fadeIn', 'fadeOut'], ['vFadeIn', 'vFadeOut']]) {
+        if ((c[i] || 0) + (c[o] || 0) > len) {
+          if (i in patch) c[o] = Math.max(0, len - c[i]); else c[i] = Math.max(0, len - (c[o] || 0));
+          c[i] = Math.min(c[i] || 0, len); c[o] = Math.min(c[o] || 0, len);
+        }
       }
       f.tr.clips[f.tr.clips.indexOf(f.clip)] = c;
       if (!shown || c.id === selectedId) shown = c;
     }
     syncAudioUI(shown);
+    syncFadeUI(shown);
     syncPool();
     renderClips();
   }
@@ -1442,8 +1475,30 @@
     afterEdit();
   }
   $('volRange').addEventListener('input', (e) => liveClip({ volume: Math.abs(e.target.value - 100) < 4 ? 1 : e.target.value / 100 }));
-  $('fadeInRange').addEventListener('input', (e) => liveClip({ fadeIn: +e.target.value }));
-  $('fadeOutRange').addEventListener('input', (e) => liveClip({ fadeOut: +e.target.value }));
+  // Videos: picture and sound fade together unless that's switched off.
+  const linked = () => { const c = selClip(); return !!c && c.kind === 'video' && c.fadeLink !== false; };
+  $('fadeInRange').addEventListener('input', (e) => liveClip(linked() ? { fadeIn: +e.target.value, vFadeIn: +e.target.value } : { fadeIn: +e.target.value }));
+  $('fadeOutRange').addEventListener('input', (e) => liveClip(linked() ? { fadeOut: +e.target.value, vFadeOut: +e.target.value } : { fadeOut: +e.target.value }));
+  $('vFadeInRange').addEventListener('input', (e) => liveClip(linked() ? { vFadeIn: +e.target.value, fadeIn: +e.target.value } : { vFadeIn: +e.target.value }));
+  $('vFadeOutRange').addEventListener('input', (e) => liveClip(linked() ? { vFadeOut: +e.target.value, fadeOut: +e.target.value } : { vFadeOut: +e.target.value }));
+  ['vFadeInRange', 'vFadeOutRange'].forEach((id) => $(id).addEventListener('change', liveClipCommit));
+  $('fadeLinkChk').addEventListener('change', (e) => {
+    const on = e.target.checked;
+    const list = (multi() ? selFinds() : [findClip(selectedId)].filter(Boolean)).filter((f) => f.clip.kind === 'video');
+    commit(() => list.forEach((f) => { f.clip.fadeLink = on; if (on) { f.clip.fadeIn = f.clip.vFadeIn || 0; f.clip.fadeOut = f.clip.vFadeOut || 0; } }));
+  });
+  function syncFadeUI(c) {
+    if (!c || c.kind === 'audio') return;
+    const len = clipLen(c);
+    const maxFade = Math.max(0.1, Math.min(10, len)).toFixed(1);
+    for (const [k, id] of [['vFadeIn', 'vFadeIn'], ['vFadeOut', 'vFadeOut']]) {
+      $(id + 'Range').max = maxFade;
+      if (document.activeElement !== $(id + 'Range')) $(id + 'Range').value = c[k] || 0;
+      $(id + 'Val').textContent = (c[k] || 0).toFixed(1) + ' s';
+    }
+    $('fadeLinkRow').hidden = c.kind !== 'video';
+    $('fadeLinkChk').checked = c.fadeLink !== false;
+  }
   ['volRange', 'fadeInRange', 'fadeOutRange'].forEach((id) => $(id).addEventListener('change', liveClipCommit));
   $('audioReset').addEventListener('click', () => {
     if (!multi()) { updateSelected({ volume: 1, fadeIn: 0, fadeOut: 0 }); return; }
@@ -1743,6 +1798,124 @@
     if (exportState.scope === 'selected') updateEstimate();
     updateClipPanel();
   }
+
+  // ---------------------------------------------------------------------------
+  // Transitions (tap ⧓ or + on a cut)
+  // ---------------------------------------------------------------------------
+  const TRANS_NAMES = { fade: 'Cross-fade', black: 'Dip to black', white: 'Dip to white', wipe: 'Wipe', slide: 'Slide', zoom: 'Zoom', circle: 'Circle', blur: 'Blur' };
+  const TRANS_DIRS = { wipe: ['left', 'right', 'up', 'down'], slide: ['left', 'right', 'up', 'down'], zoom: ['in', 'out'] };
+  const DIR_LABEL = { left: '← Left', right: 'Right →', up: '↑ Up', down: 'Down ↓', in: 'In', out: 'Out' };
+  // The cut before clip `clipId` on track `trackId`: { tr, idx, prev, clip } if the clips meet.
+  function cutAt(trackId, clipId) {
+    const tr = findTrack(trackId);
+    if (!tr) return null;
+    const idx = tr.clips.findIndex((c) => c.id === clipId);
+    if (idx < 1) return null;
+    const prev = tr.clips[idx - 1], clip = tr.clips[idx];
+    if (!clip.tIn && Math.abs(clipEnd(prev) - clip.start) > 0.01) return null;
+    return { tr, idx, prev, clip };
+  }
+  // Give a cut a transition (free tracks: the second clip moves into the first by the duration).
+  function setTransition(cut, t) {
+    const old = cut.clip.tIn;
+    const dur = clamp(t.dur, 0.1, maxTransDur(cut.prev, cut.clip));
+    cut.clip.tIn = { type: t.type || 'fade', dir: t.dir || (TRANS_DIRS[t.type] || [])[0] || 'left', dur, audio: t.audio !== false };
+    if (!cut.tr.magnetic) cut.clip.start = clipEnd(cut.prev) - dur;
+    else if (old) { /* layoutTrack recomputes the starts */ }
+  }
+  function removeTransition(cut) {
+    if (!cut.clip.tIn) return;
+    if (!cut.tr.magnetic) cut.clip.start = clipEnd(cut.prev);
+    delete cut.clip.tIn;
+  }
+  function selectCut(trackId, clipId) {
+    const cut = cutAt(trackId, clipId);
+    if (!cut) return;
+    selectedId = null;
+    selectedTrackId = null;
+    selTrans = { track: trackId, clip: clipId };
+    if (!cut.clip.tIn) {
+      commit(() => { const c2 = cutAt(trackId, clipId); if (c2) setTransition(c2, lastTrans || { type: 'fade', dur: 0.5 }); });
+    } else afterSelect();
+  }
+  let lastTrans = null; // the last chosen transition is the default for the next cut
+  function updateTransPanel() {
+    const panel = $('transPanel');
+    const cut = selTrans && !selectedId && !selectedTrackId ? cutAt(selTrans.track, selTrans.clip) : null;
+    if (!cut || !cut.clip.tIn) { panel.hidden = true; if (selTrans && (!cut || !cut.clip.tIn)) selTrans = null; return; }
+    panel.hidden = false;
+    const t = cut.clip.tIn;
+    $('trTitle').textContent = `${TRANS_NAMES[t.type]} · between clip ${cut.idx} and ${cut.idx + 1}`;
+    $('trTypes').querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.type === t.type));
+    const dirs = TRANS_DIRS[t.type];
+    $('trDirRow').hidden = !dirs;
+    if (dirs) {
+      $('trDir').replaceChildren(...dirs.map((d) => {
+        const b = Object.assign(document.createElement('button'), { type: 'button', className: 'seg-btn' + (t.dir === d ? ' active' : ''), textContent: DIR_LABEL[d] });
+        b.dataset.dir = d;
+        return b;
+      }));
+    }
+    const max = maxTransDur(cut.prev, cut.clip);
+    $('trDur').max = max.toFixed(1);
+    if (document.activeElement !== $('trDur')) $('trDur').value = t.dur;
+    $('trDurVal').textContent = t.dur.toFixed(1) + ' s';
+    $('trAudio').checked = t.audio !== false;
+  }
+  const editCut = (fn) => {
+    const cut = selTrans && cutAt(selTrans.track, selTrans.clip);
+    if (!cut || !cut.clip.tIn) return;
+    commit(() => { const c2 = cutAt(selTrans.track, selTrans.clip); if (c2) fn(c2); });
+  };
+  $('trTypes').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-type]');
+    if (!b) return;
+    editCut((cut) => {
+      const dirs = TRANS_DIRS[b.dataset.type];
+      setTransition(cut, { ...cut.clip.tIn, type: b.dataset.type, dir: dirs && dirs.includes(cut.clip.tIn.dir) ? cut.clip.tIn.dir : dirs ? dirs[0] : 'left' });
+      lastTrans = { ...cut.clip.tIn };
+    });
+  });
+  $('trDir').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-dir]');
+    if (b) editCut((cut) => { cut.clip.tIn.dir = b.dataset.dir; lastTrans = { ...cut.clip.tIn }; });
+  });
+  $('trAudio').addEventListener('change', (e) => editCut((cut) => { cut.clip.tIn.audio = e.target.checked; lastTrans = { ...cut.clip.tIn }; }));
+  // Duration: live while dragging, one undo step.
+  $('trDur').addEventListener('input', (e) => {
+    const cut = selTrans && cutAt(selTrans.track, selTrans.clip);
+    if (!cut || !cut.clip.tIn) return;
+    if (!clipLiveBefore) clipLiveBefore = snapshot();
+    setTransition(cut, { ...cut.clip.tIn, dur: +e.target.value });
+    layoutTrack(cut.tr);
+    $('trDurVal').textContent = cut.clip.tIn.dur.toFixed(1) + ' s';
+    renderClips();
+    updateTime();
+    renderPreview();
+  });
+  $('trDur').addEventListener('change', () => {
+    const cut = selTrans && cutAt(selTrans.track, selTrans.clip);
+    if (cut && cut.clip.tIn) lastTrans = { ...cut.clip.tIn };
+    liveClipCommit();
+  });
+  $('trAll').addEventListener('click', () => {
+    const cut = selTrans && cutAt(selTrans.track, selTrans.clip);
+    if (!cut || !cut.clip.tIn) return;
+    const t = { ...cut.clip.tIn };
+    let n = 0;
+    commit(() => {
+      const tr = cut.tr;
+      // Work from the end so moving clips on free tracks doesn't break the other cuts.
+      for (let i = tr.clips.length - 1; i >= 1; i--) {
+        const c2 = cutAt(tr.id, tr.clips[i].id);
+        if (c2) { setTransition(c2, t); n++; }
+        if (tr.magnetic) layoutTrack(tr);
+      }
+    });
+    toast(`${TRANS_NAMES[t.type]} on ${n} cut${n === 1 ? '' : 's'}.`, 2000);
+  });
+  $('trRemove').addEventListener('click', () => { editCut((cut) => removeTransition(cut)); selTrans = null; updateTransPanel(); });
+  $('trClose').addEventListener('click', () => { selTrans = null; renderClips(); updateTransPanel(); });
 
   // ---------------------------------------------------------------------------
   // Track panel (opacity, volume, magnetic, order, delete)
@@ -2046,6 +2219,32 @@
       row.dataset.track = tr.id;
       row.style.height = rowH(tr) + 'px';
       tr.clips.forEach((c, i) => row.appendChild(clipElement(c, tr, i)));
+      // Cuts between clips that meet: ⧓ for a transition, a small + to add one (not on audio tracks).
+      if (!isAudioTrack(tr)) {
+        tr.clips.forEach((c, i) => {
+          if (i === 0) return;
+          const prev = tr.clips[i - 1];
+          const meets = c.tIn || Math.abs(clipEnd(prev) - c.start) < 0.01;
+          if (!meets) return;
+          const j = document.createElement('button');
+          j.type = 'button';
+          j.dataset.clip = c.id;
+          j.dataset.track = tr.id;
+          if (c.tIn) {
+            j.className = 'trans' + (selTrans && selTrans.clip === c.id ? ' selected' : '');
+            j.style.left = (timeX(c.start) + 1) + 'px';
+            j.style.width = Math.max(18, c.tIn.dur * pps - 2) + 'px';
+            j.title = `${TRANS_NAMES[c.tIn.type] || 'Transition'} · ${c.tIn.dur.toFixed(1)} s — tap to change`;
+            j.textContent = '⧓';
+          } else {
+            j.className = 'junction' + (selTrans && selTrans.clip === c.id ? ' selected' : '');
+            j.style.left = timeX(c.start) + 'px';
+            j.title = 'Add a transition';
+            j.textContent = '+';
+          }
+          row.appendChild(j);
+        });
+      }
       frag.appendChild(row);
     }
     tlRows.replaceChildren(frag);
@@ -2387,16 +2586,18 @@
 
   function afterSelect() {
     syncSel();
-    if (selectedId) selectedTrackId = null;
+    if (selectedId) { selectedTrackId = null; selTrans = null; }
     renderClips();
     renderTrackHeads();
     updateToolbar();
     syncSelBar();
-    if (selectedId && !multi() && cpTab !== 'clip' && cpTab !== 'audio') ensureVisible();
+    if (selectedId && !multi() && cpTab !== 'clip' && cpTab !== 'audio' && cpTab !== 'fade') ensureVisible();
     renderPreview();
   }
   tlRows.addEventListener('click', (e) => {
     if (suppressClick) { suppressClick = false; return; }
+    const cutBtn = e.target.closest('.trans, .junction');
+    if (cutBtn) { selectCut(cutBtn.dataset.track, cutBtn.dataset.clip); return; }
     const el = e.target.closest('.clip');
     const add = e.ctrlKey || e.metaKey;
     syncSel();
@@ -2510,6 +2711,7 @@
 
   tlRows.addEventListener('pointerdown', (e) => {
     if (e.button > 0) return;
+    if (e.target.closest('.trans, .junction')) return;
     const handle = e.target.closest('.trim-h');
     if (handle) { startTrim(e, handle); return; }
     const el = e.target.closest('.clip');
@@ -2982,8 +3184,10 @@
   function activeMedia(t) {
     const out = [];
     for (const tr of tracks) {
-      const a = clipAtTrack(tr, t);
-      if (a.idx >= 0 && (isAudioTrack(tr) ? playableSound(a.clip) : playableVideo(a.clip))) out.push({ tr, clip: a.clip });
+      // Two clips at once during a transition.
+      for (const c of Render.clipsAtTime(tr.clips, t)) {
+        if (isAudioTrack(tr) ? playableSound(c) : playableVideo(c)) out.push({ tr, clip: c });
+      }
     }
     return out;
   }
@@ -3045,7 +3249,8 @@
           el.playbackRate = Math.abs(drift) < 0.03 ? 1 : clamp(1 - drift * 0.8, 0.85, 1.15);
         }
       }
-      const g = (tr.volume == null ? 1 : tr.volume) * Render.clipGain(clip, t - clip.start);
+      const tOut = tOutOf(tr, clip);
+      const g = (tr.volume == null ? 1 : tr.volume) * Render.clipGain(tOut ? { ...clip, tOut } : clip, t - clip.start);
       el.muted = !isActive || muteAll || !!clip.muted || tr.muted || g <= 0;
       setGain(el, g);
       if (isActive && playing) {
@@ -3409,16 +3614,25 @@
     for (let ti = 0; ti < tracks.length; ti++) {
       const tr = tracks[ti];
       if (isAudioTrack(tr) || tr.hidden || tr.opacity <= 0) continue;
-      const a = clipAtTrack(tr, t);
-      if (a.idx < 0) continue;
-      const d = currentDrawable(a.clip, out.w, out.h);
-      if (!d) {
-        if (playableVideo(a.clip) && elOf(a.clip.id)) return; // keep the last frame while seeking
-        continue;
+      const cs = Render.clipsAtTime(tr.clips, t);
+      if (!cs.length) continue;
+      let wait = false;
+      const layerOf = (c) => {
+        const d = currentDrawable(c, out.w, out.h);
+        if (!d) { if (playableVideo(c) && elOf(c.id)) wait = true; return null; }
+        if (sel && c.id === sel.id) selLayer = { clip: c, d };
+        return { drawable: d.drawable, w: d.w, h: d.h, rot: 0, tf: c.tf, opacity: tr.opacity, isMain: ti === 0, isColor: d.isColor, alpha: Render.pictureAlpha(c, t - c.start) };
+      };
+      const b = cs[cs.length - 1];
+      if (cs.length > 1 && b.tIn) {
+        const la = layerOf(cs[cs.length - 2]), lb = layerOf(b);
+        if (la && lb) layers.push({ trans: { a: la, b: lb, type: b.tIn.type, dir: b.tIn.dir, p: (t - b.start) / b.tIn.dur }, opacity: tr.opacity, isMain: ti === 0 });
+        else if (la || lb) layers.push(la || lb);
+      } else {
+        const l = layerOf(b);
+        if (l) layers.push(l);
       }
-      const l = { drawable: d.drawable, w: d.w, h: d.h, rot: 0, tf: a.clip.tf, opacity: tr.opacity, isMain: ti === 0, isColor: d.isColor };
-      if (sel && a.clip.id === sel.id) selLayer = { clip: a.clip, d };
-      layers.push(l);
+      if (wait) return; // keep the last frame while a video is still seeking
     }
     Render.composite(pvCtx, W, H, layers, canvasState.bg === 'blur' ? 'blur' : 'bars', bg);
     if (mode === 'move' && selLayer) drawMoveOverlay(selLayer.clip, selLayer.d, W, H, dpr);
@@ -3456,7 +3670,7 @@
   // The preview is interactive only while a transform tab is open and the selected clip is the visible one.
   function editMode() {
     const f = findClip(selectedId);
-    if (!f || cpTab === 'clip' || cpTab === 'audio' || playing || f.tr.hidden || f.clip.kind === 'audio') return null;
+    if (!f || cpTab === 'clip' || cpTab === 'audio' || cpTab === 'fade' || playing || f.tr.hidden || f.clip.kind === 'audio') return null;
     const c = f.clip;
     const t = viewTime();
     if (t < c.start - 1e-6 || t >= clipEnd(c) - 1e-6) return null;
@@ -3567,7 +3781,7 @@
   }
   // On phones the preview sticks to the top while a transform tab is open.
   function updateTransformingClass() {
-    const on = !$('clipPanel').hidden && cpTab !== 'clip' && cpTab !== 'audio';
+    const on = !$('clipPanel').hidden && cpTab !== 'clip' && cpTab !== 'audio' && cpTab !== 'fade';
     if (document.body.classList.contains('transforming') !== on) {
       document.body.classList.toggle('transforming', on);
       requestAnimationFrame(renderPreview);
@@ -3577,7 +3791,7 @@
     const b = e.target.closest('.seg-btn');
     if (!b) return;
     showTab(b.dataset.tab);
-    if (cpTab !== 'clip' && cpTab !== 'audio') ensureVisible();
+    if (cpTab !== 'clip' && cpTab !== 'audio' && cpTab !== 'fade') ensureVisible();
     syncTransformUI();
     renderPreview();
   });
@@ -4161,16 +4375,23 @@
     const s = getExportSettings();
     // Clip times are in media time; the export reads the actual (possibly trimmed-copy) file.
     const scopeSelected = exportState.scope === 'selected';
-    const sound = (c) => ({ volume: c.volume == null ? 1 : c.volume, fadeIn: c.fadeIn || 0, fadeOut: c.fadeOut || 0 });
-    const expClip = (c, start) => {
+    const sound = (c) => ({ volume: c.volume == null ? 1 : c.volume, fadeIn: c.fadeIn || 0, fadeOut: c.fadeOut || 0, vFadeIn: c.vFadeIn || 0, vFadeOut: c.vFadeOut || 0 });
+    const expClip = (c, start, tr) => {
+      const e = expClip0(c, start);
+      if (tr && c.tIn) e.tIn = { ...c.tIn };
+      const tOut = tr ? tOutOf(tr, c) : null;
+      if (tOut) e.tOut = tOut;
+      return e;
+    };
+    const expClip0 = (c, start) => {
       if (isVideoClip(c)) { const src = srcOf(c); return { kind: 'video', source: src, start, in: c.in - src.base, out: c.out - src.base, muted: c.muted, tf: c.tf, ...sound(c) }; }
       if (c.kind === 'audio') { const src = srcOf(c); const b = src.base || 0; return { kind: 'audio', source: src, start, in: c.in - b, out: c.out - b, muted: c.muted, ...sound(c) }; }
-      return { kind: c.kind, source: srcOf(c) || null, start, in: c.in, out: c.out, muted: true, still: stillFor(c, s.width, s.height), tf: c.tf };
+      return { kind: c.kind, source: srcOf(c) || null, start, in: c.in, out: c.out, muted: true, still: stillFor(c, s.width, s.height), tf: c.tf, vFadeIn: c.vFadeIn || 0, vFadeOut: c.vFadeOut || 0 };
     };
     const sel = selClip();
     const expTracks = scopeSelected && sel
       ? [{ kind: sel.kind === 'audio' ? 'audio' : 'video', hidden: false, opacity: 1, muted: false, volume: 1, clips: [expClip(sel, 0)] }]
-      : tracks.map((tr) => ({ kind: tr.kind || 'video', hidden: tr.hidden, opacity: tr.opacity, muted: tr.muted, volume: tr.volume, clips: tr.clips.map((c) => expClip(c, c.start)) }));
+      : tracks.map((tr) => ({ kind: tr.kind || 'video', hidden: tr.hidden, opacity: tr.opacity, muted: tr.muted, volume: tr.volume, clips: tr.clips.map((c) => expClip(c, c.start, tr)) }));
     const duration = exportDuration();
     const t0 = performance.now();
     // Audio files are decoded completely before the export starts.

@@ -1,5 +1,5 @@
 /* Videcutto service worker — offline support (stale-while-revalidate). */
-const CACHE = 'videcutto-v0.9.10';
+const CACHE = 'videcutto-v0.10.0';
 const ASSETS = [
   '/',
   '/index.html',

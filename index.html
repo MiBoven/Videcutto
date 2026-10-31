@@ -220,6 +220,40 @@
     </div>
   </section>
 
+  <section class="card clip-panel trans-panel" id="transPanel" hidden>
+    <div class="cp-head">
+      <span class="cp-kind">Transition</span>
+      <strong class="cp-title" id="trTitle"></strong>
+      <button class="icon small help-link" data-help="transitions" title="Help: transitions" aria-label="Help: transitions"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.3a2.5 2.5 0 014.8.9c0 1.7-2.4 2-2.4 3.6"/><path d="M12 17.2v.1"/></svg></button>
+      <button class="icon small" id="trClose" title="Close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="trans-grid" id="trTypes">
+      <button type="button" data-type="fade">Cross-fade</button>
+      <button type="button" data-type="black">Dip to black</button>
+      <button type="button" data-type="white">Dip to white</button>
+      <button type="button" data-type="wipe">Wipe</button>
+      <button type="button" data-type="slide">Slide</button>
+      <button type="button" data-type="zoom">Zoom</button>
+      <button type="button" data-type="circle">Circle</button>
+      <button type="button" data-type="blur">Blur</button>
+    </div>
+    <div id="trDirRow">
+      <span class="mini-label">Direction</span>
+      <div class="segment small" id="trDir"></div>
+    </div>
+    <span class="mini-label">Duration</span>
+    <div class="range-row">
+      <input type="range" id="trDur" min="0.1" max="3" step="0.1" value="0.5" aria-label="Transition duration">
+      <span class="range-val" id="trDurVal">0.5 s</span>
+    </div>
+    <label class="check-row"><input type="checkbox" id="trAudio" checked> Cross-fade the sound <span class="hint-inline">(off: hard cut in the middle)</span></label>
+    <p class="hint">The two clips overlap by the transition's length, so the video gets that much shorter.</p>
+    <div class="tp-actions">
+      <button class="btn-chip" id="trAll">Apply to all cuts on this track</button>
+      <button class="btn-chip danger-text" id="trRemove">Remove</button>
+    </div>
+  </section>
+
   <section class="card clip-panel" id="clipPanel" hidden>
     <div class="cp-head">
       <span class="cp-kind" id="cpKind"></span>
@@ -232,6 +266,7 @@
       <button type="button" class="seg-btn" data-tab="crop" role="tab" id="cpTabCrop">Crop</button>
       <button type="button" class="seg-btn" data-tab="position" role="tab" id="cpTabPosition">Position</button>
       <button type="button" class="seg-btn" data-tab="rotate" role="tab" id="cpTabRotate">Rotate</button>
+      <button type="button" class="seg-btn" data-tab="fade" role="tab" id="cpTabFade">Fade</button>
       <button type="button" class="seg-btn" data-tab="audio" role="tab" id="cpTabAudio">Audio</button>
     </div>
 
@@ -340,6 +375,21 @@
     </div>
 
     <!-- Rotate & flip -->
+    <div class="cp-pane" data-pane="fade" hidden>
+      <span class="mini-label">Picture fade in</span>
+      <div class="range-row">
+        <input type="range" id="vFadeInRange" min="0" max="10" step="0.1" value="0" aria-label="Picture fade in">
+        <span class="range-val" id="vFadeInVal">0.0 s</span>
+      </div>
+      <span class="mini-label">Picture fade out</span>
+      <div class="range-row">
+        <input type="range" id="vFadeOutRange" min="0" max="10" step="0.1" value="0" aria-label="Picture fade out">
+        <span class="range-val" id="vFadeOutVal">0.0 s</span>
+      </div>
+      <label class="check-row" id="fadeLinkRow"><input type="checkbox" id="fadeLinkChk" checked> Picture and sound together</label>
+      <p class="hint">The picture fades in from the background and out to it; on upper tracks it becomes transparent.</p>
+    </div>
+
     <div class="cp-pane" data-pane="audio" hidden>
       <span class="mini-label">Volume</span>
       <div class="range-row">
@@ -767,6 +817,17 @@
         <li>Left of each track: 👁 <strong>hide</strong>, 🔊 <strong>mute</strong>. <strong>Tap the track's left edge</strong> for opacity, volume, order and delete.</li>
         <li><strong>+</strong> above the track headers adds an <strong>empty video or audio track</strong> — handy as a place to drag clips to. Tracks added this way stay until you delete them; tracks that were created automatically disappear when they become empty.</li>
         <li>Settings → how many tracks are visible before the timeline scrolls.</li>
+      </ul>
+    </details>
+
+    <details id="help-transitions">
+      <summary>Transitions &amp; fades</summary>
+      <ul>
+        <li>Where two clips meet, a small <strong>+</strong> sits on the cut. Tap it to add a <strong>transition</strong>; tap the <strong>⧓</strong> to change it: cross-fade, dip to black/white, wipe, slide, zoom, circle or blur, with direction and duration (0.1–3 s).</li>
+        <li>The two clips <strong>overlap</strong> by the transition's length, so the video gets that much shorter. On upper tracks the clips have to meet exactly; moving one of them removes the transition.</li>
+        <li>The sound is cross-faded too — or switch that off for a hard cut in the middle.</li>
+        <li><strong>Apply to all cuts on this track</strong> uses the same transition everywhere; a new transition starts like the last one you chose.</li>
+        <li>The <strong>Fade</strong> tab fades a clip's picture in from the background or out to it (upper tracks: to transparent). For videos, <em>Picture and sound together</em> keeps the picture and sound fades the same.</li>
       </ul>
     </details>
 
