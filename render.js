@@ -158,7 +158,7 @@
    * metaRot: rotation stored in the file (clockwise degrees).
    * bgMode: 'blur' or anything else for the plain colour bg.
    */
-  function drawClip(ctx, src, rawW, rawH, metaRot, W, H, tfIn, bgMode, bg) {
+  function drawClip(ctx, src, rawW, rawH, metaRot, W, H, tfIn, bgMode, bg, fx) {
     const r = ((metaRot || 0) % 360 + 360) % 360;
     const rotated = r === 90 || r === 270;
     const sw = rotated ? rawH : rawW, sh = rotated ? rawW : rawH;
@@ -173,6 +173,13 @@
     }
 
     ctx.translate(g.cx, g.cy);
+    if (fx) { // animation: offset (share of the canvas), turn, scale and blur
+      if (fx.s <= 0.001) { ctx.restore(); return; }
+      ctx.translate(fx.dx * W, fx.dy * H);
+      ctx.rotate(fx.rot);
+      ctx.scale(fx.s, fx.s);
+      if (fx.blur > 0 && canFilter(ctx)) ctx.filter = `blur(${(fx.blur * 0.03 * Math.max(W, H)).toFixed(1)}px)`;
+    }
     ctx.rotate(g.rad);
     ctx.scale(t.flipH ? -1 : 1, t.flipV ? -1 : 1);
     ctx.beginPath();
@@ -340,7 +347,7 @@
     for (const l of layers) {
       if (l.trans) { drawTransition(ctx, W, H, l, bg, bgMode); continue; }
       ctx.globalAlpha = (l.opacity == null ? 1 : l.opacity) * (l.alpha == null ? 1 : l.alpha);
-      drawClip(ctx, l.drawable, l.w, l.h, l.rot, W, H, l.tf, 'none', null);
+      drawClip(ctx, l.drawable, l.w, l.h, l.rot, W, H, l.tf, 'none', null, l.fx);
     }
     ctx.restore();
   }
@@ -373,11 +380,12 @@
       }
     }
     x.globalAlpha = l.alpha == null ? 1 : l.alpha;
-    drawClip(x, l.drawable, l.w, l.h, l.rot, W, H, l.tf, 'none', null);
+    drawClip(x, l.drawable, l.w, l.h, l.rot, W, H, l.tf, 'none', null, l.fx);
     x.globalAlpha = 1;
   }
   const smooth = (p) => p * p * (3 - 2 * p);
   let filterOk = null;
+  const canFilter = (ctx) => { if (filterOk === null) filterOk = typeof ctx.filter === 'string'; return filterOk; };
   function drawTransition(ctx, W, H, l, bg, bgMode) {
     const { a, b, type, dir } = l.trans;
     const p = Math.min(1, Math.max(0, l.trans.p));
@@ -648,14 +656,53 @@
     }
     return g;
   }
-  /** Opacity of a clip's picture at local time x (picture fade in/out). */
-  function pictureAlpha(c, x) {
-    const len = c.out - c.in;
-    let a = 1;
-    if (c.vFadeIn > 0 && x < c.vFadeIn) a *= fadeCurve(x / c.vFadeIn);
-    if (c.vFadeOut > 0 && x > len - c.vFadeOut) a *= fadeCurve((len - x) / c.vFadeOut);
-    return a;
+  // ---------------------------------------------------------------------------
+  // Animations (Animate tab). Durations: c.vFadeIn / c.vFadeOut; effects in
+  // c.animIn / c.animOut — combinable: fade, zoom ('in'|'out'), slide (direction
+  // of the motion), spin, blur, pop; text clips can also animate line by line,
+  // word by word, letter by letter or like a typewriter (text: 'lines' …).
+  // ---------------------------------------------------------------------------
+  const DEFAULT_ANIM = { fade: true, zoom: '', slide: '', spin: false, blur: false, pop: false, text: 'whole' };
+  const animOf = (a) => ({ ...DEFAULT_ANIM, ...(a || {}) });
+  const DIRV = { left: [-1, 0], right: [1, 0], up: [0, -1], down: [0, 1] };
+  const backOut = (t) => { const k = 1.70158, u = t - 1; return 1 + (k + 1) * u * u * u + k * u * u; };
+  /**
+   * The effect of animation a at linear progress p (0…1) of a phase ('in': appearing,
+   * 'out': disappearing). dx/dy: offset in units of the travel distance, rot in radians,
+   * s: scale, blur: 0…1, alpha: opacity.
+   */
+  function fxAt(a, phase, p) {
+    p = Math.min(1, Math.max(0, p));
+    const inP = phase === 'in';
+    const vis = inP ? p : 1 - p;
+    const e = inP ? 1 - Math.pow(1 - p, 3) : 1 - p * p * p;
+    const q = 1 - e;
+    const f = { alpha: a.fade ? fadeCurve(vis) : 1, s: 1, rot: 0, dx: 0, dy: 0, blur: 0 };
+    if (a.zoom) f.s = (inP === (a.zoom === 'in')) ? 0.3 + 0.7 * e : 1 + q;
+    if (a.pop) f.s *= Math.max(0, backOut(inP ? p : 1 - p));
+    if (a.slide && DIRV[a.slide]) { const sg = inP ? -1 : 1; f.dx = sg * DIRV[a.slide][0] * q; f.dy = sg * DIRV[a.slide][1] * q; }
+    if (a.spin) f.rot = (inP ? -1 : 1) * q * Math.PI * 2;
+    if (a.blur) f.blur = q;
+    return f;
   }
+  const IDLE = { alpha: 1, fx: null, units: null };
+  /**
+   * Animation state of clip c at local time x: { alpha, fx (whole picture) | null,
+   * units: { a, phase, p } for text animated piece by piece | null }.
+   */
+  function animState(c, x) {
+    const len = c.out - c.in;
+    let phase = null, p = 0, a = null;
+    if (c.vFadeIn > 0 && x < c.vFadeIn) { phase = 'in'; p = x / c.vFadeIn; a = animOf(c.animIn); }
+    else if (c.vFadeOut > 0 && x > len - c.vFadeOut) { phase = 'out'; p = 1 - (len - x) / c.vFadeOut; a = animOf(c.animOut); }
+    if (!phase) return IDLE;
+    if (c.kind === 'text' && a.text && a.text !== 'whole') return { alpha: 1, fx: null, units: { a, phase, p } };
+    const f = fxAt(a, phase, p);
+    const moved = f.s !== 1 || f.rot || f.dx || f.dy || f.blur;
+    return { alpha: f.alpha, fx: moved ? f : null, units: null };
+  }
+  /** Opacity of a clip's picture at local time x (fade part of the animation). */
+  const pictureAlpha = (c, x) => animState(c, x).alpha;
   // Soft limiter: quiet signals pass unchanged, peaks above 0.9 are bent smoothly towards 1.
   const limit = (x) => {
     const a = Math.abs(x);
@@ -756,13 +803,15 @@
           if (!cs.length) continue;
           const opacity = tr.opacity == null ? 1 : tr.opacity, isMain = ti === 0;
           const layerOf = async (c) => {
-            const base = { tf: c.tf, opacity, isMain, alpha: pictureAlpha(c, t - c.start) };
+            const st = animState(c, t - c.start);
+            const base = { tf: c.tf, opacity, isMain, alpha: st.alpha, fx: st.fx };
             if (c.kind === 'video') {
               let r = readers.get(c);
               if (!r) { r = new VideoReader(c); readers.set(c, r); }
               const f = await r.frameAt(c.in + (t - c.start), signal);
               return f ? { ...base, drawable: f, w: f.displayWidth, h: f.displayHeight, rot: c.source.rotation, isColor: false } : null;
             }
+            if (c.still && st.units && c.still.frameAt) return { ...base, drawable: c.still.frameAt(st.units), w: c.still.w, h: c.still.h, rot: 0, isColor: false };
             if (c.still) return { ...base, drawable: c.still.drawable, w: c.still.w, h: c.still.h, rot: 0, isColor: c.still.isColor };
             return null;
           };
@@ -888,6 +937,6 @@
 
   global.Render = {
     QUALITY, presetBitrate, computeOutput, estimateSize, drawClip, composite, clipAtTime, clipLayout, tfOf, DEFAULT_TF, ANCHORS, displaySize,
-    hasWebCodecs, canDecodeVideo, canDecodeAudio, canEncodeHevc, exportTimeline, audioPeaks, clipGain, pictureAlpha, clipsAtTime, TRANSITIONS,
+    hasWebCodecs, canDecodeVideo, canDecodeAudio, canEncodeHevc, exportTimeline, audioPeaks, clipGain, pictureAlpha, animState, fxAt, animOf, clipsAtTime, TRANSITIONS,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

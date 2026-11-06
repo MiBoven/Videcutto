@@ -1,5 +1,12 @@
 # Changelog
 
+### 0.11.2 — 2026-11-06 — Animations & Contents
+- The Fade tab is now the Animate tab: In and Out animations with combinable effects — Fade, Zoom in, Zoom out, Slide (4 directions), Spin, Blur, Pop — for videos, images, color clips and texts
+- Text can appear/disappear line by line, word by word, letter by letter (each piece animated with the chosen effects) or like a typewriter
+- The Media list is now "Contents": files, texts, color clips and transitions in groups; tapping a text, color clip or transition selects it and jumps there
+- Clip panel tabs fit on narrow phones
+- Older projects keep their picture fades (as Fade animations); preview and export draw animations identically
+
 ### 0.11.1 — 2026-10-31 — Move the cut, pin the preview
 - Transitions can be moved: "Move the cut" slider in the transition panel or drag the ⧓ marker (snaps to the playhead); the first clip gets longer and the second shorter or vice versa, the total length stays the same
 - Pin button in the preview (classic layout / phones): preview and playback controls stay at the top while scrolling

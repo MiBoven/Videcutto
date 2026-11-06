@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.11.1';
+  const VERSION = '0.11.2';
   const $ = (id) => document.getElementById(id);
 
   // ---------------------------------------------------------------------------
@@ -1515,7 +1515,69 @@
     }
     $('fadeLinkRow').hidden = c.kind !== 'video';
     $('fadeLinkChk').checked = c.fadeLink !== false;
+    for (const ph of ['in', 'out']) {
+      const a = Render.animOf(c[ANIM_KEYS[ph][0]]);
+      const sec = document.querySelector(`.anim-sec[data-phase="${ph}"]`);
+      sec.querySelectorAll('[data-fx]').forEach((b) => {
+        const k = b.dataset.fx;
+        b.classList.toggle('active', b.dataset.v ? a[k] === b.dataset.v : !!a[k]);
+      });
+      const dir = sec.querySelector('.anim-dir');
+      dir.hidden = !a.slide;
+      dir.querySelectorAll('[data-dir]').forEach((b) => b.classList.toggle('active', b.dataset.dir === a.slide));
+      sec.querySelector('.anim-text-row').hidden = c.kind !== 'text';
+      sec.querySelectorAll('[data-text]').forEach((b) => b.classList.toggle('active', b.dataset.text === (a.text || 'whole')));
+      if (!(c[ANIM_KEYS[ph][1]] > 0)) $(ANIM_KEYS[ph][1] + 'Val').textContent = 'off';
+    }
   }
+  // Animate tab: effects for appearing (in) and disappearing (out), combinable.
+  const ANIM_KEYS = { in: ['animIn', 'vFadeIn', 'fadeIn'], out: ['animOut', 'vFadeOut', 'fadeOut'] };
+  const animActive = (a) => !!(a.fade || a.zoom || a.slide || a.spin || a.blur || a.pop || (a.text && a.text !== 'whole'));
+  let lastSlide = { in: 'left', out: 'left' };
+  function setAnim(ph, fn) {
+    const [ak, dk, sk] = ANIM_KEYS[ph];
+    const list = (multi() ? selFinds() : [findClip(selectedId)].filter(Boolean)).filter((f) => f.clip.kind !== 'audio');
+    if (!list.length) return;
+    const shown = selClip() || list[0].clip;
+    const next = fn(Render.animOf(shown[ak]));
+    commit(() => list.forEach((f) => {
+      const c = f.clip;
+      const a = { ...Render.animOf(c[ak]), ...next };
+      if (c.kind !== 'text') a.text = 'whole';
+      c[ak] = a;
+      // Switching an effect on while the duration is 0 gives it a useful length.
+      if (!(c[dk] > 0) && animActive(a)) {
+        const other = c[ANIM_KEYS[ph === 'in' ? 'out' : 'in'][1]] || 0;
+        const want = c.kind === 'text' && a.text !== 'whole' ? 1.5 : 0.5;
+        const d = Math.max(0, Math.min(want, clipLen(c) / 2, clipLen(c) - other));
+        c[dk] = +d.toFixed(1);
+        if (c.kind === 'video' && c.fadeLink !== false) c[sk] = c[dk];
+      }
+    }));
+  }
+  document.querySelectorAll('.anim-sec').forEach((sec) => {
+    const ph = sec.dataset.phase;
+    sec.querySelector('.anim-fx').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-fx]');
+      if (!b) return;
+      const k = b.dataset.fx;
+      setAnim(ph, (a) => {
+        if (k === 'zoom') return { zoom: a.zoom === b.dataset.v ? '' : b.dataset.v };
+        if (k === 'slide') return { slide: a.slide ? '' : lastSlide[ph] };
+        return { [k]: !a[k] };
+      });
+    });
+    sec.querySelector('.anim-dir').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-dir]');
+      if (!b) return;
+      lastSlide[ph] = b.dataset.dir;
+      setAnim(ph, () => ({ slide: b.dataset.dir }));
+    });
+    sec.querySelector('.anim-text').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-text]');
+      if (b) setAnim(ph, () => ({ text: b.dataset.text }));
+    });
+  });
   ['volRange', 'fadeInRange', 'fadeOutRange'].forEach((id) => $(id).addEventListener('change', liveClipCommit));
   $('audioReset').addEventListener('click', () => {
     if (!multi()) { updateSelected({ volume: 1, fadeIn: 0, fadeOut: 0 }); return; }
@@ -1740,11 +1802,12 @@
   // The text drawn into its own canvas, at the size it has in the output.
   const textCache = new Map();
   let measureCtx = null;
-  function renderTextCanvas(c, outW, outH) {
+  // units: { a, phase, p } — draw the text piece by piece (Animate tab), not cached.
+  function renderTextCanvas(c, outW, outH, units) {
     const t = textOf(c);
     if (!fontReady.has(t.font)) ensureFont(t.font);
     const key = JSON.stringify([t, outH, fontReady.has(t.font)]);
-    const hit = textCache.get(key);
+    const hit = units ? null : textCache.get(key);
     if (hit) return hit;
     const px = Math.max(4, (t.size / 100) * outH);
     const font = `${t.italic ? 'italic ' : ''}${t.bold ? 700 : 400} ${px.toFixed(2)}px ${familyCss(t.font)}`;
@@ -1765,6 +1828,10 @@
     const cv = document.createElement('canvas');
     cv.width = W; cv.height = H;
     const x = cv.getContext('2d');
+    if (units) { // the box fades in during the first and out during the last part
+      const v = units.phase === 'in' ? units.p : 1 - units.p;
+      x.globalAlpha = v >= 0.5 ? 1 : (1 - Math.cos(Math.PI * v * 2)) / 2;
+    }
     if (t.box) {
       x.fillStyle = hexA(t.boxColor, t.boxOpacity * t.opacity);
       x.beginPath();
@@ -1780,18 +1847,71 @@
     const tx = t.align === 'left' ? margin + pad + sw : t.align === 'right' ? margin + boxW - pad - sw : margin + boxW / 2;
     const shadowOn = () => { if (t.shadow) { x.shadowColor = hexA(t.shadowColor, t.shadowOpacity * t.opacity); x.shadowBlur = blur; x.shadowOffsetX = dist * 0.7; x.shadowOffsetY = dist; } };
     const shadowOff = () => { x.shadowColor = 'transparent'; x.shadowBlur = 0; x.shadowOffsetX = 0; x.shadowOffsetY = 0; };
-    lines.forEach((l, i) => {
-      const y = margin + pad + sw + lineH * (i + 0.5);
-      if (sw) { shadowOn(); x.strokeStyle = hexA(t.strokeColor, t.opacity); x.lineWidth = sw * 2; x.strokeText(l, tx, y); shadowOff(); }
+    x.globalAlpha = 1;
+    const drawText = (str, px0, y) => {
+      if (sw) { shadowOn(); x.strokeStyle = hexA(t.strokeColor, t.opacity); x.lineWidth = sw * 2; x.strokeText(str, px0, y); shadowOff(); }
       else shadowOn();
       x.fillStyle = hexA(t.color, t.opacity);
-      x.fillText(l, tx, y);
+      x.fillText(str, px0, y);
       shadowOff();
-    });
+    };
+    if (!units) lines.forEach((l, i) => drawText(l, tx, margin + pad + sw + lineH * (i + 0.5)));
+    else drawTextPieces(x, lines, widths, units, { tx, align: t.align, y0: margin + pad + sw, lineH, px, measure: (str) => m.measureText(str).width, drawText });
     const r = { canvas: cv, w: W, h: H };
+    if (units) return r;
     if (textCache.size > 60) textCache.clear();
     textCache.set(key, r);
     return r;
+  }
+
+  // Lines / words / letters appear one after the other, each with the chosen effects;
+  // 'type' shows the letters like a typewriter (and removes them backwards).
+  const graphemes = (str) => (typeof Intl !== 'undefined' && Intl.Segmenter ? [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(str)].map((g) => g.segment) : Array.from(str));
+  function drawTextPieces(x, lines, widths, units, o) {
+    const { a, phase, p } = units;
+    const mode = a.text;
+    const pieces = [];
+    lines.forEach((l, i) => {
+      const lw = widths[i];
+      const start = o.align === 'left' ? o.tx : o.align === 'right' ? o.tx - lw : o.tx - lw / 2;
+      const y = o.y0 + o.lineH * (i + 0.5);
+      const parts = mode === 'lines' ? [l] : mode === 'words' ? (l.match(/\s*\S+/g) || []) : graphemes(l);
+      let off = '';
+      for (const part of parts) {
+        const lead = mode === 'words' ? part.match(/^\s*/)[0] : '';
+        const str = part.slice(lead.length);
+        const px0 = start + o.measure(off + lead);
+        off += part;
+        if (!str.trim()) continue;
+        pieces.push({ str, x: px0, y, w: o.measure(str) });
+      }
+    });
+    const n = pieces.length;
+    if (!n) return;
+    x.textAlign = 'left';
+    if (mode === 'type') {
+      const shown = phase === 'in' ? Math.ceil(p * n - 1e-9) : n - Math.floor(p * n + 1e-9);
+      for (let i = 0; i < Math.min(n, shown); i++) o.drawText(pieces[i].str, pieces[i].x, pieces[i].y);
+      return;
+    }
+    const plain = !a.fade && !a.zoom && !a.slide && !a.spin && !a.blur && !a.pop;
+    const fxA = plain ? { ...a, fade: true } : a;
+    const u = n <= 1 ? 1 : Math.min(1, Math.max(0.2, 2.5 / n));
+    const dist = o.px * 0.8;
+    for (let i = 0; i < n; i++) {
+      const st = n <= 1 ? 0 : i * (1 - u) / (n - 1);
+      const f = Render.fxAt(fxA, phase, (p - st) / u);
+      if (f.alpha <= 0.002 || f.s <= 0.002) continue;
+      const pc = pieces[i];
+      x.save();
+      x.globalAlpha = f.alpha;
+      x.translate(pc.x + pc.w / 2 + f.dx * dist, pc.y + f.dy * dist);
+      if (f.rot) x.rotate(f.rot);
+      if (f.s !== 1) x.scale(f.s, f.s);
+      if (f.blur > 0 && typeof x.filter === 'string') x.filter = `blur(${(f.blur * 0.25 * o.px).toFixed(1)}px)`;
+      o.drawText(pc.str, -pc.w / 2, 0);
+      x.restore();
+    }
   }
 
   function addTextClip(preset, font) {
@@ -2030,13 +2150,53 @@
     else box.textContent = src.kind === 'image' ? '🖼' : '▶';
     return box;
   }
+  // Contents: the files, then texts, color clips and transitions of the timeline.
+  function contentItems() {
+    const texts = [], colors = [], cuts = [];
+    tracks.forEach((tr) => tr.clips.forEach((c, i) => {
+      if (c.kind === 'text') texts.push({ tr, c });
+      else if (c.kind === 'color') colors.push({ tr, c });
+      if (c.tIn && i > 0) cuts.push({ tr, c });
+    }));
+    const byStart = (a, b) => a.c.start - b.c.start;
+    return { texts: texts.sort(byStart), colors: colors.sort(byStart), cuts: cuts.sort(byStart) };
+  }
+  const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  function contentRow(kind, thumb, name, meta, data) {
+    const li = document.createElement('li');
+    li.className = 'm-item-' + kind;
+    Object.assign(li.dataset, data);
+    const info = document.createElement('div');
+    info.className = 'm-info';
+    const nm = document.createElement('div');
+    nm.className = 'm-name';
+    nm.textContent = name;
+    const mt = document.createElement('div');
+    mt.className = 'm-meta';
+    mt.textContent = meta;
+    info.append(nm, mt);
+    li.append(thumb, info);
+    li.title = 'Select it and jump there';
+    return li;
+  }
+  const spanOf = (c) => `${fmtTime(c.start, false)}–${fmtTime(clipEnd(c), false)}`;
   function renderMediaList() {
     const list = [...sources.values()];
     const unused = list.filter((s) => !usesOf(s.id).length).length;
-    $('mediaSummary').textContent = list.length ? `${list.length} file${list.length === 1 ? '' : 's'}${unused ? ` · ${unused} unused` : ''}` : 'no files yet';
+    const ci = contentItems();
+    const parts = [];
+    if (list.length) parts.push(plural(list.length, 'file') + (unused ? ` (${unused} unused)` : ''));
+    if (ci.texts.length) parts.push(plural(ci.texts.length, 'text'));
+    if (ci.colors.length) parts.push(plural(ci.colors.length, 'color clip'));
+    if (ci.cuts.length) parts.push(plural(ci.cuts.length, 'transition'));
+    $('mediaSummary').textContent = parts.length ? parts.join(' · ') : 'nothing yet';
     if ($('mediaBody').hidden) return;
     const ul = $('mediaList');
-    ul.replaceChildren(...list.map((src) => {
+    const head = (label) => { const h = document.createElement('li'); h.className = 'm-group'; h.textContent = label; return h; };
+    const groups = [];
+    const extra = ci.texts.length || ci.colors.length || ci.cuts.length;
+    if (list.length && extra) groups.push(head('Files'));
+    groups.push(...list.map((src) => {
       const li = document.createElement('li');
       li.dataset.src = src.id;
       li.draggable = !isCoarse && !src.missing && src.kind !== 'font';
@@ -2069,6 +2229,58 @@
       li.append(mediaThumb(src), info, acts);
       return li;
     }));
+    if (ci.texts.length) {
+      groups.push(head('Texts'));
+      for (const { c } of ci.texts) {
+        const t = textOf(c);
+        const th = document.createElement('div');
+        th.className = 'm-thumb font';
+        th.textContent = 'Aa';
+        th.style.fontFamily = familyCss(t.font);
+        th.style.color = t.color;
+        if (t.box) th.style.background = t.boxColor;
+        const first = String(t.content || '').split('\n').find((l) => l.trim()) || '(empty)';
+        const row = contentRow('text', th, first, `Text · ${spanOf(c)}`, { clip: c.id });
+        row.querySelector('.m-name').style.fontFamily = familyCss(t.font);
+        groups.push(row);
+      }
+    }
+    if (ci.colors.length) {
+      groups.push(head('Color clips'));
+      for (const { c } of ci.colors) {
+        const th = document.createElement('div');
+        th.className = 'm-thumb';
+        th.style.background = c.color || DEFAULT_COLOR;
+        groups.push(contentRow('color', th, String(c.color || DEFAULT_COLOR).toUpperCase(), `Color · ${spanOf(c)}`, { clip: c.id }));
+      }
+    }
+    if (ci.cuts.length) {
+      groups.push(head('Transitions'));
+      for (const { tr, c } of ci.cuts) {
+        const th = document.createElement('div');
+        th.className = 'm-thumb trans-th';
+        th.textContent = '⧓';
+        const dir = (TRANS_DIRS[c.tIn.type] || []).length ? ` · ${c.tIn.dir}` : '';
+        groups.push(contentRow('trans', th, (TRANS_NAMES[c.tIn.type] || c.tIn.type) + dir, `at ${fmtTime(c.start, false)} · ${c.tIn.dur.toFixed(1)} s${tr.main ? '' : ' · upper track'}`, { cutTrack: tr.id, cutClip: c.id }));
+      }
+    }
+    ul.replaceChildren(...groups);
+  }
+  // Tap a text, color clip or transition: select it and move the playhead there.
+  function jumpToContent(li) {
+    if (li.dataset.clip) {
+      const f = findClip(li.dataset.clip);
+      if (!f) return;
+      selectSet([f.clip.id], false);
+      afterSelect();
+      // Land where it is fully visible (after its in-animation).
+      seek(f.clip.start + Math.min(f.clip.vFadeIn || 0, clipLen(f.clip) / 2) + 0.001);
+      return;
+    }
+    const f = findClip(li.dataset.cutClip);
+    if (!f) return;
+    selectCut(li.dataset.cutTrack, f.clip.id);
+    seek(f.clip.start + (f.clip.tIn ? f.clip.tIn.dur / 2 : 0));
   }
   function addFromMedia(src, overlay) {
     const c = clipFromSource(src);
@@ -2090,7 +2302,8 @@
   }
   $('mediaList').addEventListener('click', async (e) => {
     const li = e.target.closest('li');
-    if (!li) return;
+    if (!li || li.classList.contains('m-group')) return;
+    if (li.dataset.clip || li.dataset.cutClip) { jumpToContent(li); return; }
     const src = sources.get(li.dataset.src);
     if (!src) return;
     const act = e.target.closest('[data-act]');
@@ -4083,7 +4296,10 @@
         const d = currentDrawable(c, out.w, out.h);
         if (!d) { if (playableVideo(c) && elOf(c.id)) wait = true; return null; }
         if (sel && c.id === sel.id) selLayer = { clip: c, d };
-        return { drawable: d.drawable, w: d.w, h: d.h, rot: 0, tf: d.tf || c.tf, opacity: tr.opacity, isMain: ti === 0, isColor: d.isColor, alpha: Render.pictureAlpha(c, t - c.start) };
+        // While moving/sizing the selected clip it is shown without its animation.
+        const st = mode === 'move' && sel && c.id === sel.id ? { alpha: 1, fx: null, units: null } : Render.animState(c, t - c.start);
+        const drawable = st.units && c.kind === 'text' ? renderTextCanvas(c, out.w, out.h, st.units).canvas : d.drawable;
+        return { drawable, w: d.w, h: d.h, rot: 0, tf: d.tf || c.tf, opacity: tr.opacity, isMain: ti === 0, isColor: d.isColor, alpha: st.alpha, fx: st.fx };
       };
       const b = cs[cs.length - 1];
       if (cs.length > 1 && b.tIn) {
@@ -4849,7 +5065,7 @@
     const s = getExportSettings();
     // Clip times are in media time; the export reads the actual (possibly trimmed-copy) file.
     const scopeSelected = exportState.scope === 'selected';
-    const sound = (c) => ({ volume: c.volume == null ? 1 : c.volume, fadeIn: c.fadeIn || 0, fadeOut: c.fadeOut || 0, vFadeIn: c.vFadeIn || 0, vFadeOut: c.vFadeOut || 0 });
+    const sound = (c) => ({ volume: c.volume == null ? 1 : c.volume, fadeIn: c.fadeIn || 0, fadeOut: c.fadeOut || 0, vFadeIn: c.vFadeIn || 0, vFadeOut: c.vFadeOut || 0, animIn: c.animIn, animOut: c.animOut });
     const expClip = (c, start, tr) => {
       const e = expClip0(c, start);
       if (tr && c.tIn) e.tIn = { ...c.tIn };
@@ -4861,7 +5077,8 @@
       if (isVideoClip(c)) { const src = srcOf(c); return { kind: 'video', source: src, start, in: c.in - src.base, out: c.out - src.base, muted: c.muted, tf: c.tf, ...sound(c) }; }
       if (c.kind === 'audio') { const src = srcOf(c); const b = src.base || 0; return { kind: 'audio', source: src, start, in: c.in - b, out: c.out - b, muted: c.muted, ...sound(c) }; }
       const still = stillFor(c, s.width, s.height);
-      return { kind: c.kind, source: srcOf(c) || null, start, in: c.in, out: c.out, muted: true, still, tf: (still && still.tf) || c.tf, vFadeIn: c.vFadeIn || 0, vFadeOut: c.vFadeOut || 0 };
+      if (still && c.kind === 'text') still.frameAt = (u) => renderTextCanvas(c, s.width, s.height, u).canvas;
+      return { kind: c.kind, source: srcOf(c) || null, start, in: c.in, out: c.out, muted: true, still, tf: (still && still.tf) || c.tf, vFadeIn: c.vFadeIn || 0, vFadeOut: c.vFadeOut || 0, animIn: c.animIn, animOut: c.animOut };
     };
     const sel = selClip();
     const expTracks = scopeSelected && sel

@@ -275,7 +275,7 @@
       <button type="button" class="seg-btn" data-tab="crop" role="tab" id="cpTabCrop">Crop</button>
       <button type="button" class="seg-btn" data-tab="position" role="tab" id="cpTabPosition">Position</button>
       <button type="button" class="seg-btn" data-tab="rotate" role="tab" id="cpTabRotate">Rotate</button>
-      <button type="button" class="seg-btn" data-tab="fade" role="tab" id="cpTabFade">Fade</button>
+      <button type="button" class="seg-btn" data-tab="fade" role="tab" id="cpTabFade">Animate</button>
       <button type="button" class="seg-btn" data-tab="audio" role="tab" id="cpTabAudio">Audio</button>
     </div>
 
@@ -433,22 +433,76 @@
           <div><span class="mini-label">Corners</span><div class="range-row"><input type="range" id="txBoxRadius" min="0" max="1" step="0.05" aria-label="Box corners"><span class="range-val" id="txBoxRadiusVal">0.20</span></div></div>
         </div>
       </div>
-      <p class="hint">Move, size and rotate the text in the Position and Rotate tabs or directly in the preview; Fade fades it in and out.</p>
+      <p class="hint">Move, size and rotate the text in the Position and Rotate tabs or directly in the preview; Animate lets it appear and disappear — also letter by letter.</p>
     </div>
 
     <div class="cp-pane" data-pane="fade" hidden>
-      <span class="mini-label">Picture fade in</span>
-      <div class="range-row">
-        <input type="range" id="vFadeInRange" min="0" max="10" step="0.1" value="0" aria-label="Picture fade in">
-        <span class="range-val" id="vFadeInVal">0.0 s</span>
+      <div class="anim-sec" data-phase="in">
+        <span class="mini-label">In</span>
+        <div class="range-row">
+          <input type="range" id="vFadeInRange" min="0" max="10" step="0.1" value="0" aria-label="In duration">
+          <span class="range-val" id="vFadeInVal">0.0 s</span>
+        </div>
+        <div class="chips anim-fx" data-phase="in">
+          <button type="button" class="btn-chip" data-fx="fade">Fade</button>
+          <button type="button" class="btn-chip" data-fx="zoom" data-v="in">Zoom in</button>
+          <button type="button" class="btn-chip" data-fx="zoom" data-v="out">Zoom out</button>
+          <button type="button" class="btn-chip" data-fx="slide">Slide</button>
+          <button type="button" class="btn-chip" data-fx="spin">Spin</button>
+          <button type="button" class="btn-chip" data-fx="blur">Blur</button>
+          <button type="button" class="btn-chip" data-fx="pop">Pop</button>
+        </div>
+        <div class="segment small anim-dir" data-phase="in" hidden>
+          <button type="button" class="seg-btn" data-dir="left" title="Moving to the left">←</button>
+          <button type="button" class="seg-btn" data-dir="right" title="Moving to the right">→</button>
+          <button type="button" class="seg-btn" data-dir="up" title="Moving up">↑</button>
+          <button type="button" class="seg-btn" data-dir="down" title="Moving down">↓</button>
+        </div>
+        <div class="anim-text-row" hidden>
+          <span class="mini-label">Text appears</span>
+          <div class="segment small anim-text" data-phase="in">
+            <button type="button" class="seg-btn" data-text="whole">Whole</button>
+            <button type="button" class="seg-btn" data-text="lines">Lines</button>
+            <button type="button" class="seg-btn" data-text="words">Words</button>
+            <button type="button" class="seg-btn" data-text="letters">Letters</button>
+            <button type="button" class="seg-btn" data-text="type" title="Typewriter">Type</button>
+          </div>
+        </div>
       </div>
-      <span class="mini-label">Picture fade out</span>
-      <div class="range-row">
-        <input type="range" id="vFadeOutRange" min="0" max="10" step="0.1" value="0" aria-label="Picture fade out">
-        <span class="range-val" id="vFadeOutVal">0.0 s</span>
+      <div class="anim-sec" data-phase="out">
+        <span class="mini-label">Out</span>
+        <div class="range-row">
+          <input type="range" id="vFadeOutRange" min="0" max="10" step="0.1" value="0" aria-label="Out duration">
+          <span class="range-val" id="vFadeOutVal">0.0 s</span>
+        </div>
+        <div class="chips anim-fx" data-phase="out">
+          <button type="button" class="btn-chip" data-fx="fade">Fade</button>
+          <button type="button" class="btn-chip" data-fx="zoom" data-v="in">Zoom in</button>
+          <button type="button" class="btn-chip" data-fx="zoom" data-v="out">Zoom out</button>
+          <button type="button" class="btn-chip" data-fx="slide">Slide</button>
+          <button type="button" class="btn-chip" data-fx="spin">Spin</button>
+          <button type="button" class="btn-chip" data-fx="blur">Blur</button>
+          <button type="button" class="btn-chip" data-fx="pop">Pop</button>
+        </div>
+        <div class="segment small anim-dir" data-phase="out" hidden>
+          <button type="button" class="seg-btn" data-dir="left" title="Moving to the left">←</button>
+          <button type="button" class="seg-btn" data-dir="right" title="Moving to the right">→</button>
+          <button type="button" class="seg-btn" data-dir="up" title="Moving up">↑</button>
+          <button type="button" class="seg-btn" data-dir="down" title="Moving down">↓</button>
+        </div>
+        <div class="anim-text-row" hidden>
+          <span class="mini-label">Text disappears</span>
+          <div class="segment small anim-text" data-phase="out">
+            <button type="button" class="seg-btn" data-text="whole">Whole</button>
+            <button type="button" class="seg-btn" data-text="lines">Lines</button>
+            <button type="button" class="seg-btn" data-text="words">Words</button>
+            <button type="button" class="seg-btn" data-text="letters">Letters</button>
+            <button type="button" class="seg-btn" data-text="type" title="Typewriter">Type</button>
+          </div>
+        </div>
       </div>
-      <label class="check-row" id="fadeLinkRow"><input type="checkbox" id="fadeLinkChk" checked> Picture and sound together</label>
-      <p class="hint">The picture fades in from the background and out to it; on upper tracks it becomes transparent.</p>
+      <label class="check-row" id="fadeLinkRow"><input type="checkbox" id="fadeLinkChk" checked> Sound fades along (same durations)</label>
+      <p class="hint">Effects can be combined, e.g. Fade + Zoom in + Spin. The arrows of Slide show the direction of the motion. Fade fades from and to the background (upper tracks: transparent). Text can also appear line by line, word by word, letter by letter or like a typewriter.</p>
     </div>
 
     <div class="cp-pane" data-pane="audio" hidden>
@@ -490,11 +544,11 @@
   <!-- Canvas -->
   <section class="card media-card" id="mediaCard">
     <button type="button" class="card-toggle" id="mediaToggle" aria-expanded="false" aria-controls="mediaBody">
-      <span class="ct-chev" aria-hidden="true">▾</span><h2>Media</h2><span class="ct-summary" id="mediaSummary"></span>
+      <span class="ct-chev" aria-hidden="true">▾</span><h2>Contents</h2><span class="ct-summary" id="mediaSummary"></span>
     </button>
     <div class="card-body" id="mediaBody">
       <ul class="media-list" id="mediaList"></ul>
-      <p class="hint" id="mediaHint">Tap a file to select its clips. ＋ adds it again at the playhead (⧉ as overlay); on desktop you can also drag it onto the timeline.</p>
+      <p class="hint" id="mediaHint">Tap a file to select its clips; tap a text, color clip or transition to select it and jump there. ＋ adds a file again at the playhead (⧉ as overlay); on desktop you can also drag it onto the timeline.</p>
     </div>
   </section>
 
@@ -702,7 +756,7 @@
       <button type="button" class="seg-btn" data-arrange="timeline">Large timeline</button>
     </div>
     <p class="hint">Drag the borders between preview, settings and timeline to resize them.</p>
-    <label class="check-row"><input type="checkbox" id="mediaColChk"> Media list as a column on the left (wide layout)</label>
+    <label class="check-row"><input type="checkbox" id="mediaColChk"> Contents as a column on the left (wide layout)</label>
     <button class="btn-secondary wide" id="resetSizesBtn">Reset panel sizes</button>
   </div>
 </div>
@@ -898,19 +952,20 @@
       <ul>
         <li><strong>Add → Text</strong> puts a text clip at the playhead on an upper track. Edit it in the <strong>Text</strong> tab: content (several lines, emojis), font, size, bold/italic, alignment, spacing, color, opacity, outline, shadow and a background box. Styles: <em>Title</em>, <em>Subtitle</em>, <em>Lower third</em>.</li>
         <li>The size is a share of the canvas height, so the text looks the same at every resolution. Move it in the preview or with the Position tab (the slider scales it further), turn it in Rotate, fade it in Fade.</li>
-        <li><strong>Fonts:</strong> 11 fonts are included (loaded on first use, then available offline). <em>Add a font file…</em> (TTF, OTF, WOFF) or, in Chrome/Edge on a computer, <em>Use an installed font…</em> copies a font into the project — it then works on other devices too and appears in the media list. Check that the font's license allows this.</li>
+        <li><strong>Fonts:</strong> 11 fonts are included (loaded on first use, then available offline). <em>Add a font file…</em> (TTF, OTF, WOFF) or, in Chrome/Edge on a computer, <em>Use an installed font…</em> copies a font into the project — it then works on other devices too and appears in the Contents list. Check that the font's license allows this.</li>
       </ul>
     </details>
 
     <details id="help-transitions">
-      <summary>Transitions &amp; fades</summary>
+      <summary>Transitions &amp; animations</summary>
       <ul>
         <li>Where two clips meet, a small <strong>+</strong> sits on the cut. Tap it to add a <strong>transition</strong>; tap the <strong>⧓</strong> to change it: cross-fade, dip to black/white, wipe, slide, zoom, circle or blur, with direction and duration (0.1–3 s).</li>
         <li>The two clips <strong>overlap</strong> by the transition's length, so the video gets that much shorter. On upper tracks the clips have to meet exactly; moving one of them removes the transition.</li>
         <li><strong>Move the cut</strong> (slider in the transition panel) or drag the <strong>⧓</strong> sideways: the first clip gets longer and the second one shorter (or the other way round) — the total length stays the same. Dragging snaps to the playhead.</li>
         <li>The sound is cross-faded too — or switch that off for a hard cut in the middle.</li>
         <li><strong>Apply to all cuts on this track</strong> uses the same transition everywhere; a new transition starts like the last one you chose.</li>
-        <li>The <strong>Fade</strong> tab fades a clip's picture in from the background or out to it (upper tracks: to transparent). For videos, <em>Picture and sound together</em> keeps the picture and sound fades the same.</li>
+        <li>The <strong>Animate</strong> tab lets a clip appear (In) and disappear (Out): Fade, Zoom in/out, Slide (the arrow is the direction of the motion), Spin, Blur and Pop — combine as many as you like, e.g. Fade + Zoom in + Spin. Set the duration with the slider; switching an effect on gives it 0.5 s. Videos: <em>Sound fades along</em> keeps the sound fades the same.</li>
+        <li>Texts can also appear and disappear <strong>line by line, word by word, letter by letter</strong> (each piece with the chosen effects) or like a <strong>typewriter</strong>.</li>
       </ul>
     </details>
 

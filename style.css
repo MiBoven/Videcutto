@@ -613,3 +613,18 @@ body.pv-pinned:not(.wide) .ed-stage { position: sticky; top: var(--pin-top, 0px)
 @media (pointer: coarse) { body.pv-pinned:not(.wide) .preview { --pv-h: 36vh; } }
 .tr-move-row .range-val { min-width: 64px; }
 .trans { touch-action: none; }
+
+/* ---------- 0.11.2: Animate tab, Contents list ---------- */
+.anim-sec { margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+.anim-sec .chips { margin: 4px 0 8px; }
+.anim-sec .anim-dir { margin-bottom: 8px; }
+.anim-text-row .segment { flex-wrap: wrap; }
+#mediaList li.m-group { cursor: default; border: 0; background: none; padding: 8px 2px 0; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-secondary); }
+#mediaList li.m-group:hover { border: 0; }
+#mediaList li.m-group:first-child { padding-top: 0; }
+#mediaList .m-thumb.font { font-size: 18px; background: #2a2a2a; }
+#mediaList .m-thumb.trans-th { background: var(--surface); color: var(--accent); border: 1px solid var(--border); font-size: 20px; }
+/* Seven tabs must fit on a phone: tighter buttons, wrap as a last resort */
+.segment.cp-tabs { flex-wrap: wrap; flex: none; }
+.segment.cp-tabs button { padding: 7px 6px; flex: 1 0 auto; }
+@media (max-width: 420px) { .segment.cp-tabs button { padding: 7px 3px; font-size: 12.5px; } }
