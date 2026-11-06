@@ -591,14 +591,25 @@ body.coarse .junction { width: 22px; height: 22px; margin: 0 0 0 -11px; opacity:
 .tx-toggle { width: 38px; height: 34px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); color: var(--text); font-size: 16px; cursor: pointer; }
 .tx-toggle.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
 .tx-row input[type=color], .tx-sect input[type=color] { width: 38px; height: 30px; padding: 0 2px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); }
-.tx-two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.tx-three { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.tx-two, .tx-three { display: grid; grid-template-columns: 1fr; gap: 0; }
 .tx-sect { border-top: 1px solid var(--border); padding-top: 8px; margin-top: 4px; }
 .tx-sect .check-row { display: flex; align-items: center; gap: 8px; }
 .tx-sect.off > :not(.check-row) { opacity: .45; pointer-events: none; }
-@media (max-width: 420px) { .tx-three { grid-template-columns: 1fr; } }
 #mediaList .m-thumb.font { background: var(--surface); color: var(--text); font-size: 20px; }
 .lf-search { width: 100%; padding: 9px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font-size: 14px; margin-bottom: 8px; }
 .lf-list { list-style: none; margin: 0 0 10px; padding: 0; max-height: 50vh; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; }
 .lf-list li { padding: 8px 10px; cursor: pointer; border-bottom: 1px solid var(--border); font-size: 14px; }
 .lf-list li:hover { background: var(--accent-soft); }
+
+/* ---------- Pinned preview ---------- */
+.preview-wrap { position: relative; }
+.pin-btn { position: absolute; top: 8px; right: 8px; z-index: 3; width: 32px; height: 32px; border-radius: 8px; border: 1px solid rgba(255,255,255,.25); background: rgba(0,0,0,.45); color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; opacity: .7; }
+.pin-btn:hover { opacity: 1; }
+.pin-btn svg { width: 18px; height: 18px; }
+.pin-btn.on { opacity: 1; background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+body.wide .pin-btn { display: none; }
+/* The whole stage (preview + transport) sticks; the project bar scrolls away (top = -its height, set in JS). */
+body.pv-pinned:not(.wide) .ed-stage { position: sticky; top: var(--pin-top, 0px); z-index: 25; background: var(--bg); padding-bottom: 4px; box-shadow: 0 10px 14px -10px rgba(0,0,0,.45); }
+@media (pointer: coarse) { body.pv-pinned:not(.wide) .preview { --pv-h: 36vh; } }
+.tr-move-row .range-val { min-width: 64px; }
+.trans { touch-action: none; }

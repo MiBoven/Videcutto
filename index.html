@@ -103,6 +103,7 @@
       <video id="vidB" playsinline preload="auto" muted></video>
       <!-- The canvas shows the composition; the videos underneath only supply frames and sound. -->
       <canvas id="pvCanvas"></canvas>
+      <button type="button" class="pin-btn" id="pinBtn" title="Pin the preview (stays at the top while scrolling)" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M9 3h6l-1 6 4 4H6l4-4z"/><path d="M12 13v8"/></svg></button>
       <div class="preview-empty" id="previewEmpty" hidden>Timeline is empty — add a video, an image or a color clip</div>
     </div>
   </div>
@@ -247,6 +248,12 @@
       <input type="range" id="trDur" min="0.1" max="3" step="0.1" value="0.5" aria-label="Transition duration">
       <span class="range-val" id="trDurVal">0.5 s</span>
     </div>
+    <span class="mini-label">Move the cut</span>
+    <div class="range-row tr-move-row">
+      <input type="range" id="trMove" min="-1" max="1" step="0.01" value="0" aria-label="Move the cut">
+      <span class="range-val" id="trMoveVal">0.00 s</span>
+    </div>
+    <p class="hint">Moves where the transition happens (the first clip gets longer, the second starts later, or the other way round). You can also drag the ⧓ on the timeline — it snaps to the playhead.</p>
     <label class="check-row"><input type="checkbox" id="trAudio" checked> Cross-fade the sound <span class="hint-inline">(off: hard cut in the middle)</span></label>
     <p class="hint">The two clips overlap by the transition's length, so the video gets that much shorter.</p>
     <div class="tp-actions">
@@ -859,6 +866,7 @@
       <summary>Timeline &amp; editing</summary>
       <ul>
         <li>Phones: the <strong>playhead stays in the middle</strong> — scroll the timeline to move through the video. Desktop: <strong>click or drag in the time ruler</strong> (or drag the red line) to set the playhead; scrolling only moves the view.</li>
+        <li>The <strong>pin</strong> in the preview's corner keeps the preview at the top while you scroll through the settings (phones and the classic layout).</li>
         <li>Zoom with the 🔍 buttons, two fingers (pinch) or Ctrl + mouse wheel. <strong>Fit</strong> (the button between them) shows the whole project — or the selected clip.</li>
         <li><strong>Exact timing:</strong> the clip panel's <em>Start</em> field takes a time like <em>0:43.79</em>; the buttons below move a clip by ±1 s, ±0.1 s or ±0.01 s (desktop: Alt + ←/→, with Shift for 0.01 s). Clips on the magnetic main track follow their order instead.</li>
         <li><strong>Tap a clip to select it, then drag it.</strong> Unselected clips never move, so scrolling is safe.</li>
@@ -899,6 +907,7 @@
       <ul>
         <li>Where two clips meet, a small <strong>+</strong> sits on the cut. Tap it to add a <strong>transition</strong>; tap the <strong>⧓</strong> to change it: cross-fade, dip to black/white, wipe, slide, zoom, circle or blur, with direction and duration (0.1–3 s).</li>
         <li>The two clips <strong>overlap</strong> by the transition's length, so the video gets that much shorter. On upper tracks the clips have to meet exactly; moving one of them removes the transition.</li>
+        <li><strong>Move the cut</strong> (slider in the transition panel) or drag the <strong>⧓</strong> sideways: the first clip gets longer and the second one shorter (or the other way round) — the total length stays the same. Dragging snaps to the playhead.</li>
         <li>The sound is cross-faded too — or switch that off for a hard cut in the middle.</li>
         <li><strong>Apply to all cuts on this track</strong> uses the same transition everywhere; a new transition starts like the last one you chose.</li>
         <li>The <strong>Fade</strong> tab fades a clip's picture in from the background or out to it (upper tracks: to transparent). For videos, <em>Picture and sound together</em> keeps the picture and sound fades the same.</li>

@@ -41,6 +41,7 @@ A privacy-friendly video editor and compressor that runs entirely in your browse
 - Where two clips of a visual track meet, a small **+** sits on the cut; tap it to add a transition, tap the **⧓** marker to edit it in the transition panel
 - Types: **Cross-fade, Dip to black, Dip to white, Wipe** (left/right/up/down), **Slide** (left/right/up/down), **Zoom** (in/out), **Circle** and **Blur** (falls back to a cross-fade where the browser can't blur canvases)
 - Duration 0.1–3 s (default 0.5 s, at most half the shorter clip). The two clips **overlap** by the duration, so the project gets that much shorter; on the magnetic main track the following clips move up, on free tracks the second clip moves into the first (moving one of them later removes the transition)
+- **Move the cut** (roll edit): the slider in the transition panel or dragging the **⧓** marker sideways moves the transition — the first clip ends later and the second starts later in its media (or the other way round), the overall length stays the same. Limited by the media of videos and sounds and by the clip lengths; dragging snaps to the playhead; one undo step
 - The sound is cross-faded (equal power) during the transition; switch it off for a hard cut in the middle
 - **Apply to all cuts on this track**; a new transition starts with the type and duration chosen last; transitions are saved with the project, undoable and included in the export (preview and export use the same drawing code). On the main track each clip keeps its own background (color or blur) during the transition
 - **Fade tab** (videos, images, color clips): picture fade in/out from/to the background (upper tracks: to transparent); for videos *Picture and sound together* (on by default) keeps the picture and sound fades the same
@@ -175,6 +176,7 @@ The clip panel has four tabs — **Clip**, **Crop**, **Position**, **Rotate**. O
 - **Classic layout:** everything in one column (as on phones)
 - **View** in the menu: Layout *Auto / Wide / Classic*; arrangement *Balanced*, *Large preview* or *Large timeline*; **Reset panel sizes**
 - The borders between preview and right column and between top and timeline can be dragged; sizes are remembered, double-click a border to reset
+- **Pin the preview** (pin button in the preview's corner, classic layout / phones): preview and playback controls stay at the top while you scroll through the panels; on phones the pinned preview is a bit smaller. Remembered
 - Optional **media column** on the left (View → *Media list as a column on the left*): the media list moves there and stays open
 
 ### Notes button (⚠)

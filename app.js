@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.11.0';
+  const VERSION = '0.11.1';
   const $ = (id) => document.getElementById(id);
 
   // ---------------------------------------------------------------------------
@@ -1989,6 +1989,25 @@
     store.set('mediaFolded', folded);
     renderMediaList();
   }
+  // Pin the preview to the top of the screen while scrolling (classic layout / phones).
+  function setPinned(on) {
+    document.body.classList.toggle('pv-pinned', on);
+    $('pinBtn').classList.toggle('on', on);
+    $('pinBtn').setAttribute('aria-pressed', String(on));
+    $('pinBtn').title = on ? 'Unpin the preview' : 'Pin the preview (stays at the top while scrolling)';
+    store.set('pvPinned', on);
+    syncPinTop();
+    requestAnimationFrame(renderPreview);
+  }
+  function syncPinTop() {
+    const bar = document.querySelector('#edStage .project-bar');
+    $('edStage').style.setProperty('--pin-top', bar ? -(bar.offsetHeight + 8) + 'px' : '0px');
+  }
+  window.addEventListener('resize', syncPinTop);
+  window.addEventListener('scroll', () => { if (document.body.classList.contains('pv-pinned')) syncPinTop(); }, { passive: true });
+  $('pinBtn').addEventListener('click', (e) => { e.stopPropagation(); setPinned(!document.body.classList.contains('pv-pinned')); });
+  setPinned(store.get('pvPinned', false));
+
   $('mediaToggle').addEventListener('click', () => setMediaFolded(!$('mediaCard').classList.contains('collapsed')));
 
   function mediaThumb(src) {
@@ -2199,6 +2218,7 @@
     if (document.activeElement !== $('trDur')) $('trDur').value = t.dur;
     $('trDurVal').textContent = t.dur.toFixed(1) + ' s';
     $('trAudio').checked = t.audio !== false;
+    syncRollSlider();
   }
   const editCut = (fn) => {
     const cut = selTrans && cutAt(selTrans.track, selTrans.clip);
@@ -2252,6 +2272,67 @@
     });
     toast(`${TRANS_NAMES[t.type]} on ${n} cut${n === 1 ? '' : 's'}.`, 2000);
   });
+  // Move the cut under a transition ("roll"): the first clip ends later, the second starts
+  // later in its media (or the other way round); the overall length stays the same.
+  function rollRange(cut) {
+    const a = cut.prev, b = cut.clip, dur = b.tIn ? b.tIn.dur : 0;
+    const still = (c) => c.kind === 'image' || c.kind === 'color' || c.kind === 'text';
+    const sa = srcOf(a), sb = srcOf(b);
+    let lo = -(clipLen(a) - 2 * dur - 0.05), hi = clipLen(b) - 2 * dur - 0.05;
+    if (!still(a) && sa) hi = Math.min(hi, (sa.kind === 'audio' ? sa.duration : sa.rangeOut) - a.out);
+    if (!still(b) && sb) lo = Math.max(lo, (sb.kind === 'audio' ? 0 : sb.rangeIn) - b.in);
+    return { lo: Math.min(0, lo), hi: Math.max(0, hi) };
+  }
+  function applyRoll(cut, d) {
+    const a = cut.prev, b = cut.clip;
+    const still = b.kind === 'image' || b.kind === 'color' || b.kind === 'text';
+    a.out += d;
+    if (still) b.out -= d; else b.in += d;
+    if (!cut.tr.magnetic) b.start = clipEnd(a) - (b.tIn ? b.tIn.dur : 0);
+    layoutTrack(cut.tr);
+  }
+  let roll = null; // { base: snapshot clips of the cut, range }
+  function rollTo(d) {
+    if (!roll) return;
+    const cut = cutAt(roll.track, roll.clip);
+    if (!cut) return;
+    d = clamp(d, roll.range.lo, roll.range.hi);
+    // Always from the state when the move started, so rounding doesn't add up.
+    Object.assign(cut.prev, roll.a);
+    Object.assign(cut.clip, roll.b);
+    applyRoll(cut, d);
+    roll.d = d;
+    $('trMoveVal').textContent = (d >= 0 ? '+' : '−') + Math.abs(d).toFixed(2) + ' s';
+    renderClips();
+    updateTime();
+    renderPreview();
+  }
+  function startRoll() {
+    const cut = selTrans && cutAt(selTrans.track, selTrans.clip);
+    if (!cut || !cut.clip.tIn) return false;
+    if (!clipLiveBefore) clipLiveBefore = snapshot();
+    roll = { track: cut.tr.id, clip: cut.clip.id, a: { out: cut.prev.out, start: cut.prev.start }, b: { in: cut.clip.in, out: cut.clip.out, start: cut.clip.start, tIn: { ...cut.clip.tIn } }, range: rollRange(cut), d: 0 };
+    return true;
+  }
+  function endRoll() {
+    if (!roll) return;
+    const moved = Math.abs(roll.d) > 1e-4;
+    roll = null;
+    if (moved) liveClipCommit(); else { clipLiveBefore = null; renderTimeline(); }
+  }
+  function syncRollSlider() {
+    const cut = selTrans && cutAt(selTrans.track, selTrans.clip);
+    if (!cut || !cut.clip.tIn || roll) return;
+    const r = rollRange(cut);
+    $('trMove').min = r.lo.toFixed(2);
+    $('trMove').max = r.hi.toFixed(2);
+    $('trMove').value = 0;
+    $('trMove').disabled = r.hi - r.lo < 0.02;
+    $('trMoveVal').textContent = '0.00 s';
+  }
+  $('trMove').addEventListener('input', (e) => { if (!roll && !startRoll()) return; rollTo(+e.target.value); });
+  $('trMove').addEventListener('change', () => { endRoll(); syncRollSlider(); });
+
   $('trRemove').addEventListener('click', () => { editCut((cut) => removeTransition(cut)); selTrans = null; updateTransPanel(); });
   $('trClose').addEventListener('click', () => { selTrans = null; renderClips(); updateTransPanel(); });
 
@@ -3046,6 +3127,45 @@
   let longPress = null;
   let longPressFired = false;
   tlRows.addEventListener('contextmenu', (e) => { if (isCoarse) e.preventDefault(); });
+
+  // Drag the ⧓ of a transition sideways to move the cut (snaps to the playhead).
+  let transDrag = null;
+  tlRows.addEventListener('pointerdown', (e) => {
+    const tb = e.target.closest('.trans');
+    if (!tb || e.button > 0) return;
+    transDrag = { x0: e.clientX, scroll0: timeline.scrollLeft, id: e.pointerId, track: tb.dataset.track, clip: tb.dataset.clip, active: false };
+  }, true);
+  window.addEventListener('pointermove', (e) => {
+    if (!transDrag || e.pointerId !== transDrag.id) return;
+    const dx = e.clientX - transDrag.x0 + (timeline.scrollLeft - transDrag.scroll0);
+    if (!transDrag.active) {
+      if (Math.abs(dx) < 5) return;
+      transDrag.active = true;
+      selTrans = { track: transDrag.track, clip: transDrag.clip };
+      selectedId = null;
+      if (!startRoll()) { transDrag = null; return; }
+      updateTransPanel();
+      const cut = cutAt(transDrag.track, transDrag.clip);
+      transDrag.mid0 = cut.clip.start + cut.clip.tIn.dur / 2;
+    }
+    let d = dx / pps;
+    // Snap the middle of the transition to the playhead.
+    if (settings.snap && !e.altKey && Math.abs(transDrag.mid0 + d - playhead) < (isCoarse ? 20 : 14) / pps) d = playhead - transDrag.mid0;
+    rollTo(d);
+    $('trMove').value = roll ? roll.d : 0;
+  });
+  const endTransDrag = (e) => {
+    if (!transDrag || e.pointerId !== transDrag.id) return;
+    const was = transDrag.active;
+    transDrag = null;
+    if (!was) return;
+    suppressClick = true;
+    setTimeout(() => { suppressClick = false; }, 50);
+    endRoll();
+    updateTransPanel();
+  };
+  window.addEventListener('pointerup', endTransDrag);
+  window.addEventListener('pointercancel', endTransDrag);
 
   tlRows.addEventListener('pointerdown', (e) => {
     if (e.button > 0) return;

@@ -1,5 +1,10 @@
 # Changelog
 
+### 0.11.1 — 2026-10-31 — Move the cut, pin the preview
+- Transitions can be moved: "Move the cut" slider in the transition panel or drag the ⧓ marker (snaps to the playhead); the first clip gets longer and the second shorter or vice versa, the total length stays the same
+- Pin button in the preview (classic layout / phones): preview and playback controls stay at the top while scrolling
+- Sliders in the Text tab (and other two/three-column slider rows) are stacked so nothing sticks out on narrow screens
+
 ### 0.11.0 — 2026-10-31 — Text & fonts
 - Text clips (Add → Text) with a new Text tab: content, font, size (share of the canvas height), bold/italic, alignment, line/letter spacing, color, opacity, outline, shadow, background box; styles Title, Subtitle, Lower third
 - Text works with Position (incl. size slider, pinch, wheel), Rotate, Fade, transitions, trimming and multi-selection
