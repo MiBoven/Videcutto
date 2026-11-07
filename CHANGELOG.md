@@ -1,5 +1,12 @@
 # Changelog
 
+### 0.11.4 — 2026-11-07 — Batch convert
+- Menu → Batch convert…: many videos with the same settings (max. resolution, quality, fps, codec, sound, metadata), each keeps its own format; automatic names or naming patterns; keep the original if the result would be bigger; download each, one ZIP, or save into a folder (desktop Chrome/Edge)
+- Contents: tapping a file folds out where each of its clips is used (start, track, effects, sound) — tap one to jump there; folded by default per project (remembered when left open)
+- 🏷 tap shows a file's metadata with "Use for the export"; long press uses it directly
+- Neutral background for text thumbnails in the Contents list
+- Back button: closes windows, leaves the editor; the installed app asks before closing on the start screen
+
 ### 0.11.3 — 2026-11-06 — File names & metadata
 - Automatic file name for single-video exports: original name + tags for what changed (resolution, quality, frame rate), e.g. 20261105_175525_720p_small_30fps
 - ▾ menu next to the file name: automatic / original / [name]_videcutto / project name, tags to add (resolution, quality, fps, bitrate, pixel size, codec, cut, crop, mute) and naming placeholders like JPG75 (* # $Y $M $D $h $m $s $R $P $Q $F $B) with a live preview

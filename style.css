@@ -238,7 +238,7 @@ button.icon.small svg { width: 16px; height: 16px; }
 .modal-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
 .modal-head h2 { margin: 0; }
 .export-modal .segment.scope { margin-bottom: 14px; }
-input[type=text]#fileNameInput {
+input[type=text]#fileNameInput, input[type=text]#bName {
   flex: 1; min-width: 0; background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
   border-radius: 8px; padding: 9px 10px; font-size: 14px; font-family: inherit;
 }
@@ -658,3 +658,32 @@ body.pv-pinned:not(.wide) .ed-stage { position: sticky; top: var(--pin-top, 0px)
   flex: 1; min-width: 0; width: 100%; background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
   border-radius: 8px; padding: 9px 10px; font-size: 14px; font-family: inherit; color-scheme: dark;
 }
+
+/* ---------- 0.11.4: Contents uses, metadata view, close question ---------- */
+#mediaList li.open { flex-wrap: wrap; }
+#mediaList .m-uses { flex-basis: 100%; display: flex; flex-direction: column; gap: 4px; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); }
+#mediaList .m-use { padding: 6px 8px; border-radius: 8px; background: var(--surface-2); cursor: pointer; }
+#mediaList .m-use:hover { outline: 1px solid var(--accent); }
+#mediaList .m-use-a { font-size: 13px; font-weight: 600; }
+#mediaList .m-use-b { font-size: 12px; color: var(--text-secondary); overflow-wrap: anywhere; }
+#mediaList .m-chev { display: inline-block; width: 1em; color: var(--text-secondary); }
+#mediaList .m-thumb.font { background: #2b2b2b !important; }
+#mediaList .m-thumb.font.light { background: #c9c9c9 !important; }
+.meta-file { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin-bottom: 14px; }
+.meta-file-name { font-weight: 700; margin-bottom: 6px; overflow-wrap: anywhere; }
+.meta-file .btn-primary { width: 100%; }
+.meta-file .btn-primary:disabled { opacity: .6; cursor: default; }
+.exit-actions { display: flex; gap: 8px; margin-top: 10px; }
+.exit-actions > button { flex: 1; }
+
+.batch-list { list-style: none; margin: 10px 0 12px; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 40vh; overflow-y: auto; }
+.batch-list:empty { display: none; }
+.batch-list li { display: flex; gap: 8px; align-items: center; background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 7px 8px 7px 10px; position: relative; overflow: hidden; }
+.batch-list .b-info { flex: 1; min-width: 0; }
+.batch-list .b-name { font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.batch-list .b-meta { font-size: 12px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.batch-list .b-meta.ok { color: var(--accent); }
+.batch-list .b-meta.err { color: var(--danger, #e5534b); }
+.batch-list .b-bar { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--accent); width: 0; transition: width .2s; }
+.batch-list button { flex: none; width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
+.batch-modal .field label { min-width: 110px; }

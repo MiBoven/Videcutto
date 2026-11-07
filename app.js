@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.11.3';
+  const VERSION = '0.11.4';
   const $ = (id) => document.getElementById(id);
 
   // ---------------------------------------------------------------------------
@@ -309,7 +309,9 @@
   // ---------------------------------------------------------------------------
   // Screens
   // ---------------------------------------------------------------------------
-  function showStart() {
+  function showStart(fromBack) {
+    // Leaving the editor in a browser tab: drop the back-button guard again.
+    if (fromBack !== true && backGuarded() && !isStandalone() && !$('editorScreen').hidden) { skipPop++; history.back(); }
     pause();
     $('startScreen').hidden = false;
     $('editorScreen').hidden = true;
@@ -320,8 +322,47 @@
     $('startScreen').hidden = true;
     $('editorScreen').hidden = false;
     document.body.classList.add('editing');
+    pushBackGuard(); // still within the tap that opened the editor
     requestAnimationFrame(() => { applyLayout(); seek(playhead); });
   }
+  // ---------------------------------------------------------------------------
+  // Back button (phones, installed app): closes an open window first, then
+  // leaves the editor for the start screen; on the start screen of the
+  // installed app it asks before closing. A history "guard" entry is added on
+  // the first touch/key (browsers ignore entries added without one).
+  // ---------------------------------------------------------------------------
+  const isStandalone = () => matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: fullscreen)').matches || navigator.standalone === true;
+  const backGuarded = () => !!(history.state && history.state.vcGuard);
+  let skipPop = 0;
+  const openModalsNow = () => [...document.querySelectorAll('.modal-bg:not([hidden])')].filter((m) => m.id !== 'busyModal');
+  function pushBackGuard() {
+    if (backGuarded()) return;
+    try { history.pushState({ ...(history.state || {}), vcGuard: 1 }, '', location.href); } catch (e) { /* ignore */ }
+  }
+  const wantGuard = () => !$('editorScreen').hidden || isStandalone() || openModalsNow().length > 0;
+  ['pointerdown', 'keydown'].forEach((ev) => window.addEventListener(ev, (e) => {
+    if (e.target && e.target.closest && e.target.closest('#exitModal')) return;
+    if (wantGuard()) pushBackGuard();
+  }, { capture: true, passive: true }));
+  window.addEventListener('popstate', () => {
+    if (skipPop) { skipPop--; return; }
+    const mods = openModalsNow().filter((m) => m.id !== 'exitModal');
+    if (mods.length) {
+      const m = mods[mods.length - 1];
+      const x = m.querySelector('.modal-head button:last-child') || m.querySelector('.modal-head button');
+      if (x) x.click(); else m.hidden = true;
+      pushBackGuard();
+      return;
+    }
+    if (!$('editorScreen').hidden) { showStart(true); if (isStandalone()) pushBackGuard(); return; }
+    if (isStandalone()) openModal('exitModal'); // pressing back once more closes the app
+  });
+  $('exitStay').addEventListener('click', () => { closeModal('exitModal'); pushBackGuard(); });
+  $('exitClose').addEventListener('click', () => {
+    try { window.close(); } catch (e) { /* not allowed */ }
+    setTimeout(() => toast('Press back once more to close Videcutto.', 2500), 300);
+  });
+
   const brand = $('brand');
   brand.addEventListener('click', showStart);
   brand.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showStart(); } });
@@ -2115,9 +2156,11 @@
     $('mediaCard').classList.toggle('collapsed', folded);
     $('mediaBody').hidden = folded;
     $('mediaToggle').setAttribute('aria-expanded', String(!folded));
-    store.set('mediaFolded', folded);
+    contentsOpen = !folded; // remembered per project
     renderMediaList();
   }
+  let contentsOpen = false;
+  const openUses = new Set(); // files whose uses are unfolded in the Contents list
   // Pin the preview to the top of the screen while scrolling (classic layout / phones).
   function setPinned(on) {
     document.body.classList.toggle('pv-pinned', on);
@@ -2137,7 +2180,7 @@
   $('pinBtn').addEventListener('click', (e) => { e.stopPropagation(); setPinned(!document.body.classList.contains('pv-pinned')); });
   setPinned(store.get('pvPinned', false));
 
-  $('mediaToggle').addEventListener('click', () => setMediaFolded(!$('mediaCard').classList.contains('collapsed')));
+  $('mediaToggle').addEventListener('click', () => { setMediaFolded(!$('mediaCard').classList.contains('collapsed')); scheduleSave(); });
 
   function mediaThumb(src) {
     const box = document.createElement('div');
@@ -2159,6 +2202,39 @@
     else box.textContent = src.kind === 'image' ? '🖼' : '▶';
     return box;
   }
+  // What a use of a file does: where it starts in the file, visibility, sound, effects.
+  function useTags(tr, c, i) {
+    const t = [];
+    const len = clipLen(c);
+    if (c.kind === 'video' || c.kind === 'audio') t.push(`from ${fmtTime(c.in, false)} in the file`);
+    t.push(`${len.toFixed(1)} s`);
+    if (c.kind !== 'audio') {
+      if (tr.hidden) t.push('track hidden');
+      else if (tr.opacity < 1) t.push(`track ${Math.round(tr.opacity * 100)} % visible`);
+      const f = Render.tfOf(c.tf);
+      if (f.crop.w < 0.999 || f.crop.h < 0.999) t.push('cropped');
+      if (f.rot || f.flipH || f.flipV) t.push('rotated/flipped');
+      if (f.fit === 'free' || f.scale !== 1 || f.dx || f.dy) t.push('moved/sized');
+      const fx = (a) => { const x = Render.animOf(a); return [x.fade && 'fade', x.zoom && 'zoom ' + x.zoom, x.slide && 'slide', x.spin && 'spin', x.blur && 'blur', x.pop && 'pop'].filter(Boolean).join('+') || '—'; };
+      if (c.vFadeIn > 0) t.push(`in: ${fx(c.animIn)} ${c.vFadeIn.toFixed(1)} s`);
+      if (c.vFadeOut > 0) t.push(`out: ${fx(c.animOut)} ${c.vFadeOut.toFixed(1)} s`);
+      if (c.tIn && i > 0) t.push(`${TRANS_NAMES[c.tIn.type] || 'transition'} in`);
+      const nx = tr.clips[i + 1];
+      if (nx && nx.tIn) t.push(`${TRANS_NAMES[nx.tIn.type] || 'transition'} out`);
+    }
+    if (c.kind === 'video' || c.kind === 'audio') {
+      const hasSound = c.kind === 'audio' || (srcOf(c) && srcOf(c).hasAudio !== false);
+      if (!hasSound) t.push('no sound');
+      else if (c.muted || tr.muted || muteAll) t.push('🔇 muted');
+      else {
+        const vol = (c.volume == null ? 1 : c.volume) * (tr.volume == null ? 1 : tr.volume);
+        if (Math.abs(vol - 1) > 0.005) t.push(`🔊 ${Math.round(vol * 100)} %`);
+        if (c.fadeIn > 0 || c.fadeOut > 0) t.push('sound fades');
+      }
+    }
+    return t;
+  }
+
   // Contents: the files, then texts, color clips and transitions of the timeline.
   function contentItems() {
     const texts = [], colors = [], cuts = [];
@@ -2214,10 +2290,12 @@
       info.className = 'm-info';
       const name = document.createElement('div');
       name.className = 'm-name';
-      name.textContent = src.name;
+      const n = usesOf(src.id).length;
+      const open = n > 0 && openUses.has(src.id);
+      if (n && src.kind !== 'font') { const ch = document.createElement('span'); ch.className = 'm-chev'; ch.textContent = open ? '▾' : '▸'; name.append(ch); }
+      name.append(src.name);
       const meta = document.createElement('div');
       meta.className = 'm-meta';
-      const n = usesOf(src.id).length;
       const what = src.kind === 'font' ? `Font · ${src.fontName || src.name}` : src.kind === 'image' ? `Image · ${src.width}×${src.height}` : src.kind === 'audio' ? `Audio · ${fmtTime(src.duration, false)}` : `Video · ${fmtTime((src.rangeOut || 0) - (src.rangeIn || 0), false)} · ${src.width}×${src.height}`;
       meta.innerHTML = '';
       meta.append(what + ' · ');
@@ -2237,13 +2315,38 @@
       if ((src.kind === 'video' || src.kind === 'image') && hasMeta(src.fileMeta)) {
         const ms = metaSource();
         const used = ms && ms.src === src;
-        btn(used ? '🏷✓' : '🏷', used ? 'Its metadata (date, place, camera) goes into the export — tap to change' : 'Metadata (date, place, camera) — tap to use it for the export', 'meta');
+        btn(used ? '🏷✓' : '🏷', used ? 'Metadata — goes into the export (tap: show)' : 'Metadata — tap: show · long press: use for the export', 'meta');
         const m = src.fileMeta;
         const tags = [m.utc != null && fmtMetaDate(m).split(',')[0], m.lat != null && '📍', (m.make || m.model) && [m.make, m.model].filter(Boolean).join(' ')].filter(Boolean).join(' · ');
         if (tags) { const t = document.createElement('div'); t.className = 'm-meta m-tags' + (used ? ' used' : ''); t.textContent = tags; info.append(t); }
       }
       if (!n) btn('🗑', 'Remove from the project', 'remove');
-      li.append(mediaThumb(src), info, acts);
+      if (open && src.kind !== 'font') {
+        const box = document.createElement('div');
+        box.className = 'm-uses';
+        const list = [];
+        tracks.forEach((tr) => tr.clips.forEach((c, i) => { if (c.srcId === src.id) list.push({ tr, c, i }); }));
+        list.sort((a, b) => a.c.start - b.c.start);
+        list.forEach(({ tr, c, i }, k) => {
+          const row = document.createElement('div');
+          row.className = 'm-use';
+          row.dataset.use = c.id;
+          row.title = 'Select it and jump there';
+          const a = document.createElement('div');
+          a.className = 'm-use-a';
+          a.textContent = `${k + 1}. ${fmtTime(c.start, false)}–${fmtTime(clipEnd(c), false)} · ${trackLabel(tr)}`;
+          const b = document.createElement('div');
+          b.className = 'm-use-b';
+          b.textContent = useTags(tr, c, i).join(' · ');
+          row.append(a, b);
+          box.append(row);
+        });
+        li.classList.add('open');
+        li.append(box);
+      }
+      const uses = li.querySelector('.m-uses');
+      li.prepend(mediaThumb(src), info, acts);
+      if (uses) li.append(uses);
       return li;
     }));
     if (ci.texts.length) {
@@ -2255,7 +2358,10 @@
         th.textContent = 'Aa';
         th.style.fontFamily = familyCss(t.font);
         th.style.color = t.color;
-        if (t.box) th.style.background = t.boxColor;
+        // Neutral background; light grey only when the text itself is dark.
+        const hx = String(t.color || '#ffffff').replace('#', '');
+        const lum = hx.length >= 6 ? (0.299 * parseInt(hx.slice(0, 2), 16) + 0.587 * parseInt(hx.slice(2, 4), 16) + 0.114 * parseInt(hx.slice(4, 6), 16)) : 255;
+        if (lum < 90) th.classList.add('light');
         const first = String(t.content || '').split('\n').find((l) => l.trim()) || '(empty)';
         const row = contentRow('text', th, first, `Text · ${spanOf(c)}`, { clip: c.id });
         row.querySelector('.m-name').style.fontFamily = familyCss(t.font);
@@ -2321,9 +2427,16 @@
     const li = e.target.closest('li');
     if (!li || li.classList.contains('m-group')) return;
     if (li.dataset.clip || li.dataset.cutClip) { jumpToContent(li); return; }
+    const useRow = e.target.closest('.m-use');
+    if (useRow) {
+      const f = findClip(useRow.dataset.use);
+      if (f) { selectSet([f.clip.id], false); afterSelect(); seek(f.clip.start + Math.min(f.clip.vFadeIn || 0, clipLen(f.clip) / 2) + 0.001); }
+      return;
+    }
     const src = sources.get(li.dataset.src);
     if (!src) return;
     const act = e.target.closest('[data-act]');
+    if (act && act.dataset.act === 'meta' && metaLong) { metaLong = false; return; }
     if (act) {
       if (act.dataset.act === 'add' && src.kind === 'font') addTextClip('title', 'src:' + src.id);
       else if (act.dataset.act === 'add') addFromMedia(src, false);
@@ -2341,9 +2454,31 @@
     }
     const ids = usesOf(src.id).map((c) => c.id);
     if (!ids.length) { toast('This file isn\'t used on the timeline — ＋ adds it.', 2500); return; }
+    // Tap: select all its clips and fold its uses out (or in).
+    if (src.kind !== 'font') { if (openUses.has(src.id)) openUses.delete(src.id); else openUses.add(src.id); }
     selectSet(ids, false);
     afterSelect();
+    renderMediaList();
   });
+  // Long press on 🏷: use this file's metadata for the export (tap only shows it).
+  let metaLong = false, metaTimer = 0;
+  $('mediaList').addEventListener('pointerdown', (e) => {
+    const b = e.target.closest('[data-act="meta"]');
+    if (!b) return;
+    metaLong = false;
+    const id = b.closest('li').dataset.src;
+    clearTimeout(metaTimer);
+    metaTimer = setTimeout(() => {
+      metaLong = true;
+      metaChoice = { ...metaChoice, mode: 'file', srcId: id };
+      if (settings.haptics && navigator.vibrate) { try { navigator.vibrate(20); } catch (err) { /* ignore */ } }
+      toast(`Metadata of ${sources.get(id).name} is used for the export.`, 2500);
+      $('metaSummary').textContent = metaSummary();
+      renderMediaList(); syncFileName(); scheduleSave();
+    }, 550);
+  });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach((ev) => $('mediaList').addEventListener(ev, () => clearTimeout(metaTimer)));
+  $('mediaList').addEventListener('contextmenu', (e) => { if (e.target.closest('[data-act="meta"]')) e.preventDefault(); });
   // Desktop: drag a file from the list onto the timeline.
   const MEDIA_DND = 'application/x-videcutto-media';
   $('mediaList').addEventListener('dragstart', (e) => {
@@ -4189,7 +4324,7 @@
   }
   $('canvasToggle').addEventListener('click', () => setCanvasFolded(!$('canvasCard').classList.contains('collapsed')));
   setCanvasFolded(store.get('canvasFolded', false));
-  setMediaFolded(store.get('mediaFolded', true));
+  setMediaFolded(true);
   initMediaDrop();
 
   function onCanvasChange() {
@@ -4910,9 +5045,9 @@
   /** Replace the placeholders of a name pattern (n = number for #). */
   function expandName(pattern, n = 1, info = nameInfo()) {
     if (!/[*#$]/.test(pattern)) return pattern;
-    const base = info.src ? cleanFileName(baseName(info.src.name)) : projectBase();
+    const base = info.base || (info.src ? cleanFileName(baseName(info.src.name)) : projectBase());
     let d = null;
-    const date = (k) => { d = d || nameDate(); return String(d[k]).padStart(k === 'Y' ? 4 : 2, '0'); };
+    const date = (k) => { d = d || info.dateParts || nameDate(); return String(d[k]).padStart(k === 'Y' ? 4 : 2, '0'); };
     const vals = { R: () => info.t.dims, P: () => info.t.res, Q: () => info.t.quality, F: () => String(info.out.fps), B: () => info.t.bitrate };
     return pattern
       .replace(/#+/g, (h) => String(n).padStart(h.length, '0'))
@@ -5059,6 +5194,18 @@
     $('metaEmpty').textContent = metaChoice.mode === 'none' ? 'The video gets no recording date, place or camera information.' : 'No metadata found.';
     $('metaEditBtn').hidden = custom || metaChoice.mode === 'none' || !rows.length;
     if (custom) fillMetaForm(metaChoice.custom || {});
+    // Opened from a file (🏷): its own data on top, the export choice below.
+    const vs = metaView && sources.get(metaView);
+    $('metaFileBox').hidden = !vs;
+    if (vs) {
+      $('metaFileName').textContent = vs.name;
+      const fr = metaRows(vs.fileMeta);
+      $('metaFileList').replaceChildren(...fr.flatMap(([k, v]) => [Object.assign(document.createElement('dt'), { textContent: k }), Object.assign(document.createElement('dd'), { textContent: v })]));
+      const used = !!(ms && ms.src === vs) && metaChoice.mode !== 'custom';
+      $('metaUseBtn').textContent = used ? '✓ Used for the export' : 'Use for the export';
+      $('metaUseBtn').disabled = used;
+      dl.hidden = true; $('metaEmpty').hidden = true; $('metaEditBtn').hidden = true;
+    }
   }
   // Own values: form <-> object
   const p2 = (n) => String(n).padStart(2, '0');
@@ -5083,12 +5230,17 @@
     if (old.extra) m.extra = old.extra;
     return m;
   }
+  let metaView = null; // file whose metadata is shown (opened with 🏷)
   function openMeta(srcId) {
-    if (srcId) metaChoice = { ...metaChoice, mode: 'file', srcId };
+    metaView = srcId || null;
     openModal('metaModal');
     syncMetaUI();
-    if (srcId) { renderMediaList(); scheduleSave(); }
   }
+  function useMetaOf(srcId) {
+    metaChoice = { ...metaChoice, mode: 'file', srcId };
+    syncMetaUI(); renderMediaList(); syncFileName(); scheduleSave();
+  }
+  $('metaUseBtn').addEventListener('click', () => { if (metaView) useMetaOf(metaView); });
   $('metaBtn').addEventListener('click', () => openMeta());
   $('metaSel').addEventListener('change', (e) => {
     const v = e.target.value;
@@ -5112,9 +5264,10 @@
     }, () => toast('Couldn\'t get your location.'), { timeout: 15000 });
   });
   $('metaNow').addEventListener('click', () => { const d = new Date(); $('metaDate').value = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}T${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`; $('metaCustom').dispatchEvent(new Event('change')); });
-  $('metaClose').addEventListener('click', () => closeModal('metaModal'));
-  $('metaDone').addEventListener('click', () => closeModal('metaModal'));
-  $('metaModal').addEventListener('click', (e) => { if (e.target.id === 'metaModal') closeModal('metaModal'); });
+  const closeMeta = () => { closeModal('metaModal'); metaView = null; };
+  $('metaClose').addEventListener('click', closeMeta);
+  $('metaDone').addEventListener('click', closeMeta);
+  $('metaModal').addEventListener('click', (e) => { if (e.target.id === 'metaModal') closeMeta(); });
 
   const exportDefaults = () => ({ scope: 'all', res: '1080', resW: 1920, resH: 1080, quality: 'standard', bitrateMbps: 5, targetMB: 25, lockRes: false, fps: '30', codec: 'avc' });
   let exportState = Object.assign(exportDefaults(), store.get('export2', {}));
@@ -5245,6 +5398,7 @@
   });
 
   Render.canEncodeHevc().then((ok) => {
+    if (ok) { const bo = $('bCodecSel').querySelector('option[value="hevc"]'); bo.disabled = false; bo.textContent = 'H.265 (HEVC) · smaller'; }
     const opt = $('codecSel').querySelector('option[value="hevc"]');
     if (ok) {
       opt.disabled = false;
@@ -5447,6 +5601,278 @@
     $('resultBox').hidden = false;
     $('resultBox').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
+  // ---------------------------------------------------------------------------
+  // Batch convert (Menu): many videos with the same settings, one after the
+  // other. Each keeps its own format; projects aren't touched.
+  // ---------------------------------------------------------------------------
+  const batch = { items: [], running: false, ctl: null, name: '' };
+  let batchUid = 0;
+  const bSettings = () => ({
+    res: $('bResSel').value, quality: $('bQualitySel').value,
+    bitrateMbps: clamp(parseFloat($('bBitrate').value) || 4, 0.1, 100), targetMB: clamp(parseFloat($('bTarget').value) || 25, 1, 4000),
+    fps: $('bFpsSel').value, codec: $('bCodecSel').value, sound: $('bSoundSel').value, meta: $('bMetaSel').value,
+  });
+  function bOutFor(it, st) {
+    const src = it.src;
+    const d = Render.displaySize(src);
+    const short = Math.min(d.w, d.h);
+    const f = (st.res === 'source' ? short : Math.min(short, +st.res)) / short;
+    const settings = {
+      width: even(d.w * f), height: even(d.h * f),
+      quality: st.quality, bitrateMbps: st.bitrateMbps, targetMB: st.targetMB, lockRes: false,
+      fps: st.fps, codec: st.codec, muteAll: st.sound === 'remove', fit: 'bars', bg: '#000000',
+    };
+    const dur = src.rangeOut - src.rangeIn;
+    return { settings, out: Render.computeOutput(settings, [src], dur), dur };
+  }
+  function dateParts(m, fallbackMs) {
+    if (m && m.utc != null) {
+      const tz = m.tz != null ? m.tz : -new Date(m.utc).getTimezoneOffset();
+      const d = new Date(m.utc + tz * 60000);
+      return { Y: d.getUTCFullYear(), M: d.getUTCMonth() + 1, D: d.getUTCDate(), h: d.getUTCHours(), m: d.getUTCMinutes(), s: d.getUTCSeconds() };
+    }
+    const d = new Date(fallbackMs || Date.now());
+    return { Y: d.getFullYear(), M: d.getMonth() + 1, D: d.getDate(), h: d.getHours(), m: d.getMinutes(), s: d.getSeconds() };
+  }
+  function bNameOf(it, n, st) {
+    const { out } = bOutFor(it, st);
+    const src = it.src;
+    const d = Render.displaySize(src);
+    const short = Math.min(out.width, out.height);
+    const q = st.quality === 'custom' ? `${st.bitrateMbps}mbps` : st.quality === 'target' ? `${st.targetMB}mb` : st.quality;
+    const t = { res: `${short}p`, quality: q, fps: `${out.fps}fps`, bitrate: `${(out.bitrate / 1e6).toFixed(1).replace(/\.0$/, '')}mbps`, dims: `${out.width}x${out.height}`, codec: st.codec === 'hevc' ? 'hevc' : 'h264' };
+    const base = cleanFileName(baseName(src.name)) || 'video';
+    if (!batch.name) {
+      const changed = [];
+      if (Math.abs(Math.min(d.w, d.h) - short) > 2) changed.push(t.res);
+      changed.push(t.quality);
+      if (Math.round(src.frameRate || 30) !== out.fps) changed.push(t.fps);
+      return [base, ...changed].join('_');
+    }
+    return cleanFileName(expandName(batch.name, n, { src, base, t, out, dateParts: dateParts(src.fileMeta, src.origLastModified) })) || 'video';
+  }
+  // Names of all items, made unique (…_2, …_3).
+  function bNames(st) {
+    const seen = new Map();
+    let n = 0;
+    for (const it of batch.items) {
+      if (!it.src) { it.outName = ''; continue; }
+      let nm = bNameOf(it, ++n, st);
+      const key = nm.toLowerCase();
+      const c = (seen.get(key) || 0) + 1;
+      seen.set(key, c);
+      if (c > 1) nm += '_' + c;
+      it.outName = nm;
+    }
+  }
+  function renderBatch() {
+    const st = bSettings();
+    bNames(st);
+    $('bBitrateField').hidden = st.quality !== 'custom';
+    $('bTargetField').hidden = st.quality !== 'target';
+    $('bFolderRow').hidden = !window.showDirectoryPicker;
+    $('bFolder').disabled = $('bZip').checked;
+    const ul = $('batchList');
+    ul.replaceChildren(...batch.items.map((it) => {
+      const li = document.createElement('li');
+      li.dataset.id = it.id;
+      const info = document.createElement('div');
+      info.className = 'b-info';
+      const nm = document.createElement('div');
+      nm.className = 'b-name';
+      nm.textContent = it.file.name;
+      const mt = document.createElement('div');
+      mt.className = 'b-meta';
+      if (it.status === 'reading') mt.textContent = 'Reading…';
+      else if (it.status === 'error') { mt.className += ' err'; mt.textContent = it.err; }
+      else {
+        const d = Render.displaySize(it.src);
+        const { out, dur } = bOutFor(it, st);
+        const est = Render.estimateSize(out, dur, st.sound !== 'remove' && it.src.audioDecodable);
+        if (it.status === 'working') mt.textContent = `Converting… ${Math.floor((it.p || 0) * 100)} %`;
+        else if (it.status === 'done') { mt.className += ' ok'; mt.textContent = `✓ ${fmtSize(it.file.size)} → ${fmtSize(it.outSize)} (−${Math.max(0, Math.round((1 - it.outSize / it.file.size) * 100))} %) · ${it.savedAs}`; }
+        else if (it.status === 'kept') { mt.className += ' ok'; mt.textContent = `✓ Original kept — the result would have been bigger${it.savedAs ? ' · ' + it.savedAs : ''}`; }
+        else mt.textContent = `${d.w}×${d.h} · ${fmtTime(dur, false)} · ${fmtSize(it.file.size)} → ≈ ${fmtSize(est)} → ${it.outName}.mp4`;
+      }
+      info.append(nm, mt);
+      li.append(info);
+      if (!batch.running) {
+        const x = document.createElement('button');
+        x.type = 'button'; x.textContent = '✕'; x.title = 'Remove from the list'; x.dataset.act = 'remove';
+        li.append(x);
+      }
+      if (it.status === 'working') { const bar = document.createElement('div'); bar.className = 'b-bar'; bar.style.width = ((it.p || 0) * 100).toFixed(1) + '%'; li.append(bar); }
+      return li;
+    }));
+    const ready = batch.items.filter((it) => it.src && it.status === 'ready').length;
+    $('bStart').disabled = batch.running || !ready;
+    $('bStart').textContent = batch.running ? 'Converting…' : `Convert ${ready} video${ready === 1 ? '' : 's'}`;
+    $('batchSettings').querySelectorAll('select, input').forEach((el) => { el.disabled = batch.running || (el.id === 'bFolder' && $('bZip').checked); });
+    $('batchAddBtn').disabled = batch.running;
+    const first = batch.items.find((it) => it.src);
+    $('bName').value = batch.name;
+    $('bNamePreview').textContent = first ? `e.g. ${first.outName}.mp4` : batch.name ? '' : 'Original name + what changed, e.g. 20261105_175525_720p_small';
+    fillBatchNameOptions();
+  }
+  function fillBatchNameOptions() {
+    const opt = (v, l) => Object.assign(document.createElement('option'), { value: v, textContent: l });
+    const grp = (label, opts) => { const g = document.createElement('optgroup'); g.label = label; g.append(...opts); return g; };
+    $('bNameSel').replaceChildren(
+      opt('', '▾'),
+      grp('Name', [opt('set:', 'Automatic · original + what changed'), opt('set:*_videcutto', '*_videcutto'), opt('set:$Y$M$D_$h$m$s', '$Y$M$D_$h$m$s · recording date'), opt('set:*_$P_$Q', '*_$P_$Q'), opt('set:Video_###', 'Video_### · numbered')]),
+      grp('Add to the name', ['$P', '$Q', '$F', '$B', '$R'].map((x) => opt('add:' + x, '+ _' + x))),
+      grp('Pattern', [opt('help', 'Placeholders…')]),
+    );
+    $('bNameSel').value = '';
+  }
+  async function addBatchFiles(files) {
+    for (const file of files) {
+      if (!/^video\//.test(file.type) && !/\.(mp4|mov|m4v)$/i.test(file.name)) { toast(`"${file.name}" isn't a video.`, 3000); continue; }
+      const it = { id: 'b' + (++batchUid), file, status: 'reading' };
+      batch.items.push(it);
+      renderBatch();
+      try {
+        const probed = await probe(file);
+        const v = probed.demux.video;
+        const start = Math.max(0, v.start);
+        it.src = makeSource({ id: it.id, name: file.name, origSize: file.size, origLastModified: file.lastModified, start, duration: v.duration, rangeIn: start, rangeOut: v.duration }, file, probed, 0);
+        it.status = 'ready';
+      } catch (e) { it.status = 'error'; it.err = e && e.message ? e.message : String(e); }
+      renderBatch();
+    }
+  }
+  function dropBatchItem(it) {
+    if (it.src && it.src.url) URL.revokeObjectURL(it.src.url);
+    batch.items = batch.items.filter((x) => x !== it);
+  }
+  function downloadBlob(blob, name) {
+    const a = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    a.href = url; a.download = name;
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 120000);
+  }
+  const stamp = () => { const d = new Date(); const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`; };
+  async function runBatch() {
+    if (batch.running) return;
+    if (exporting) { toast('A video is being created — wait until it\'s done.'); return; }
+    const todo = batch.items.filter((it) => it.src && it.status === 'ready');
+    if (!todo.length) return;
+    pause();
+    const st = bSettings();
+    bNames(st);
+    const useZip = $('bZip').checked;
+    let dir = null;
+    if (!useZip && $('bFolder').checked && window.showDirectoryPicker) {
+      try { dir = await window.showDirectoryPicker({ id: 'videcutto-batch', mode: 'readwrite' }); } catch (e) { return; }
+    }
+    batch.running = true; exporting = true;
+    batch.ctl = new AbortController();
+    const signal = batch.ctl.signal;
+    $('bProgress').hidden = false; $('bSummary').hidden = true;
+    let lock = null;
+    try { if (navigator.wakeLock) lock = await navigator.wakeLock.request('screen'); } catch (e) { lock = null; }
+    const zipEntries = [];
+    const usedNames = new Set();
+    const uniq = (name) => { let n = name, k = 2; const dot = name.lastIndexOf('.'); while (usedNames.has(n.toLowerCase())) n = name.slice(0, dot) + '_' + (k++) + name.slice(dot); usedNames.add(n.toLowerCase()); return n; };
+    let saved = 0, before = 0, failed = 0, aborted = false;
+    const label = (k, f, what) => {
+      $('bProgressFill').style.width = (((k + f) / todo.length) * 100).toFixed(1) + '%';
+      $('bProgressLabel').textContent = `${what} ${k + 1} of ${todo.length}… ${Math.floor(f * 100)} %`;
+    };
+    renderBatch();
+    for (let k = 0; k < todo.length; k++) {
+      const it = todo[k];
+      if (signal.aborted) { aborted = true; break; }
+      it.status = 'working'; it.p = 0;
+      renderBatch();
+      try {
+        const { settings, dur } = bOutFor(it, st);
+        const fm = it.src.fileMeta || {};
+        let meta = st.meta === 'none' ? null : { ...fm };
+        if (meta && st.meta === 'noloc') { delete meta.lat; delete meta.lon; delete meta.alt; }
+        settings.meta = hasMeta(meta) ? meta : null;
+        const src = it.src;
+        const clip = { kind: 'video', source: src, start: 0, in: src.rangeIn, out: src.rangeOut, muted: st.sound === 'remove', tf: null, volume: 1, fadeIn: 0, fadeOut: 0, vFadeIn: 0, vFadeOut: 0 };
+        let lastPaint = 0;
+        const r = await Render.exportTimeline({
+          tracks: [{ kind: 'video', hidden: false, opacity: 1, muted: false, volume: 1, clips: [clip] }],
+          duration: dur, settings, signal,
+          onProgress: (f) => {
+            it.p = f; label(k, f, 'Converting');
+            const now = performance.now();
+            if (now - lastPaint > 250) { lastPaint = now; const li = $('batchList').querySelector(`li[data-id="${it.id}"]`); if (li) { const bar = li.querySelector('.b-bar'); if (bar) bar.style.width = (f * 100).toFixed(1) + '%'; li.querySelector('.b-meta').textContent = `Converting… ${Math.floor(f * 100)} %`; } }
+          },
+        });
+        let blob = r.blob, name = it.outName + '.mp4', kept = false;
+        if ($('bKeepSmaller').checked && blob.size >= it.file.size) { blob = it.file; name = it.file.name; kept = true; }
+        name = uniq(name);
+        if (useZip) { zipEntries.push({ name, blob }); it.savedAs = 'in the ZIP'; }
+        else if (dir) { const fh = await dir.getFileHandle(name, { create: true }); const w = await fh.createWritable(); await w.write(blob); await w.close(); it.savedAs = `saved as ${name}`; }
+        else if (!kept) { downloadBlob(blob, name); it.savedAs = `downloaded as ${name}`; }
+        else it.savedAs = '';
+        it.status = kept ? 'kept' : 'done';
+        it.outSize = blob.size;
+        before += it.file.size; saved += blob.size;
+      } catch (e) {
+        if (e && e.name === 'AbortError') { it.status = 'ready'; aborted = true; break; }
+        console.error(e);
+        it.status = 'error'; it.err = 'Failed: ' + (e && e.message ? e.message : e);
+        failed++;
+      }
+      renderBatch();
+    }
+    try {
+      if (useZip && zipEntries.length && !aborted) {
+        $('bProgressLabel').textContent = 'Packing the ZIP file…';
+        const z = await Zip.createZip(zipEntries, { signal, onProgress: (f) => { $('bProgressFill').style.width = (f * 100).toFixed(1) + '%'; } });
+        downloadBlob(z, `videcutto_${stamp()}.zip`);
+      }
+    } catch (e) { if (!(e && e.name === 'AbortError')) toast('The ZIP file couldn\'t be created: ' + (e && e.message ? e.message : e), 6000); else aborted = true; }
+    finally {
+      batch.running = false; exporting = false; batch.ctl = null;
+      if (lock) lock.release().catch(() => {});
+      $('bProgress').hidden = true;
+      const done = batch.items.filter((it) => it.status === 'done' || it.status === 'kept').length;
+      $('bSummary').hidden = false;
+      $('bSummary').textContent = (aborted ? 'Stopped. ' : 'Done! ') + `${done} video${done === 1 ? '' : 's'}` + (before ? `: ${fmtSize(before)} → ${fmtSize(saved)}` + (saved < before ? ` (−${Math.round((1 - saved / before) * 100)} %)` : '') : '') + (failed ? ` · ${failed} failed` : '') + (!useZip && !dir && done ? ' · the files are in your downloads.' : '');
+      renderBatch();
+    }
+  }
+  $('batchItem').addEventListener('click', () => { closeMenu(); openModal('batchModal'); renderBatch(); });
+  $('batchAddBtn').addEventListener('click', async () => { const sel = await pickFiles(true, false); addBatchFiles(sel.map((x) => x.file)); });
+  $('batchList').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-act="remove"]');
+    if (!b || batch.running) return;
+    const it = batch.items.find((x) => x.id === b.closest('li').dataset.id);
+    if (it) { dropBatchItem(it); renderBatch(); }
+  });
+  $('batchSettings').addEventListener('change', (e) => { if (e.target.id !== 'bName' && e.target.id !== 'bNameSel') renderBatch(); });
+  $('bName').addEventListener('change', (e) => { batch.name = cleanPattern(e.target.value); renderBatch(); });
+  $('bName').addEventListener('input', (e) => { batch.name = cleanPattern(e.target.value); bNames(bSettings()); const first = batch.items.find((it) => it.src); $('bNamePreview').textContent = first ? `e.g. ${first.outName}.mp4` : ''; });
+  $('bNameSel').addEventListener('change', (e) => {
+    const v = e.target.value;
+    e.target.value = '';
+    if (!v) return;
+    if (v === 'help') { openModal('namePhModal'); return; }
+    if (v.startsWith('set:')) batch.name = v.slice(4);
+    else if (v.startsWith('add:')) batch.name = (batch.name || '*') + '_' + v.slice(4);
+    renderBatch();
+  });
+  $('bStart').addEventListener('click', runBatch);
+  $('bCancel').addEventListener('click', () => { if (batch.ctl) batch.ctl.abort(); });
+  function closeBatch() {
+    if (batch.running) { if (!confirm('Stop the batch conversion?')) return; batch.ctl.abort(); }
+    closeModal('batchModal');
+    // Finished items leave the list; waiting ones stay for the next time.
+    batch.items.filter((it) => it.status === 'done' || it.status === 'kept' || it.status === 'error').forEach(dropBatchItem);
+    $('bSummary').hidden = true;
+  }
+  $('batchClose').addEventListener('click', closeBatch);
+  $('batchModal').addEventListener('click', (e) => { if (e.target.id === 'batchModal' && !batch.running) closeBatch(); });
+  $('batchModal').addEventListener('dragover', (e) => { if (!batch.running) e.preventDefault(); });
+  $('batchModal').addEventListener('drop', (e) => { e.preventDefault(); e.stopPropagation(); if (!batch.running) addBatchFiles([...e.dataTransfer.files]); });
+
   $('shareBtn').addEventListener('click', () => {
     if (!resultFile) return;
     navigator.share({ files: [resultFile], title: resultFile.name }).catch(() => {});
@@ -5541,6 +5967,7 @@
       export: { ...exportState },
       exportName,
       metaChoice,
+      contentsOpen,
       // Undo/redo survive a reload (as many steps as set in Settings).
       undo: undoStack.slice(-settings.undoSteps),
       redo: redoStack.slice(-settings.undoSteps),
@@ -5595,7 +6022,7 @@
   const hashId = () => { const m = /[#&]p=([a-z0-9]+)/i.exec(location.hash); return m ? m[1] : null; };
   function setHash(id) {
     const url = id ? `${location.pathname}${location.search}#p=${id}` : `${location.pathname}${location.search}`;
-    history.replaceState(null, '', url);
+    history.replaceState(history.state, '', url); // keep the back-button guard
   }
 
   function syncProjectBar() {
@@ -5654,6 +6081,7 @@
   function resetState() {
     setTracks([newTrack(true)]);
     exportName = ''; exportDone = false; metaChoice = defaultMetaChoice();
+    openUses.clear(); setMediaFolded(true);
     $('resultBox').hidden = true;
     $('exportModal').hidden = true;
     setCreateButton(null);
@@ -5804,6 +6232,7 @@
     clipboard = null; selectedId = null; selectedTrackId = null;
     exportName = cleanPattern(p.exportName || '');
     metaChoice = Object.assign(defaultMetaChoice(), p.metaChoice || {});
+    setMediaFolded(!p.contentsOpen);
     muteAll = !!p.muteAll;
     $('muteAllBtn').setAttribute('aria-pressed', String(muteAll));
     if (p.version >= 2 && p.canvas) {

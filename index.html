@@ -42,6 +42,7 @@
       <div class="dropdown" id="menu" style="display:none" role="menu">
         <button type="button" role="menuitem" id="themeItem"><span class="mi-icon">◐</span><span id="themeLabel">Light mode</span></button>
         <button type="button" role="menuitem" id="viewItem"><span class="mi-icon">▦</span>View</button>
+        <button type="button" role="menuitem" id="batchItem"><span class="mi-icon">⇶</span>Batch convert…</button>
         <button type="button" role="menuitem" id="settingsItem"><span class="mi-icon">⚙</span>Settings</button>
         <button type="button" role="menuitem" id="helpItem"><span class="mi-icon">?</span>Help &amp; shortcuts</button>
         <button type="button" role="menuitem" id="aboutItem"><span class="mi-icon">ⓘ</span>About</button>
@@ -548,7 +549,7 @@
     </button>
     <div class="card-body" id="mediaBody">
       <ul class="media-list" id="mediaList"></ul>
-      <p class="hint" id="mediaHint">Tap a file to select its clips; tap a text, color clip or transition to select it and jump there. ＋ adds a file again at the playhead (⧉ as overlay); on desktop you can also drag it onto the timeline.</p>
+      <p class="hint" id="mediaHint">Tap a file to select its clips and see where each one is used; tap a text, color clip, transition or use to select it and jump there. 🏷 shows a file's metadata (long press: use it for the export). ＋ adds a file again at the playhead (⧉ as overlay); on desktop you can also drag it onto the timeline.</p>
     </div>
   </section>
 
@@ -746,11 +747,70 @@
 </div>
 
 <!-- ===================== View ===================== -->
+<div class="modal-bg" id="batchModal" hidden>
+  <div class="modal batch-modal" role="dialog" aria-modal="true" aria-labelledby="batchTitle">
+    <div class="modal-head">
+      <h2 id="batchTitle">Batch convert</h2>
+      <span class="head-spacer"></span>
+      <button class="icon small" id="batchClose" title="Close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <p class="hint">Shrink or convert many videos at once with the same settings. Each video keeps its own format (portrait stays portrait) and is never enlarged. Your projects aren't touched.</p>
+    <button type="button" class="btn-secondary wide" id="batchAddBtn">＋ Choose videos…</button>
+    <ul class="batch-list" id="batchList"></ul>
+    <div class="batch-settings" id="batchSettings">
+      <div class="field"><label for="bResSel">Resolution</label><select id="bResSel"><option value="source">Like the source</option><option value="2160">Max. 2160p (4K)</option><option value="1080" selected>Max. 1080p (Full HD)</option><option value="720">Max. 720p (HD)</option><option value="480">Max. 480p</option></select></div>
+      <div class="field"><label for="bQualitySel">Quality</label><select id="bQualitySel"><option value="small">Small</option><option value="standard" selected>Standard</option><option value="high">High</option><option value="custom">Custom bitrate</option><option value="target">Max. file size (each)</option></select></div>
+      <div class="field" id="bBitrateField" hidden><label for="bBitrate">Bitrate</label><div class="input-unit"><input type="number" id="bBitrate" min="0.1" max="100" step="0.1" value="4"><span>Mbit/s</span></div></div>
+      <div class="field" id="bTargetField" hidden><label for="bTarget">Max. size</label><div class="input-unit"><input type="number" id="bTarget" min="1" max="4000" step="1" value="25"><span>MB</span></div></div>
+      <div class="field"><label for="bFpsSel">Frame rate</label><select id="bFpsSel"><option value="30" selected>30 fps</option><option value="60">60 fps</option><option value="original">Like the source</option></select></div>
+      <div class="field"><label for="bCodecSel">Codec</label><select id="bCodecSel"><option value="avc">H.264 · universal</option><option value="hevc" disabled>HEVC · not supported here</option></select></div>
+      <div class="field"><label for="bSoundSel">Sound</label><select id="bSoundSel"><option value="keep">Keep</option><option value="remove">Remove</option></select></div>
+      <div class="field"><label for="bMetaSel">Metadata</label><select id="bMetaSel"><option value="all">Keep all (date, place, camera …)</option><option value="noloc">Keep, without the place</option><option value="none">Remove all</option></select></div>
+      <div class="field">
+        <label for="bName">File names</label>
+        <div class="field-col">
+          <div class="name-row">
+            <div class="input-unit"><input type="text" id="bName" autocomplete="off" spellcheck="false" maxlength="160" placeholder="Automatic"><span>.mp4</span></div>
+            <select id="bNameSel" class="name-sel" aria-label="Name options"></select>
+          </div>
+          <div class="name-preview" id="bNamePreview"></div>
+        </div>
+      </div>
+      <label class="check-row"><input type="checkbox" id="bKeepSmaller" checked> Keep the original if the result would be bigger</label>
+      <label class="check-row"><input type="checkbox" id="bZip"> Save everything as one ZIP file</label>
+      <label class="check-row" id="bFolderRow" hidden><input type="checkbox" id="bFolder"> Save into a folder (you choose it once)</label>
+    </div>
+    <div class="progress" id="bProgress" hidden>
+      <div class="progress-bar"><div class="progress-fill" id="bProgressFill"></div></div>
+      <div class="progress-row"><span id="bProgressLabel">Preparing…</span><button class="link-btn" id="bCancel">Cancel</button></div>
+      <p class="hint">Keep this tab open and the screen on.</p>
+    </div>
+    <p class="hint" id="bSummary" hidden></p>
+    <button type="button" class="btn-primary wide" id="bStart" disabled>Convert</button>
+  </div>
+</div>
+
+<div class="modal-bg" id="exitModal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="exitTitle">
+    <div class="modal-head"><h2 id="exitTitle">Close Videcutto?</h2></div>
+    <p class="hint">Your projects are saved. Press back once more to close the app.</p>
+    <div class="exit-actions">
+      <button type="button" class="btn-secondary" id="exitStay">Stay</button>
+      <button type="button" class="btn-primary" id="exitClose">Close</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-bg" id="metaModal" hidden>
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="metaTitle">
     <div class="modal-head">
       <h2 id="metaTitle">Metadata</h2>
       <button class="icon small" id="metaClose" title="Close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="meta-file" id="metaFileBox" hidden>
+      <div class="meta-file-name" id="metaFileName"></div>
+      <dl class="meta-list" id="metaFileList"></dl>
+      <button type="button" class="btn-primary" id="metaUseBtn">Use for the export</button>
     </div>
     <div class="field stack">
       <label for="metaSel">Metadata of the exported video</label>
@@ -770,7 +830,7 @@
       <div class="field stack"><label for="meta_software">Software</label><input type="text" id="meta_software" maxlength="100"></div>
     </div>
     <label class="check-row"><input type="checkbox" id="metaLocChk" checked> Include the place (GPS location)</label>
-    <p class="hint">Automatic uses the file of the first clip that has metadata — usually what you want for a single clip. In the Contents list, 🏷 shows a file's metadata and uses it for the export. Gallery apps sort the exported video by this recording date. The picture is always stored upright, so no rotation flag is needed.</p>
+    <p class="hint">Automatic uses the file of the first clip that has metadata — usually what you want for a single clip. In the Contents list, 🏷 shows a file's metadata; a long press on 🏷 uses it for the export. Gallery apps sort the exported video by this recording date. The picture is always stored upright, so no rotation flag is needed.</p>
     <button type="button" class="btn-primary wide" id="metaDone">Done</button>
   </div>
 </div>
@@ -1076,6 +1136,8 @@
         <li>Phones keep a <strong>working copy</strong> of each video in the browser; desktop Chrome/Edge remembers the original file (one click on <em>Allow access</em> after a reload).</li>
         <li>Missing file? <strong>Relink</strong> it — renamed files are recognised by their size, all cuts are kept.</li>
         <li><strong>ⓘ next to the project name</strong> shows where each file is kept and how much space it uses.</li>
+        <li><strong>Menu → Batch convert…</strong> shrinks many videos at once with the same settings (names from the original or a pattern, metadata kept, optional ZIP) — without a project.</li>
+        <li>On phones, <strong>back</strong> closes a window first, then leaves the editor; the installed app asks before it closes.</li>
         <li><strong>⇪ Save project file</strong> moves a project to another device or makes a backup — with or without the video files.</li>
       </ul>
     </details>
