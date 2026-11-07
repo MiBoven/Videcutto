@@ -1,5 +1,12 @@
 # Changelog
 
+### 0.11.3 — 2026-11-06 — File names & metadata
+- Automatic file name for single-video exports: original name + tags for what changed (resolution, quality, frame rate), e.g. 20261105_175525_720p_small_30fps
+- ▾ menu next to the file name: automatic / original / [name]_videcutto / project name, tags to add (resolution, quality, fps, bitrate, pixel size, codec, cut, crop, mute) and naming placeholders like JPG75 (* # $Y $M $D $h $m $s $R $P $Q $F $B) with a live preview
+- Metadata is kept: recording date, GPS place, camera, software, title, description, author are read from videos (Android & Apple) and photos (EXIF) and written into the export (Android and Apple format); automatic from the first clip, from a chosen file, own values or none; the place can be left out
+- Contents list shows each file's date, place and camera; 🏷 uses its metadata for the export
+- Fixed: on phones, a long project name made the start screen much wider and taller than the screen
+
 ### 0.11.2 — 2026-11-06 — Animations & Contents
 - The Fade tab is now the Animate tab: In and Out animations with combinable effects — Fade, Zoom in, Zoom out, Slide (4 directions), Spin, Blur, Pop — for videos, images, color clips and texts
 - Text can appear/disappear line by line, word by word, letter by letter (each piece animated with the chosen effects) or like a typewriter

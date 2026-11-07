@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.11.2';
+  const VERSION = '0.11.3';
   const $ = (id) => document.getElementById(id);
 
   // ---------------------------------------------------------------------------
@@ -540,6 +540,8 @@
       thumbs: [],
       thumbStep: 1,
       missing: false,
+      // Recording date, place, camera … of the original (a trimmed working copy has none of its own).
+      fileMeta: meta.fmeta || (base ? {} : demux.meta || {}),
     };
   }
 
@@ -550,6 +552,7 @@
       width: src.width, height: src.height, rotation: src.rotation, storage: src.storage, copyName: src.copyName,
     };
     if (src.fontName) m.fontName = src.fontName;
+    if (src.fileMeta && Object.keys(src.fileMeta).length) m.fmeta = src.fileMeta;
     // Waveform overview, so it doesn't have to be computed again after a reload.
     if (src.peaks && src.peaks.length) { m.peaks = toB64(src.peaks); m.peaksRate = src.peaksRate; m.peaksFrom = src.peaksFrom || 0; }
     return m;
@@ -777,6 +780,12 @@
   }
 
   function makeImageSource(meta, file, bitmap) {
+    const src = makeImageSource0(meta, file, bitmap);
+    src.fileMeta = meta.fmeta || {};
+    if (!meta.fmeta && file && window.Meta) Meta.readImageMeta(file).then((m) => { src.fileMeta = m; });
+    return src;
+  }
+  function makeImageSource0(meta, file, bitmap) {
     return {
       id: meta.id, kind: 'image', name: meta.name, origSize: meta.origSize, origLastModified: meta.origLastModified,
       file, url: null, bitmap, demux: null, base: 0, width: bitmap.width, height: bitmap.height, rotation: 0, frameRate: 30,
@@ -2225,6 +2234,14 @@
         btn('＋', src.kind === 'font' ? 'Add a text in this font' : src.kind === 'audio' ? 'Add at the playhead' : 'Add to the main track', 'add');
         if (src.kind !== 'audio' && src.kind !== 'font') btn('⧉', 'Add as overlay at the playhead', 'overlay');
       }
+      if ((src.kind === 'video' || src.kind === 'image') && hasMeta(src.fileMeta)) {
+        const ms = metaSource();
+        const used = ms && ms.src === src;
+        btn(used ? '🏷✓' : '🏷', used ? 'Its metadata (date, place, camera) goes into the export — tap to change' : 'Metadata (date, place, camera) — tap to use it for the export', 'meta');
+        const m = src.fileMeta;
+        const tags = [m.utc != null && fmtMetaDate(m).split(',')[0], m.lat != null && '📍', (m.make || m.model) && [m.make, m.model].filter(Boolean).join(' ')].filter(Boolean).join(' · ');
+        if (tags) { const t = document.createElement('div'); t.className = 'm-meta m-tags' + (used ? ' used' : ''); t.textContent = tags; info.append(t); }
+      }
       if (!n) btn('🗑', 'Remove from the project', 'remove');
       li.append(mediaThumb(src), info, acts);
       return li;
@@ -2312,6 +2329,7 @@
       else if (act.dataset.act === 'add') addFromMedia(src, false);
       else if (act.dataset.act === 'overlay') addFromMedia(src, true);
       else if (act.dataset.act === 'remove') removeMedia(src);
+      else if (act.dataset.act === 'meta') openMeta(src.id);
       else if (act.dataset.act === 'relink') {
         const [sel] = await pickFiles(false, src.kind === 'audio');
         if (!sel) return;
@@ -4841,20 +4859,262 @@
     if (/^(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])(\..*)?$/i.test(s)) s += '_'; // reserved names on Windows
     return s;
   }
-  // File name of the video: empty = follow the project name.
-  let exportName = '';
-  const nameBase = () => exportName || cleanFileName(projectName) || 'video';
-  const exportFileName = () => nameBase() + (exportState.scope === 'selected' ? '_clip' : '');
-  function syncFileName() {
-    if (document.activeElement !== $('fileNameInput')) $('fileNameInput').value = exportFileName();
+  // ---------------------------------------------------------------------------
+  // File name: automatic (original name + what changed, or the project name),
+  // or the user's own name, which may contain placeholders (* # $Y $M $D …).
+  // ---------------------------------------------------------------------------
+  let exportName = ''; // '' = automatic
+  // The one video file this export is made from (single-clip edits), if any.
+  function nameSource() {
+    const vis = [...new Set(exportClips().filter((c) => c.kind === 'video' || c.kind === 'image').map(srcOf).filter(Boolean))];
+    return vis.length === 1 && vis[0].kind === 'video' ? vis[0] : null;
   }
+  function qualityToken() {
+    const q = exportState.quality;
+    if (q === 'custom') return `${String(exportState.bitrateMbps).replace('.', ',')}mbps`.replace(',', '.');
+    if (q === 'target') return `${exportState.targetMB}mb`;
+    return q;
+  }
+  // Values for the name: tokens and which of them differ from the original.
+  function nameInfo() {
+    const out = Render.computeOutput(getExportSettings(), usedSources(), exportDuration());
+    const src = nameSource();
+    const short = Math.min(out.width, out.height);
+    const sd = src ? Render.displaySize(src) : null;
+    const t = {
+      res: `${short}p`, quality: qualityToken(), fps: `${out.fps}fps`,
+      bitrate: `${(out.bitrate / 1e6).toFixed(1).replace(/\.0$/, '')}mbps`, dims: `${out.width}x${out.height}`,
+      codec: exportState.codec === 'hevc' ? 'hevc' : 'h264',
+    };
+    const changed = [];
+    if (!sd || Math.abs(Math.min(sd.w, sd.h) - short) > 2) changed.push(t.res);
+    changed.push(t.quality); // re-encoded with these settings
+    if (!src || Math.round(src.frameRate || 30) !== out.fps) changed.push(t.fps);
+    return { t, changed, src, out };
+  }
+  const projectBase = () => cleanFileName(projectName) || 'video';
+  function autoName() {
+    const i = nameInfo();
+    if (i.src) return [cleanFileName(baseName(i.src.name)) || 'video', ...i.changed].join('_');
+    return projectBase() + (exportState.scope === 'selected' ? '_clip' : '');
+  }
+  // Date for $Y…$s: recording date (metadata), else the file's date, else now.
+  function nameDate() {
+    const ms = metaSource();
+    const src = nameSource() || (ms && ms.src) || null;
+    const m = ms && ms.meta && ms.meta.utc != null ? ms.meta : src && src.fileMeta && src.fileMeta.utc != null ? src.fileMeta : null;
+    if (m) { const tz = m.tz != null ? m.tz : -new Date(m.utc).getTimezoneOffset(); const d = new Date(m.utc + tz * 60000); return { Y: d.getUTCFullYear(), M: d.getUTCMonth() + 1, D: d.getUTCDate(), h: d.getUTCHours(), m: d.getUTCMinutes(), s: d.getUTCSeconds() }; }
+    const d = new Date(src && src.origLastModified ? src.origLastModified : Date.now());
+    return { Y: d.getFullYear(), M: d.getMonth() + 1, D: d.getDate(), h: d.getHours(), m: d.getMinutes(), s: d.getSeconds() };
+  }
+  /** Replace the placeholders of a name pattern (n = number for #). */
+  function expandName(pattern, n = 1, info = nameInfo()) {
+    if (!/[*#$]/.test(pattern)) return pattern;
+    const base = info.src ? cleanFileName(baseName(info.src.name)) : projectBase();
+    let d = null;
+    const date = (k) => { d = d || nameDate(); return String(d[k]).padStart(k === 'Y' ? 4 : 2, '0'); };
+    const vals = { R: () => info.t.dims, P: () => info.t.res, Q: () => info.t.quality, F: () => String(info.out.fps), B: () => info.t.bitrate };
+    return pattern
+      .replace(/#+/g, (h) => String(n).padStart(h.length, '0'))
+      .replace(/\$([YMDhmsRPQFB])/g, (all, k) => ('YMDhms'.includes(k) ? date(k) : vals[k]()))
+      .replace(/\*/g, base);
+  }
+  const rawName = () => exportName || autoName();
+  const exportFileName = () => cleanFileName(expandName(rawName())) || 'video';
+  function syncFileName() {
+    if (document.activeElement !== $('fileNameInput')) $('fileNameInput').value = rawName();
+    const raw = rawName();
+    $('fileNamePreview').hidden = !/[*#$]/.test(raw);
+    $('fileNamePreview').textContent = '→ ' + exportFileName() + '.mp4';
+    fillNameOptions();
+  }
+  // Keep placeholders; everything else that isn't allowed in file names is replaced later.
+  const cleanPattern = (v) => String(v || '').replace(/[\x00-\x1f\x7f<>:"/\\|?]+/g, '_').replace(/\.mp4$/i, '').trim().slice(0, 160);
   $('fileNameInput').addEventListener('change', (e) => {
-    let v = cleanFileName(e.target.value);
-    if (exportState.scope === 'selected') v = v.replace(/_clip$/, '');
-    exportName = v && v !== cleanFileName(projectName) ? v : '';
-    e.target.value = exportFileName();
+    const v = cleanPattern(e.target.value);
+    exportName = v && v !== autoName() ? v : '';
+    syncFileName();
+    e.target.value = rawName();
     scheduleSave();
   });
+  $('fileNameInput').addEventListener('input', (e) => {
+    const v = e.target.value;
+    $('fileNamePreview').hidden = !/[*#$]/.test(v);
+    $('fileNamePreview').textContent = '→ ' + (cleanFileName(expandName(cleanPattern(v))) || 'video') + '.mp4';
+  });
+  // The ▾ menu next to the name: whole names, parts to add, placeholders.
+  function fillNameOptions() {
+    const sel = $('fileNameSel');
+    const i = nameInfo();
+    const opt = (v, label) => Object.assign(document.createElement('option'), { value: v, textContent: label });
+    const grp = (label, opts) => { const g = document.createElement('optgroup'); g.label = label; g.append(...opts); return g; };
+    const orig = i.src ? cleanFileName(baseName(i.src.name)) : null;
+    const names = [opt('auto', `Automatic · ${autoName()}`)];
+    if (orig) names.push(opt('name:' + orig, `Original name · ${orig}`));
+    names.push(opt('name:' + (orig || projectBase()) + '_videcutto', `${orig || projectBase()}_videcutto`));
+    if (!orig || orig !== projectBase()) names.push(opt('name:' + projectBase(), `Project name · ${projectBase()}`));
+    const add = [i.t.res, i.t.quality, i.t.fps, i.t.bitrate, i.t.dims, i.t.codec];
+    const c = exportClips();
+    if (i.src && c.some((x) => x.kind === 'video' && (x.in > (i.src.rangeIn || 0) + 0.05 || x.out < (i.src.rangeOut || x.out) - 0.05))) add.push('cut');
+    if (c.some((x) => x.tf && x.tf.crop && (x.tf.crop.w < 0.999 || x.tf.crop.h < 0.999))) add.push('crop');
+    if (muteAll || (c.length && c.filter(isSoundClip).every((x) => x.muted))) add.push('mute');
+    sel.replaceChildren(
+      opt('', '▾'),
+      grp('Name', names),
+      grp('Add to the name', add.map((x) => opt('add:' + x, '+ _' + x))),
+      grp('Pattern', [opt('help', 'Placeholders…')]),
+    );
+    sel.value = '';
+  }
+  $('fileNameSel').addEventListener('change', (e) => {
+    const v = e.target.value;
+    e.target.value = '';
+    if (!v) return;
+    if (v === 'help') { openModal('namePhModal'); return; }
+    if (v === 'auto') exportName = '';
+    else if (v.startsWith('name:')) exportName = v.slice(5) === autoName() ? '' : v.slice(5);
+    else if (v.startsWith('add:')) exportName = rawName() + '_' + v.slice(4);
+    syncFileName();
+    scheduleSave();
+  });
+  $('namePhClose').addEventListener('click', () => closeModal('namePhModal'));
+  $('namePhOk').addEventListener('click', () => closeModal('namePhModal'));
+  $('namePhModal').addEventListener('click', (e) => { if (e.target.id === 'namePhModal') closeModal('namePhModal'); });
+
+  // ---------------------------------------------------------------------------
+  // Metadata of the exported video: automatic (first clip's file), a chosen
+  // file, none, or own values. The place can be left out.
+  // ---------------------------------------------------------------------------
+  const defaultMetaChoice = () => ({ mode: 'auto', srcId: null, loc: true, custom: {} });
+  let metaChoice = defaultMetaChoice();
+  const META_FIELDS = ['title', 'description', 'author', 'make', 'model', 'software'];
+  const hasMeta = (m) => !!m && (m.utc != null || m.lat != null || META_FIELDS.some((f) => m[f]));
+  const metaFiles = () => [...sources.values()].filter((x) => (x.kind === 'video' || x.kind === 'image') && hasMeta(x.fileMeta));
+  function metaSource() {
+    if (metaChoice.mode === 'none') return null;
+    if (metaChoice.mode === 'custom') return { kind: 'custom', meta: metaChoice.custom || {} };
+    if (metaChoice.mode === 'file') { const x = sources.get(metaChoice.srcId); if (x) return { kind: 'file', src: x, meta: x.fileMeta || {} }; }
+    const order = [...new Set(exportClips().map(srcOf).filter(Boolean))];
+    const x = order.find((y) => (y.kind === 'video' || y.kind === 'image') && hasMeta(y.fileMeta));
+    return x ? { kind: 'auto', src: x, meta: x.fileMeta } : null;
+  }
+  function exportMeta() {
+    const ms = metaSource();
+    if (!ms || !hasMeta(ms.meta)) return null;
+    const m = { ...ms.meta };
+    if (!metaChoice.loc) { delete m.lat; delete m.lon; delete m.alt; }
+    return m;
+  }
+  const fmtMetaDate = (m) => {
+    if (!m || m.utc == null) return '';
+    const tz = m.tz != null ? m.tz : -new Date(m.utc).getTimezoneOffset();
+    const d = new Date(m.utc + tz * 60000);
+    const p2 = (n) => String(n).padStart(2, '0');
+    return `${p2(d.getUTCDate())}.${p2(d.getUTCMonth() + 1)}.${d.getUTCFullYear()}, ${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}:${p2(d.getUTCSeconds())}` + (m.tz != null ? ` (UTC${m.tz >= 0 ? '+' : '−'}${p2(Math.floor(Math.abs(m.tz) / 60))}:${p2(Math.abs(m.tz) % 60)})` : '');
+  };
+  function metaSummary() {
+    const ms = metaSource();
+    const m = exportMeta();
+    if (metaChoice.mode === 'none') return 'None — all removed';
+    if (!m) return metaChoice.mode === 'custom' ? 'Own values (empty)' : 'None found in the files';
+    const what = [m.utc != null && '📅', m.lat != null && '📍', (m.make || m.model) && '📷', m.title && 'T'].filter(Boolean).join(' ');
+    const from = ms.kind === 'custom' ? 'Own values' : ms.kind === 'auto' ? 'Automatic' : 'From file';
+    $('metaSummary').title = ms.src ? ms.src.name : '';
+    return `${from} · ${what}`;
+  }
+  function metaRows(m) {
+    const rows = [];
+    if (!m) return rows;
+    if (m.utc != null) rows.push(['Recorded', fmtMetaDate(m)]);
+    if (m.lat != null) rows.push(['Place', `${m.lat.toFixed(5)}, ${m.lon.toFixed(5)}${m.alt != null ? ` · ${Math.round(m.alt)} m` : ''}`]);
+    if (m.make || m.model) rows.push(['Camera', [m.make, m.model].filter(Boolean).join(' ')]);
+    for (const [f, l] of [['software', 'Software'], ['title', 'Title'], ['description', 'Description'], ['author', 'Author']]) if (m[f]) rows.push([l, m[f]]);
+    if (m.extra && m.extra.length) rows.push(['More', `${m.extra.length} other entr${m.extra.length === 1 ? 'y' : 'ies'} (copied as they are)`]);
+    return rows;
+  }
+  function syncMetaUI() {
+    $('metaSummary').textContent = metaSummary();
+    if ($('metaModal').hidden) return;
+    const sel = $('metaSel');
+    const opt = (v, l) => Object.assign(document.createElement('option'), { value: v, textContent: l });
+    const msA = metaChoice.mode === 'auto' ? metaSource() : null;
+    const auto = msA && msA.src ? msA.src.name : null;
+    const files = metaFiles();
+    sel.replaceChildren(
+      opt('auto', 'Automatic · first clip with metadata' + (auto ? ` (${auto})` : '')),
+      ...files.map((x) => opt('file:' + x.id, 'From ' + x.name)),
+      opt('custom', 'Own values…'),
+      opt('none', 'None — remove all'),
+    );
+    sel.value = metaChoice.mode === 'file' && sources.has(metaChoice.srcId) ? 'file:' + metaChoice.srcId : metaChoice.mode === 'file' ? 'auto' : metaChoice.mode;
+    const custom = metaChoice.mode === 'custom';
+    $('metaCustom').hidden = !custom;
+    $('metaLocChk').checked = metaChoice.loc !== false;
+    const ms = metaSource();
+    const rows = custom || metaChoice.mode === 'none' ? [] : metaRows(ms && ms.meta);
+    const dl = $('metaList');
+    dl.replaceChildren(...rows.flatMap(([k, v]) => [Object.assign(document.createElement('dt'), { textContent: k }), Object.assign(document.createElement('dd'), { textContent: v })]));
+    dl.hidden = !rows.length;
+    $('metaEmpty').hidden = custom || rows.length > 0;
+    $('metaEmpty').textContent = metaChoice.mode === 'none' ? 'The video gets no recording date, place or camera information.' : 'No metadata found.';
+    $('metaEditBtn').hidden = custom || metaChoice.mode === 'none' || !rows.length;
+    if (custom) fillMetaForm(metaChoice.custom || {});
+  }
+  // Own values: form <-> object
+  const p2 = (n) => String(n).padStart(2, '0');
+  function fillMetaForm(m) {
+    if (m.utc != null) {
+      const tz = m.tz != null ? m.tz : -new Date(m.utc).getTimezoneOffset();
+      const d = new Date(m.utc + tz * 60000);
+      $('metaDate').value = `${d.getUTCFullYear()}-${p2(d.getUTCMonth() + 1)}-${p2(d.getUTCDate())}T${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}:${p2(d.getUTCSeconds())}`;
+    } else $('metaDate').value = '';
+    $('metaLat').value = m.lat != null ? m.lat : '';
+    $('metaLon').value = m.lon != null ? m.lon : '';
+    for (const f of META_FIELDS) $('meta_' + f).value = m[f] || '';
+  }
+  function readMetaForm() {
+    const old = metaChoice.custom || {};
+    const m = {};
+    const dv = $('metaDate').value;
+    if (dv) { const d = MP4.parseDate(dv.length === 16 ? dv + ':00' : dv); if (d) { m.utc = d.utc; m.tz = null; } }
+    const lat = parseFloat($('metaLat').value), lon = parseFloat($('metaLon').value);
+    if (isFinite(lat) && isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180) { m.lat = lat; m.lon = lon; if (old.lat === lat && old.lon === lon && old.alt != null) m.alt = old.alt; }
+    for (const f of META_FIELDS) { const v = $('meta_' + f).value.trim(); if (v) m[f] = v; }
+    if (old.extra) m.extra = old.extra;
+    return m;
+  }
+  function openMeta(srcId) {
+    if (srcId) metaChoice = { ...metaChoice, mode: 'file', srcId };
+    openModal('metaModal');
+    syncMetaUI();
+    if (srcId) { renderMediaList(); scheduleSave(); }
+  }
+  $('metaBtn').addEventListener('click', () => openMeta());
+  $('metaSel').addEventListener('change', (e) => {
+    const v = e.target.value;
+    if (v === 'custom' && metaChoice.mode !== 'custom') {
+      const ms = metaSource();
+      metaChoice.custom = ms && ms.meta ? JSON.parse(JSON.stringify(ms.meta)) : {};
+    }
+    if (v.startsWith('file:')) metaChoice = { ...metaChoice, mode: 'file', srcId: v.slice(5) };
+    else metaChoice = { ...metaChoice, mode: v };
+    syncMetaUI(); syncFileName(); renderMediaList(); scheduleSave();
+  });
+  $('metaEditBtn').addEventListener('click', () => { $('metaSel').value = 'custom'; $('metaSel').dispatchEvent(new Event('change')); });
+  $('metaCustom').addEventListener('change', () => { metaChoice.custom = readMetaForm(); $('metaSummary').textContent = metaSummary(); syncFileName(); scheduleSave(); });
+  $('metaLocChk').addEventListener('change', (e) => { metaChoice.loc = e.target.checked; syncMetaUI(); scheduleSave(); });
+  $('metaHere').addEventListener('click', () => {
+    if (!navigator.geolocation) { toast('Location isn\'t available in this browser.'); return; }
+    navigator.geolocation.getCurrentPosition((pos) => {
+      $('metaLat').value = pos.coords.latitude.toFixed(6);
+      $('metaLon').value = pos.coords.longitude.toFixed(6);
+      $('metaCustom').dispatchEvent(new Event('change'));
+    }, () => toast('Couldn\'t get your location.'), { timeout: 15000 });
+  });
+  $('metaNow').addEventListener('click', () => { const d = new Date(); $('metaDate').value = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}T${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`; $('metaCustom').dispatchEvent(new Event('change')); });
+  $('metaClose').addEventListener('click', () => closeModal('metaModal'));
+  $('metaDone').addEventListener('click', () => closeModal('metaModal'));
+  $('metaModal').addEventListener('click', (e) => { if (e.target.id === 'metaModal') closeModal('metaModal'); });
 
   const exportDefaults = () => ({ scope: 'all', res: '1080', resW: 1920, resH: 1080, quality: 'standard', bitrateMbps: 5, targetMB: 25, lockRes: false, fps: '30', codec: 'avc' });
   let exportState = Object.assign(exportDefaults(), store.get('export2', {}));
@@ -4909,6 +5169,7 @@
       quality: exportState.quality, bitrateMbps: exportState.bitrateMbps, targetMB: exportState.targetMB, lockRes: exportState.lockRes,
       fps: exportState.fps, codec: exportState.codec, muteAll,
       fit: canvasState.bg === 'blur' ? 'blur' : 'bars', bg: canvasState.bgColor,
+      meta: exportMeta(),
     };
   }
 
@@ -4922,6 +5183,7 @@
     if (!$('codecSel').querySelector(`option[value="${exportState.codec}"]`).disabled) $('codecSel').value = exportState.codec;
     $('scopeToggle').querySelectorAll('.seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.scope === exportState.scope));
     syncFileName();
+    syncMetaUI();
     $('bitrateField').hidden = exportState.quality !== 'custom';
     $('targetField').hidden = exportState.quality !== 'target';
     $('lockResField').hidden = exportState.quality !== 'target';
@@ -5278,6 +5540,7 @@
       canvas: { ...canvasState },
       export: { ...exportState },
       exportName,
+      metaChoice,
       // Undo/redo survive a reload (as many steps as set in Settings).
       undo: undoStack.slice(-settings.undoSteps),
       redo: redoStack.slice(-settings.undoSteps),
@@ -5390,7 +5653,7 @@
 
   function resetState() {
     setTracks([newTrack(true)]);
-    exportName = ''; exportDone = false;
+    exportName = ''; exportDone = false; metaChoice = defaultMetaChoice();
     $('resultBox').hidden = true;
     $('exportModal').hidden = true;
     setCreateButton(null);
@@ -5539,7 +5802,8 @@
     undoStack = savedUndo.slice(-settings.undoSteps).map(normTracks);
     redoStack = savedRedo.slice(-settings.undoSteps).map(normTracks);
     clipboard = null; selectedId = null; selectedTrackId = null;
-    exportName = cleanFileName(p.exportName || '');
+    exportName = cleanPattern(p.exportName || '');
+    metaChoice = Object.assign(defaultMetaChoice(), p.metaChoice || {});
     muteAll = !!p.muteAll;
     $('muteAllBtn').setAttribute('aria-pressed', String(muteAll));
     if (p.version >= 2 && p.canvas) {

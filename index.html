@@ -619,7 +619,17 @@
     </div>
     <div class="field">
       <label for="fileNameInput">File name</label>
-      <div class="input-unit"><input type="text" id="fileNameInput" autocomplete="off" spellcheck="false" maxlength="160"><span>.mp4</span></div>
+      <div class="field-col">
+        <div class="name-row">
+          <div class="input-unit"><input type="text" id="fileNameInput" autocomplete="off" spellcheck="false" maxlength="160"><span>.mp4</span></div>
+          <select id="fileNameSel" class="name-sel" aria-label="Name options" title="Name options: automatic, original, add resolution/quality/fps …, placeholders"></select>
+        </div>
+        <div class="name-preview" id="fileNamePreview" hidden></div>
+      </div>
+    </div>
+    <div class="field">
+      <label for="metaBtn">Metadata</label>
+      <div class="meta-row"><span id="metaSummary" class="meta-sum">…</span><button type="button" class="btn-chip" id="metaBtn">Change…</button></div>
     </div>
     <div class="segment small scope" id="scopeToggle">
       <button type="button" class="seg-btn active" data-scope="all">Whole timeline</button>
@@ -736,6 +746,62 @@
 </div>
 
 <!-- ===================== View ===================== -->
+<div class="modal-bg" id="metaModal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="metaTitle">
+    <div class="modal-head">
+      <h2 id="metaTitle">Metadata</h2>
+      <button class="icon small" id="metaClose" title="Close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="field stack">
+      <label for="metaSel">Metadata of the exported video</label>
+      <select id="metaSel"></select>
+    </div>
+    <dl class="meta-list" id="metaList"></dl>
+    <p class="hint" id="metaEmpty" hidden></p>
+    <button type="button" class="btn-chip" id="metaEditBtn">Edit as own values…</button>
+    <div id="metaCustom" class="meta-custom" hidden>
+      <div class="field stack"><label for="metaDate">Recorded</label><div class="name-row"><input type="datetime-local" id="metaDate" step="1"><button type="button" class="btn-chip" id="metaNow">Now</button></div></div>
+      <div class="field stack"><label for="metaLat">Place (latitude, longitude)</label><div class="name-row"><input type="number" id="metaLat" step="any" min="-90" max="90" placeholder="38.7223" aria-label="Latitude"><input type="number" id="metaLon" step="any" min="-180" max="180" placeholder="-9.1393" aria-label="Longitude"><button type="button" class="btn-chip" id="metaHere" title="Use my current location">📍 Here</button></div></div>
+      <div class="field stack"><label for="meta_title">Title</label><input type="text" id="meta_title" maxlength="200"></div>
+      <div class="field stack"><label for="meta_description">Description</label><input type="text" id="meta_description" maxlength="500"></div>
+      <div class="field stack"><label for="meta_author">Author</label><input type="text" id="meta_author" maxlength="200"></div>
+      <div class="field stack"><label for="meta_make">Camera make</label><input type="text" id="meta_make" maxlength="100"></div>
+      <div class="field stack"><label for="meta_model">Camera model</label><input type="text" id="meta_model" maxlength="100"></div>
+      <div class="field stack"><label for="meta_software">Software</label><input type="text" id="meta_software" maxlength="100"></div>
+    </div>
+    <label class="check-row"><input type="checkbox" id="metaLocChk" checked> Include the place (GPS location)</label>
+    <p class="hint">Automatic uses the file of the first clip that has metadata — usually what you want for a single clip. In the Contents list, 🏷 shows a file's metadata and uses it for the export. Gallery apps sort the exported video by this recording date. The picture is always stored upright, so no rotation flag is needed.</p>
+    <button type="button" class="btn-primary wide" id="metaDone">Done</button>
+  </div>
+</div>
+
+<div class="modal-bg" id="namePhModal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="namePhTitle">
+    <div class="modal-head">
+      <h2 id="namePhTitle">Naming pattern placeholders</h2>
+      <button class="icon small" id="namePhClose" title="Close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <dl class="ph-list">
+      <dt>*</dt><dd>Original file name (single clip) or project name</dd>
+      <dt>#</dt><dd>One digit of a running number (repeat for padding, e.g. ### = 007) — for batch conversion; a single export is number 1</dd>
+      <dt>$Y</dt><dd>Year the video was recorded (or the file was last changed, if unknown)</dd>
+      <dt>$M</dt><dd>Month, same source</dd>
+      <dt>$D</dt><dd>Day, same source</dd>
+      <dt>$h</dt><dd>Hour, same source</dd>
+      <dt>$m</dt><dd>Minute, same source</dd>
+      <dt>$s</dt><dd>Second, same source</dd>
+      <dt>$R</dt><dd>Resolution in pixels, e.g. 1280x720</dd>
+      <dt>$P</dt><dd>Resolution as short side, e.g. 720p</dd>
+      <dt>$Q</dt><dd>Quality, e.g. small, standard, high, 4mbps, 25mb</dd>
+      <dt>$F</dt><dd>Frame rate, e.g. 30</dd>
+      <dt>$B</dt><dd>Bitrate, e.g. 2.5mbps</dd>
+    </dl>
+    <span class="mini-label">Examples</span>
+    <p class="ph-ex"><code>*_$P_$Q</code> → <code>20261105_175525_720p_small</code><br><code>$Y$M$D_$h$m$s</code> → <code>20261105_175525</code><br><code>Holiday_##</code> → <code>Holiday_01</code></p>
+    <button type="button" class="btn-secondary wide" id="namePhOk">Close</button>
+  </div>
+</div>
+
 <div class="modal-bg" id="viewModal" hidden>
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="viewTitle">
     <div class="modal-head">
@@ -997,6 +1063,8 @@
         <li><strong>Canvas</strong> sets the format and what fills empty space: a color or a blurred copy of the main track.</li>
         <li><strong>Create video…</strong> opens the export window: file name, whole timeline or <em>Selected clip only</em> (needs a selected clip), resolution, quality, frame rate, codec.</li>
         <li><em>Max. file size</em> may lower the resolution — tick <em>Keep resolution</em> to prevent it. Videos never get a higher bitrate than their source.</li>
+        <li>The <strong>file name</strong> is automatic: for a single video it's the original name plus what changed (e.g. <code>_720p_small_30fps</code>). <strong>▾</strong> offers other names, tags to add and placeholders (<code>*</code>, <code>#</code>, <code>$Y$M$D</code>, <code>$P</code> …).</li>
+        <li><strong>Metadata</strong> (recording date, place, camera) is kept automatically from the first clip's file — choose another file, own values or none with <em>Change…</em>, or leave out just the place. 🏷 in the Contents list does the same for a file.</li>
         <li>You can <strong>close the window while it's working</strong> — the button shows the progress and then <em>Video ready</em>.</li>
         <li>The preview may stutter with many videos at once — the created video doesn't.</li>
       </ul>
@@ -1038,6 +1106,7 @@
 </div>
 
 <script src="mp4.js"></script>
+<script src="meta.js"></script>
 <script src="render.js"></script>
 <script src="project.js"></script>
 <script src="zip.js"></script>

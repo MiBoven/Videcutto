@@ -532,6 +532,145 @@
     return track;
   }
 
+  // ---------------------------------------------------------------------------
+  // Metadata: recording date, place, camera, title … (QuickTime/Android udta,
+  // iTunes-style ilst and Apple "mdta" keys). Result (all optional):
+  //   { utc, tz, lat, lon, alt, make, model, software, title, description, author,
+  //     extra: [{ k, t, d }] }  — utc in ms, tz = offset in minutes (null = unknown),
+  //   extra = other mdta keys copied as they are (d = base64 value).
+  // ---------------------------------------------------------------------------
+  const MAC_EPOCH = 2082844800; // seconds from 1904-01-01 to 1970-01-01
+  const utf8 = new TextDecoder('utf-8');
+  const te = new TextEncoder();
+  const b64 = (u8) => { let x = ''; for (let i = 0; i < u8.length; i++) x += String.fromCharCode(u8[i]); return btoa(x); };
+  const unb64 = (str) => { const x = atob(str); const u = new Uint8Array(x.length); for (let i = 0; i < x.length; i++) u[i] = x.charCodeAt(i); return u; };
+  function parseIso6709(str) {
+    const m = /([+-]\d+(?:\.\d+)?)([+-]\d+(?:\.\d+)?)([+-]\d+(?:\.\d+)?)?/.exec(str || '');
+    if (!m) return null;
+    const lat = +m[1], lon = +m[2];
+    if (!isFinite(lat) || !isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180 || (lat === 0 && lon === 0)) return null;
+    return { lat, lon, alt: m[3] != null ? +m[3] : null };
+  }
+  /** '2026-11-05T17:55:25+0100' (also with ':' / 'Z' / no zone = local time) → { utc, tz } */
+  function parseDate(str) {
+    const m = /^(\d{4})[-:](\d{2})[-:](\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?\s*(Z|[+-]\d{2}:?\d{2})?/.exec(String(str || '').trim());
+    if (!m) return null;
+    const p = m.slice(1, 7).map(Number);
+    if (p[0] < 1971) return null;
+    if (!m[7]) return { utc: new Date(p[0], p[1] - 1, p[2], p[3], p[4], p[5]).getTime(), tz: null };
+    const tz = m[7] === 'Z' ? 0 : (m[7][0] === '-' ? -1 : 1) * (parseInt(m[7].slice(1, 3), 10) * 60 + parseInt(m[7].slice(-2), 10));
+    return { utc: Date.UTC(p[0], p[1] - 1, p[2], p[3], p[4], p[5]) - tz * 60000, tz };
+  }
+  const pad = (n, w = 2) => String(Math.floor(Math.abs(n))).padStart(w, '0');
+  /** Local wall time of meta (in its own zone if known) as 'YYYY-MM-DDTHH:MM:SS' + zone '+0100'. */
+  function formatDate(meta, colon) {
+    const tz = meta.tz != null ? meta.tz : -new Date(meta.utc).getTimezoneOffset();
+    const d = new Date(meta.utc + tz * 60000);
+    const z = (tz < 0 ? '-' : '+') + pad(Math.abs(tz) / 60) + (colon ? ':' : '') + pad(Math.abs(tz) % 60);
+    return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}${z}`;
+  }
+  function iso6709(meta) {
+    const f = (v, w) => (v < 0 ? '-' : '+') + Math.abs(v).toFixed(4).padStart(w + 5, '0');
+    return f(meta.lat, 2) + f(meta.lon, 3) + (meta.alt != null && isFinite(meta.alt) ? (meta.alt < 0 ? '-' : '+') + Math.abs(meta.alt).toFixed(3) : '') + '/';
+  }
+  const KEY_FIELDS = {
+    'com.apple.quicktime.make': 'make', '©mak': 'make',
+    'com.apple.quicktime.model': 'model', '©mod': 'model',
+    'com.apple.quicktime.software': 'software', '©swr': 'software',
+    'com.apple.quicktime.title': 'title', '©nam': 'title',
+    'com.apple.quicktime.description': 'description', '©des': 'description', '©cmt': 'description',
+    'com.apple.quicktime.author': 'author', 'com.apple.quicktime.artist': 'author', '©ART': 'author', '©aut': 'author',
+  };
+  function readMeta(u8) {
+    const m = {}, extra = [];
+    const v = dv(u8);
+    const mvhd = findBox(u8, 'mvhd', 8, u8.length);
+    if (mvhd) {
+      const secs = u8[mvhd.data] === 1 ? Number(v.getBigUint64(mvhd.data + 4)) : v.getUint32(mvhd.data + 4);
+      if (secs > MAC_EPOCH + 86400 * 365) { m.utc = (secs - MAC_EPOCH) * 1000; m.tz = null; m.dateFromHeader = true; }
+    }
+    const take = (name, type, val, mdta) => {
+      const text = type === 1 || type === 0 ? utf8.decode(val).replace(/\0+$/, '').trim() : null;
+      if (name === 'com.apple.quicktime.location.ISO6709' || name === '©xyz') {
+        const loc = parseIso6709(text);
+        if (loc && m.lat == null) Object.assign(m, loc);
+      } else if (name === 'com.apple.quicktime.creationdate' || name === '©day') {
+        const d = parseDate(text);
+        if (d && (m.dateFromHeader || m.utc == null)) { m.utc = d.utc; m.tz = d.tz; m.dateFromHeader = false; }
+      } else if (KEY_FIELDS[name]) {
+        if (text && m[KEY_FIELDS[name]] == null) m[KEY_FIELDS[name]] = text;
+      } else if (mdta && name.includes('.') && val.length <= 4096) extra.push({ k: name, t: type, d: b64(val) }); // namespaced keys only (skips encoder notes like major_brand)
+    };
+    const ilst = (box, names) => {
+      for (const it of boxes(u8, box.data, box.end)) {
+        const d = findBox(u8, 'data', it.data, it.end);
+        if (!d || d.end - d.data < 8) continue;
+        const name = names ? names[v.getUint32(it.start + 4) - 1] : it.type;
+        if (name) take(name, v.getUint32(d.data) & 0xffffff, u8.subarray(d.data + 8, d.end), !!names);
+      }
+    };
+    // meta is a full box in MP4 but a plain box in QuickTime
+    const metaBox = (b) => {
+      const start = fourcc(u8, b.data + 4) === 'hdlr' ? b.data : b.data + 4;
+      const keys = findBox(u8, 'keys', start, b.end);
+      const list = findBox(u8, 'ilst', start, b.end);
+      if (!list) return;
+      let names = null;
+      if (keys) {
+        names = [];
+        let p = keys.data + 8;
+        const n = v.getUint32(keys.data + 4);
+        for (let i = 0; i < n && p + 8 <= keys.end; i++) { const sz = v.getUint32(p); if (sz < 8) break; names.push(utf8.decode(u8.subarray(p + 8, p + sz))); p += sz; }
+      }
+      ilst(list, names);
+    };
+    for (const b of boxes(u8, 8, u8.length)) {
+      if (b.type === 'meta') metaBox(b);
+      if (b.type !== 'udta') continue;
+      for (const c of boxes(u8, b.data, b.end)) {
+        if (c.type === 'meta') { metaBox(c); continue; }
+        if (c.type.charCodeAt(0) !== 0xa9 || c.end - c.data < 4) continue;
+        if (fourcc(u8, c.data + 4) === 'data') { const d = { data: c.data + 8, end: c.data + v.getUint32(c.data) }; take(c.type, v.getUint32(d.data) & 0xffffff, u8.subarray(d.data + 8, d.end)); continue; }
+        const len = v.getUint16(c.data);
+        take(c.type, 1, u8.subarray(c.data + 4, Math.min(c.end, c.data + 4 + len)));
+      }
+    }
+    delete m.dateFromHeader;
+    if (extra.length) m.extra = extra;
+    return m;
+  }
+
+  /** udta + meta boxes for the muxer (see readMeta for the fields). */
+  function metaBoxes(meta) {
+    const out = [];
+    const udta = [];
+    const qt = (type, str) => { const b = te.encode(str); const w = new Writer(); w.u16(b.length); w.u16(0x15c7); w.bytes(b); return box(type, w.toU8()); };
+    const keys = [];
+    const key = (k, str) => keys.push({ k, t: 1, val: te.encode(str) });
+    const hasLoc = meta.lat != null && meta.lon != null;
+    if (hasLoc) { udta.push(qt('©xyz', iso6709(meta))); key('com.apple.quicktime.location.ISO6709', iso6709(meta)); }
+    if (meta.utc != null) { udta.push(qt('©day', formatDate(meta, false))); key('com.apple.quicktime.creationdate', formatDate(meta, false)); }
+    const text = [['make', '©mak', 'make'], ['model', '©mod', 'model'], ['software', '©swr', 'software'], ['title', '©nam', 'title'], ['description', '©des', 'description'], ['author', '©ART', 'author']];
+    for (const [f, qtType, apple] of text) if (meta[f]) { udta.push(qt(qtType, meta[f])); key('com.apple.quicktime.' + apple, meta[f]); }
+    for (const e of meta.extra || []) {
+      if (!hasLoc && /location/i.test(e.k)) continue;
+      try { keys.push({ k: e.k, t: e.t, val: unb64(e.d) }); } catch (er) { /* skip broken entry */ }
+    }
+    if (udta.length) out.push(box('udta', ...udta));
+    if (keys.length) {
+      const hdlr = fullBox('hdlr', 0, 0, (w) => { w.u32(0); w.str('mdta'); w.zeros(12); w.u8(0); });
+      const kb = fullBox('keys', 0, 0, (w) => { w.u32(keys.length); for (const e of keys) { const n = te.encode(e.k); w.u32(8 + n.length); w.str('mdta'); w.bytes(n); } });
+      const items = keys.map((e, i) => {
+        const dw = new Writer(); dw.u32(e.t); dw.u32(0); dw.bytes(e.val);
+        const data = box('data', dw.toU8());
+        const w = new Writer(); w.u32(8 + data.length); w.u32(i + 1); w.bytes(data);
+        return w.toU8();
+      });
+      out.push(box('meta', hdlr, kb, box('ilst', ...items)));
+    }
+    return out;
+  }
+
   async function demux(blob) {
     const reader = new BlobReader(blob);
     const top = await readTopLevel(reader);
@@ -558,7 +697,9 @@
     }
     if (!video) throw new Error('No video track found');
     const duration = Math.max(video.duration, audio ? audio.duration : 0);
-    return { reader, video, audio, duration, blob, fragmented: !!fragments };
+    let meta = {};
+    try { meta = readMeta(moov); } catch (e) { meta = {}; }
+    return { reader, video, audio, duration, blob, fragmented: !!fragments, meta };
   }
 
   // Index of the last sample (in decode order) whose pts <= t. Samples are in
@@ -657,6 +798,7 @@
      */
     constructor(opts) {
       this.tracks = [];
+      this.meta = opts.meta || null; // see readMeta()
       if (opts.video) {
         this.tracks.push({ kind: 'video', id: 1, timescale: 90000, cfg: opts.video, samples: [] });
       }
@@ -748,12 +890,19 @@
       return box('mp4a', w.toU8());
     }
 
+    // Creation time (seconds since 1904): the recording date if known, else now.
+    _time() {
+      const ms = this.meta && this.meta.utc != null ? this.meta.utc : Date.now();
+      return Math.max(0, Math.min(0xffffffff, Math.round(ms / 1000) + MAC_EPOCH));
+    }
+
     _trak(t, movieTs, chunkOffsets, chunks) {
       const p = t.prep;
       const durMovie = Math.round(p.mediaDuration / t.timescale * movieTs);
       const isV = t.kind === 'video';
+      const when = this._time();
       const tkhd = fullBox('tkhd', 0, 3, (w) => {
-        w.u32(0); w.u32(0); w.u32(t.id); w.u32(0); w.u32(durMovie);
+        w.u32(when); w.u32(when); w.u32(t.id); w.u32(0); w.u32(durMovie);
         w.zeros(8); w.u16(0); w.u16(0); w.u16(isV ? 0 : 0x0100); w.u16(0);
         for (const m of (isV ? rotationMatrix(t.cfg.rotation) : MATRIX)) w.u32(m);
         w.u32(isV ? t.cfg.width * 65536 : 0); w.u32(isV ? t.cfg.height * 65536 : 0);
@@ -764,7 +913,7 @@
       });
       const edts = box('edts', elst);
       const mdhd = fullBox('mdhd', 0, 0, (w) => {
-        w.u32(0); w.u32(0); w.u32(t.timescale); w.u32(p.dtsT.length ? p.dtsT[p.dtsT.length - 1] + p.durT[p.durT.length - 1] - p.dtsT[0] : 0);
+        w.u32(when); w.u32(when); w.u32(t.timescale); w.u32(p.dtsT.length ? p.dtsT[p.dtsT.length - 1] + p.durT[p.durT.length - 1] - p.dtsT[0] : 0);
         w.u16(0x55c4); w.u16(0);
       });
       const hdlr = fullBox('hdlr', 0, 0, (w) => {
@@ -837,14 +986,15 @@
       const buildMoov = (offsetsFor) => {
         let dur = 0;
         for (const t of tracks) dur = Math.max(dur, Math.round(t.prep.mediaDuration / t.timescale * movieTs));
+        const when = this._time();
         const mvhd = fullBox('mvhd', 0, 0, (w) => {
-          w.u32(0); w.u32(0); w.u32(movieTs); w.u32(dur);
+          w.u32(when); w.u32(when); w.u32(movieTs); w.u32(dur);
           w.u32(0x00010000); w.u16(0x0100); w.zeros(10);
           for (const m of MATRIX) w.u32(m);
           w.zeros(24); w.u32(tracks.length + 1);
         });
         const traks = tracks.map((t) => this._trak(t, movieTs, offsetsFor(t), t.chunks));
-        return box('moov', mvhd, ...traks);
+        return box('moov', mvhd, ...traks, ...(this.meta ? metaBoxes(this.meta) : []));
       };
 
       const ftyp = box('ftyp', (() => { const w = new Writer(); w.str('isom'); w.u32(0x200); w.str('isom'); w.str('iso2'); w.str(this.video && this.video.cfg.codec === 'hevc' ? 'hvc1' : 'avc1'); w.str('mp41'); return w.toU8(); })());
@@ -928,5 +1078,5 @@
     return { base, duration: end - base };
   }
 
-  global.MP4 = { demux, Muxer, BlobReader, keyframeBefore, presentationOrder, readSample, remuxRange };
+  global.MP4 = { demux, Muxer, BlobReader, keyframeBefore, presentationOrder, readSample, remuxRange, readMeta, parseDate, parseIso6709, formatDate, iso6709 };
 })(typeof window !== 'undefined' ? window : globalThis);

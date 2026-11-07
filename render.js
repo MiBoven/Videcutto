@@ -757,6 +757,7 @@
     const muxer = new MP4.Muxer({
       video: { codec: vcodec, width: out.width, height: out.height },
       audio: acfg ? { codec: acfg.kind, sampleRate: OUT_RATE, channels: OUT_CHANNELS, bitrate: out.audioBitrate } : null,
+      meta: settings.meta || null, // recording date, place, camera … (export modal → Metadata)
     });
 
     const audioShare = acfg ? 0.12 : 0;
