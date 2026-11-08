@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.12.0';
+  const VERSION = '0.12.1';
   const $ = (id) => document.getElementById(id);
 
   // ---------------------------------------------------------------------------
@@ -628,14 +628,22 @@
   const peaksFromMeta = (m) => (m.peaks ? { peaks: fromB64(m.peaks), peaksRate: m.peaksRate || PEAK_RATE, peaksFrom: m.peaksFrom || 0 } : {});
 
   // Busy overlay with progress
-  function showBusy(title, text) {
+  let busyCtl = null; // set when the busy work can be cancelled
+  function showBusy(title, text, ctl) {
+    busyCtl = ctl || null;
     $('busyTitle').textContent = title;
     $('busyText').textContent = text || '';
     $('busyFill').style.width = '0%';
+    $('busyCancel').hidden = !busyCtl;
     $('busyModal').hidden = false;
   }
-  const busyProgress = (f) => { $('busyFill').style.width = (clamp(f, 0, 1) * 100).toFixed(1) + '%'; };
-  const hideBusy = () => { $('busyModal').hidden = true; };
+  // Progress callbacks double as cancel points: they throw once Cancel was pressed.
+  const busyProgress = (f) => {
+    if (busyCtl && busyCtl.signal.aborted) throw new DOMException('Cancelled', 'AbortError');
+    $('busyFill').style.width = (clamp(f, 0, 1) * 100).toFixed(1) + '%';
+  };
+  const hideBusy = () => { $('busyModal').hidden = true; busyCtl = null; };
+  $('busyCancel').addEventListener('click', () => { if (busyCtl) { busyCtl.abort(); $('busyCancel').disabled = true; $('busyTitle').textContent = 'Cancelling…'; setTimeout(() => { $('busyCancel').disabled = false; }, 1500); } });
 
   let copyCounter = 0;
   /**
@@ -653,7 +661,7 @@
       return false;
     }
     const name = `${src.id}-${Date.now().toString(36)}-${++copyCounter}.mp4`;
-    showBusy('Preparing video…', `Saving a working copy of "${src.name}" on this device, so it stays available.`);
+    showBusy('Preparing video…', `Saving a working copy of "${src.name}" on this device, so it stays available.`, new AbortController());
     try {
       let base = src.base;
       const copy = full
@@ -671,8 +679,9 @@
       Project.requestPersist();
       return true;
     } catch (e) {
-      console.error(e);
       await Project.removeCopy(name);
+      if (e && e.name === 'AbortError') { toast('Cancelled — the video is used straight from the file (after a reload you may have to select it again).', 5000); return false; }
+      console.error(e);
       toast('Couldn\'t save a working copy — you may have to select this video again after a reload.', 6000);
       return false;
     } finally {
@@ -793,7 +802,7 @@
     // Phones (and files without a handle) keep a copy; desktop links the original.
     if ((isCoarse || pasted || !handle) && Project.canCopy()) {
       const name = `${src.id}-${Date.now().toString(36)}-${++copyCounter}${(/\.[a-z0-9]+$/i.exec(file.name || '') || ['.audio'])[0]}`;
-      showBusy('Preparing audio…', `Saving a working copy of "${src.name}" on this device.`);
+      showBusy('Preparing audio…', `Saving a working copy of "${src.name}" on this device.`, new AbortController());
       try {
         src.file = await Project.copyWhole(name, file, busyProgress);
         URL.revokeObjectURL(src.url);
@@ -1365,7 +1374,7 @@
       const tr = tracks[0];
       tr.markers = [...(tr.markers || []), { id: 'mk' + (++uid), t, label: '', color: MARKER_COLORS[(n - 1) % MARKER_COLORS.length] }].sort((a, b) => a.t - b.t);
     });
-    toast(`Marker ${n} at ${fmtTime(t)} — tap it in the ruler to name it.`, 2500);
+    toast(`Index ${n} at ${fmtTime(t)} — tap it in the ruler to name it.`, 2500);
   }
   let editMarkerId = null;
   function openMarker(id) {
@@ -2338,7 +2347,23 @@
   let contentsOpen = false;
   const openUses = new Set(); // files whose uses are unfolded in the Contents list
   // Pin the preview to the top of the screen while scrolling (classic layout / phones).
-  $('frameBtn').addEventListener('click', saveFrame);
+  // Camera button: a small menu — copy to the clipboard, save as file, share (phones).
+  const canClip = () => !!(navigator.clipboard && navigator.clipboard.write && window.ClipboardItem);
+  $('frameBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const m = $('frameMenu');
+    if (!m.hidden) { m.hidden = true; return; }
+    $('frameCopy').hidden = !canClip();
+    $('frameShare').hidden = !(isCoarse && navigator.canShare && navigator.canShare({ files: [new File([new Blob(['x'], { type: 'image/png' })], 'x.png', { type: 'image/png' })] }));
+    m.hidden = false;
+  });
+  $('frameMenu').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-how]');
+    if (!b) return;
+    $('frameMenu').hidden = true;
+    saveFrame(b.dataset.how);
+  });
+  document.addEventListener('pointerdown', (e) => { if (!$('frameMenu').hidden && !e.target.closest('#frameMenu, #frameBtn')) $('frameMenu').hidden = true; });
   function setPinned(on) {
     document.body.classList.toggle('pv-pinned', on);
     $('pinBtn').classList.toggle('on', on);
@@ -2451,7 +2476,7 @@
     if (ci.texts.length) parts.push(plural(ci.texts.length, 'text'));
     if (ci.colors.length) parts.push(plural(ci.colors.length, 'color clip'));
     if (ci.cuts.length) parts.push(plural(ci.cuts.length, 'transition'));
-    if (markersOf().length) parts.push(plural(markersOf().length, 'marker'));
+    if (markersOf().length) parts.push(plural(markersOf().length, 'index point'));
     $('mediaSummary').textContent = parts.length ? parts.join(' · ') : 'nothing yet';
     if ($('mediaBody').hidden) return;
     const ul = $('mediaList');
@@ -2566,12 +2591,12 @@
       }
     }
     if (markersOf().length) {
-      groups.push(head('Markers'));
+      groups.push(head('Index points'));
       markersOf().forEach((m, k) => {
         const th = document.createElement('div');
         th.className = 'm-thumb mk-th';
         th.style.setProperty('--mk', m.color || MARKER_COLORS[0]);
-        const row = contentRow('marker', th, m.label || `Marker ${k + 1}`, `at ${fmtTime(m.t)}`, { marker: m.id });
+        const row = contentRow('marker', th, m.label || `Index ${k + 1}`, `at ${fmtTime(m.t)}`, { marker: m.id });
         const ed = document.createElement('button');
         ed.type = 'button'; ed.className = 'm-edit'; ed.textContent = '✎'; ed.title = 'Name, color, delete'; ed.dataset.act = 'marker-edit';
         row.append(ed);
@@ -3062,7 +3087,7 @@
       f.dataset.marker = m.id;
       f.style.left = x + 'px';
       f.style.setProperty('--mk', m.color || MARKER_COLORS[0]);
-      f.title = (m.label || 'Marker') + ' · ' + fmtTime(m.t) + ' — tap: jump there · tap again: edit · drag: move';
+      f.title = (m.label || 'Index') + ' · ' + fmtTime(m.t) + ' — tap: jump there · tap again: edit · drag: move';
       const lab = document.createElement('span');
       lab.textContent = m.label || '';
       f.append(lab);
@@ -4444,8 +4469,30 @@
     const src = v ? srcOf(v.clip) : null;
     seek(playhead + dir / (src ? src.frameRate : 30));
   }
-  $('frameBackBtn').addEventListener('click', () => frameStep(-1));
-  $('frameFwdBtn').addEventListener('click', () => frameStep(1));
+  // One frame per click; held down it keeps going after a moment: forward plays
+  // normally, backward steps back in real time (10 jumps per second).
+  function holdStep(btn, dir) {
+    let timer = 0, rep = 0, held = false;
+    const stop = () => {
+      clearTimeout(timer); clearInterval(rep);
+      if (held) { held = false; if (dir > 0 && playing) pause(); }
+    };
+    btn.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      stop();
+      frameStep(dir);
+      timer = setTimeout(() => {
+        held = true;
+        if (dir > 0) play();
+        else rep = setInterval(() => { if (playhead <= 0.001) { stop(); return; } seek(Math.max(0, playhead - 0.1)); }, 100);
+      }, 450);
+    });
+    ['pointerup', 'pointerleave', 'pointercancel'].forEach((ev) => btn.addEventListener(ev, stop));
+    btn.addEventListener('click', (e) => { if (e.detail === 0) frameStep(dir); }); // keyboard
+    btn.addEventListener('contextmenu', (e) => e.preventDefault());
+  }
+  holdStep($('frameBackBtn'), -1);
+  holdStep($('frameFwdBtn'), 1);
 
   function updateTime() {
     $('curTime').textContent = fmtTime(playhead);
@@ -4720,7 +4767,7 @@
   }
 
   // Snapshot: the current frame in the size of the created video, as PNG.
-  async function saveFrame() {
+  async function saveFrame(how) {
     if (!allClips().length) return;
     pause();
     const out = outputDims();
@@ -4733,10 +4780,18 @@
     Render.composite(cv.getContext('2d'), out.w, out.h, r.layers, canvasState.bg === 'blur' ? 'blur' : 'bars', canvasState.bgColor);
     const blob = await new Promise((res) => cv.toBlob(res, 'image/png'));
     if (!blob) { toast('The frame couldn\'t be saved.'); return; }
-    const ts = fmtTime(t).replace(/:/g, '-').replace('.', '_');
-    const name = `${cleanFileName(expandName(rawName())) || 'video'}_${ts}.png`;
-    const file = new File([blob], name, { type: 'image/png' });
-    if (isCoarse && navigator.canShare && navigator.canShare({ files: [file] })) {
+    const d = new Date();
+    const p2 = (n) => String(n).padStart(2, '0');
+    const name = `vcshot_${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}_${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}.png`;
+    if (how === 'copy') {
+      try {
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        toast(`Frame copied (${out.w}×${out.h}) — paste it anywhere.`, 2500);
+        return;
+      } catch (e) { toast('Copying pictures isn\'t allowed here — saved as a file instead.', 3500); }
+    }
+    if (how === 'share') {
+      const file = new File([blob], name, { type: 'image/png' });
       try { await navigator.share({ files: [file] }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
     }
     downloadBlob(blob, name);
@@ -4941,9 +4996,9 @@
   });
   $('scaleRange').addEventListener('input', (e) => { ensureVisible(); liveEdit({ fit: 'free', scale: e.target.value / 100 }); });
   $('scaleRange').addEventListener('change', liveCommit);
-  $('snapChk').checked = store.get('snap', true);
+  $('snapChk').checked = store.get('snapCenter', false); // off by default (0.12.1)
   if (isCoarse) document.querySelector('.hint-inline').hidden = true;
-  $('snapChk').addEventListener('change', (e) => store.set('snap', e.target.checked));
+  $('snapChk').addEventListener('change', (e) => store.set('snapCenter', e.target.checked));
 
   // Rotate & flip
   const normAngle = (a) => { a = ((a + 180) % 360 + 360) % 360 - 180; return a === -180 ? 180 : a; };
@@ -5228,7 +5283,7 @@
     else if (e.key === ' ') { e.preventDefault(); playing ? pause() : play(); }
     else if (k === 's' || k === 'c') splitAtPlayhead();
     else if (k === 'm') toggleMuteClip();
-    else if (k === 'k') addMarker();
+    else if (k === 'i') addMarker();
     else if (k === 'g' && selIds.size > 1) toggleGroup();
     else if (e.key === 'Escape') clearSelection();
     else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSelected(); }
@@ -6291,6 +6346,40 @@
     if (bc) bc.postMessage({ type: 'saved', id });
   }
   document.addEventListener('visibilitychange', () => { if (document.hidden && saveEnabled) { clearTimeout(saveTimer); saveNow(); } });
+  // After switching apps or a long screen-off the browser may have dropped the
+  // videos (or a file's handle): check and load them again — what a reload did.
+  let hiddenAt = 0;
+  document.addEventListener('visibilitychange', () => { if (document.hidden) hiddenAt = Date.now(); else healPreview(Date.now() - hiddenAt > 15000); });
+  window.addEventListener('pageshow', (e) => { if (e.persisted) healPreview(true); });
+  let healing = false;
+  async function healPreview(long) {
+    if (healing || $('editorScreen').hidden || !allClips().length) return;
+    healing = true;
+    try {
+      let reopened = 0;
+      for (const src of [...sources.values()]) {
+        if (src.missing || !src.file || src.kind === 'font' || src.kind === 'image') continue;
+        let ok = true;
+        try { await src.file.slice(0, 16).arrayBuffer(); } catch (e) { ok = false; }
+        if (ok || src.storage !== 'opfs' || !src.copyName) continue;
+        try {
+          const f = await Project.getCopy(src.copyName);
+          if (!f) continue;
+          const old = src.url;
+          if (src.kind === 'video') Object.assign(src, makeSource(mediaMeta(src), f, await probe(f), src.base), { thumbs: src.thumbs, thumbStep: src.thumbStep, thumbAspect: src.thumbAspect, storage: 'opfs', copyName: src.copyName });
+          else { src.file = f; src.url = URL.createObjectURL(f); }
+          URL.revokeObjectURL(old);
+          reopened++;
+        } catch (e) { /* stays as it is */ }
+      }
+      const broken = allEls().some((v) => v.dataset.src && (v.error || v.readyState === 0));
+      if (!long && !broken && !reopened) return;
+      if (playing) pause();
+      allEls().forEach((v) => { delete v.dataset.src; delete v.dataset.url; delete v.dataset.clip; v.removeAttribute('src'); try { v.load(); } catch (e) { /* ignore */ } });
+      syncPool(true);
+      renderPreview();
+    } finally { healing = false; }
+  }
 
   async function isReadable(src) {
     if (!src || !src.file) return false;

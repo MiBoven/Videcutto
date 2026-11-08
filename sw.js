@@ -1,5 +1,5 @@
 /* Videcutto service worker — offline support (stale-while-revalidate). */
-const CACHE = 'videcutto-v0.12.0';
+const CACHE = 'videcutto-v0.12.1';
 // Fonts are loaded when first used and kept across app updates.
 const FONT_CACHE = 'videcutto-fonts-1';
 const ASSETS = [

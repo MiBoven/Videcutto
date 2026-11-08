@@ -1,5 +1,14 @@
 # Changelog
 
+### 0.12.1 — 2026-11-08 — Polish
+- Frame buttons: one frame per click; hold to keep going (forward plays, backward runs back)
+- The preview loads its videos again by itself after switching apps or a long screen-off
+- Preparing a working copy (pre-trimmed or whole video, audio) can be cancelled
+- Markers are now "index points", shortcut I
+- Snapshot button in the top left corner of the image: copy to clipboard, save as file (vcshot_YYYYMMDD_HHMMSS.png) or share; pin in the top right corner
+- Batch convert saves one ZIP file by default
+- Snapping to the canvas centre and edges is off by default
+
 ### 0.12.0 — 2026-11-08 — Markers, groups & attaching
 - Markers: add at the playhead (flag button / K), name and color, drag in the ruler, jump by tapping; clips snap to them; listed in Contents
 - 📎 Attach: a clip on an upper or audio track moves along with the main-track clip below it

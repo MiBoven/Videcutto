@@ -104,7 +104,8 @@
       <video id="vidB" playsinline preload="auto" muted></video>
       <!-- The canvas shows the composition; the videos underneath only supply frames and sound. -->
       <canvas id="pvCanvas"></canvas>
-      <button type="button" class="pv-btn frame-btn" id="frameBtn" title="Save this frame as a picture (in the size of the created video)" aria-label="Save frame"><svg viewBox="0 0 24 24"><path d="M4 8h3l2-2.5h6L17 8h3v11H4z"/><circle cx="12" cy="13.5" r="3.5"/></svg></button>
+      <div class="frame-menu" id="frameMenu" hidden><button type="button" data-how="copy" id="frameCopy">Copy to clipboard</button><button type="button" data-how="file" id="frameFile">Save as file</button><button type="button" data-how="share" id="frameShare">Share…</button></div>
+      <button type="button" class="pv-btn frame-btn" id="frameBtn" title="Snapshot of this frame (in the size of the created video)" aria-label="Snapshot"><svg viewBox="0 0 24 24"><path d="M4 8h3l2-2.5h6L17 8h3v11H4z"/><circle cx="12" cy="13.5" r="3.5"/></svg></button>
       <button type="button" class="pin-btn" id="pinBtn" title="Pin the preview (stays at the top while scrolling)" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M9 3h6l-1 6 4 4H6l4-4z"/><path d="M12 13v8"/></svg></button>
       <div class="preview-empty" id="previewEmpty" hidden>Timeline is empty — add a video, an image or a color clip</div>
     </div>
@@ -184,7 +185,7 @@
   <div class="below-timeline">
     <p class="hint">Tap a clip to select it, then drag it — sideways to move it, up or down to another track. Tap a track's left edge for its settings.</p>
     <div class="zoom-ctl">
-      <button class="icon small" id="markerBtn" title="Add a marker at the playhead (K)" aria-label="Add marker"><svg viewBox="0 0 24 24"><path d="M6 21V4"/><path d="M6 4h11l-2.5 4L17 12H6"/></svg></button>
+      <button class="icon small" id="markerBtn" title="Add an index point at the playhead (I)" aria-label="Add index point"><svg viewBox="0 0 24 24"><path d="M6 21V4"/><path d="M6 4h11l-2.5 4L17 12H6"/></svg></button>
       <button class="icon small snap-btn" id="snapBtn" title="Snap clips to edges and the playhead" aria-label="Snap" aria-pressed="true"><svg viewBox="0 0 24 24"><path d="M6 4v8a6 6 0 0012 0V4"/><path d="M6 4h4v8a2 2 0 004 0V4h4"/><path d="M6 8h4M14 8h4"/></svg></button>
       <button class="icon small" id="zoomOutBtn" title="Zoom out" aria-label="Zoom out"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M8.5 11h5M20 20l-4.5-4.5"/></svg></button>
       <button class="icon small" id="zoomFitBtn" title="Fit: whole project, or the selected clip" aria-label="Zoom to fit"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/><path d="M8 12h8"/></svg></button>
@@ -385,7 +386,7 @@
         <input type="range" id="scaleRange" min="10" max="400" step="1" value="100" aria-label="Size">
         <span class="range-val" id="scaleVal">100%</span>
       </div>
-      <label class="check-row"><input type="checkbox" id="snapChk" checked> Snap to center and edges <span class="hint-inline">(hold Alt to move freely)</span></label>
+      <label class="check-row"><input type="checkbox" id="snapChk"> Snap to center and edges <span class="hint-inline">(hold Alt to move freely)</span></label>
       <p class="hint">Drag the clip in the preview to move it, pinch or scroll to resize. Parts outside the canvas are cut off.</p>
     </div>
 
@@ -783,7 +784,7 @@
         </div>
       </div>
       <label class="check-row"><input type="checkbox" id="bKeepSmaller" checked> Keep the original if the result would be bigger</label>
-      <label class="check-row"><input type="checkbox" id="bZip"> Save everything as one ZIP file</label>
+      <label class="check-row"><input type="checkbox" id="bZip" checked> Save everything as one ZIP file</label>
       <label class="check-row" id="bFolderRow" hidden><input type="checkbox" id="bFolder"> Save into a folder (you choose it once)</label>
     </div>
     <div class="progress" id="bProgress" hidden>
@@ -799,12 +800,12 @@
 <div class="modal-bg" id="markerModal" hidden>
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="mkTitle">
     <div class="modal-head">
-      <h2 id="mkTitle">Marker <span class="mk-time" id="mkTime"></span></h2>
+      <h2 id="mkTitle">Index point <span class="mk-time" id="mkTime"></span></h2>
       <button class="icon small" id="mkClose" title="Close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
     <div class="field stack"><label for="mkLabel">Name</label><input type="text" id="mkLabel" maxlength="40" autocomplete="off" placeholder="e.g. Drop, Chorus, Scene 2"></div>
     <div class="field stack"><label>Color</label><div class="mk-colors" id="mkColors"></div></div>
-    <p class="hint">Clips snap to markers. Drag a marker in the time ruler to move it.</p>
+    <p class="hint">Clips snap to index points. Drag one in the time ruler to move it.</p>
     <div class="exit-actions">
       <button type="button" class="btn-secondary" id="mkDelete">Delete</button>
       <button type="button" class="btn-primary" id="mkJump">Jump here</button>
@@ -1041,6 +1042,7 @@
     <h2 id="busyTitle">Please wait…</h2>
     <p class="modal-sub" id="busyText"></p>
     <div class="progress-bar"><div class="progress-fill" id="busyFill"></div></div>
+    <button type="button" class="btn-secondary wide busy-cancel" id="busyCancel" hidden>Cancel</button>
   </div>
 </div>
 
@@ -1068,9 +1070,10 @@
       <summary>Timeline &amp; editing</summary>
       <ul>
         <li>Phones: the <strong>playhead stays in the middle</strong> — scroll the timeline to move through the video. Desktop: <strong>click or drag in the time ruler</strong> (or drag the red line) to set the playhead; scrolling only moves the view.</li>
-        <li><strong>Markers:</strong> the flag below the timeline (or <kbd>K</kbd>) adds one at the playhead. Tap it in the ruler to jump there, tap again to name or color it, drag it to move it. Clips snap to markers.</li>
+        <li><strong>Index points:</strong> the flag below the timeline (or <kbd>I</kbd>) adds one at the playhead. Tap it in the ruler to jump there, tap again to name or color it, drag it to move it. Clips snap to index points.</li>
         <li><strong>📎 Attach</strong> (Clip tab of an upper or audio clip): it moves along when the main-track clip below it moves. <strong>Group</strong> (several selected, or <kbd>G</kbd>): grouped clips are selected and moved together — tap again to pick just one.</li>
-        <li>The <strong>camera</strong> in the preview saves the current frame as a picture in the size of the created video.</li>
+        <li>The <strong>camera</strong> in the preview's top left corner copies the current frame to the clipboard or saves it as a picture (in the size of the created video).</li>
+        <li><strong>◀▶ next to Play</strong> step one frame; hold them to keep going (forward plays, backward runs back).</li>
         <li>The <strong>pin</strong> in the preview's corner keeps the preview at the top while you scroll through the settings (phones and the classic layout).</li>
         <li>Zoom with the 🔍 buttons, two fingers (pinch) or Ctrl + mouse wheel. <strong>Fit</strong> (the button between them) shows the whole project — or the selected clip.</li>
         <li><strong>Exact timing:</strong> the clip panel's <em>Start</em> field takes a time like <em>0:43.79</em>; the buttons below move a clip by ±1 s, ±0.1 s or ±0.01 s (desktop: Alt + ←/→, with Shift for 0.01 s). Clips on the magnetic main track follow their order instead.</li>
@@ -1176,7 +1179,7 @@
         <tr><td><kbd>Home</kbd> / <kbd>End</kbd></td><td>Start / end</td></tr>
         <tr><td><kbd>C</kbd> or <kbd>S</kbd></td><td>Cut at playhead</td></tr>
         <tr><td><kbd>M</kbd></td><td>Mute / unmute clip</td></tr>
-        <tr><td><kbd>K</kbd></td><td>Add a marker at the playhead</td></tr>
+        <tr><td><kbd>I</kbd></td><td>Add an index point at the playhead</td></tr>
         <tr><td><kbd>G</kbd></td><td>Group / ungroup the selected clips</td></tr>
         <tr><td><kbd>Del</kbd> / <kbd>Backspace</kbd></td><td>Delete selected clip</td></tr>
         <tr><td><kbd>Esc</kbd></td><td>Deselect clips / close window</td></tr>

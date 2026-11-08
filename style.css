@@ -717,3 +717,14 @@ body:not(.editing) .frame-btn { display: none; }
 .clip.grouped, .clip.grouped.selected { border-bottom: 3px solid #b57bff; }
 .attach-info { margin-top: -4px; }
 #attachRow[hidden] + .attach-info { display: none; }
+/* 0.12.1: corner buttons, snapshot menu, cancel */
+.pin-btn { top: 6px; right: 6px; }
+.frame-btn { top: 6px; left: 6px; right: auto; }
+body.wide .frame-btn { right: auto; }
+.frame-menu { position: absolute; top: 44px; left: 6px; z-index: 6; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 22px rgba(0,0,0,.45); overflow: hidden; }
+.frame-menu button { background: none; border: 0; color: var(--text); padding: 10px 14px; text-align: left; font: inherit; font-size: 14px; cursor: pointer; white-space: nowrap; }
+.frame-menu button + button { border-top: 1px solid var(--border); }
+.frame-menu button:hover { background: var(--surface-2); }
+.frame-menu button[hidden] { display: none; }
+body:not(.editing) .frame-menu { display: none; }
+.busy-cancel { margin-top: 14px; }
