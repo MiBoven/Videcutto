@@ -104,6 +104,7 @@
       <video id="vidB" playsinline preload="auto" muted></video>
       <!-- The canvas shows the composition; the videos underneath only supply frames and sound. -->
       <canvas id="pvCanvas"></canvas>
+      <button type="button" class="pv-btn frame-btn" id="frameBtn" title="Save this frame as a picture (in the size of the created video)" aria-label="Save frame"><svg viewBox="0 0 24 24"><path d="M4 8h3l2-2.5h6L17 8h3v11H4z"/><circle cx="12" cy="13.5" r="3.5"/></svg></button>
       <button type="button" class="pin-btn" id="pinBtn" title="Pin the preview (stays at the top while scrolling)" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M9 3h6l-1 6 4 4H6l4-4z"/><path d="M12 13v8"/></svg></button>
       <div class="preview-empty" id="previewEmpty" hidden>Timeline is empty — add a video, an image or a color clip</div>
     </div>
@@ -183,6 +184,7 @@
   <div class="below-timeline">
     <p class="hint">Tap a clip to select it, then drag it — sideways to move it, up or down to another track. Tap a track's left edge for its settings.</p>
     <div class="zoom-ctl">
+      <button class="icon small" id="markerBtn" title="Add a marker at the playhead (K)" aria-label="Add marker"><svg viewBox="0 0 24 24"><path d="M6 21V4"/><path d="M6 4h11l-2.5 4L17 12H6"/></svg></button>
       <button class="icon small snap-btn" id="snapBtn" title="Snap clips to edges and the playhead" aria-label="Snap" aria-pressed="true"><svg viewBox="0 0 24 24"><path d="M6 4v8a6 6 0 0012 0V4"/><path d="M6 4h4v8a2 2 0 004 0V4h4"/><path d="M6 8h4M14 8h4"/></svg></button>
       <button class="icon small" id="zoomOutBtn" title="Zoom out" aria-label="Zoom out"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M8.5 11h5M20 20l-4.5-4.5"/></svg></button>
       <button class="icon small" id="zoomFitBtn" title="Fit: whole project, or the selected clip" aria-label="Zoom to fit"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/><path d="M8 12h8"/></svg></button>
@@ -294,9 +296,12 @@
         <button type="button" class="btn-chip" data-nudge="0.1" title="0.1 s later (Alt + →)">+0.1</button>
         <button type="button" class="btn-chip" data-nudge="1" title="1 second later">+1 s</button>
       </div>
+      <label class="check-row" id="attachRow" hidden><input type="checkbox" id="attachChk"> 📎 Attach to the main-track clip below</label>
+      <p class="hint attach-info" id="attachInfo"></p>
       <p class="hint" id="cpMagHint" hidden>On the magnetic main track the order decides where a clip starts. Release the magnet in the main track's settings to place clips freely.</p>
       <div class="cp-actions">
         <button class="tool" id="muteClipBtn" title="Mute clip (M)"><svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg><span>Mute</span></button>
+        <button class="tool" id="groupBtn" title="Group the selected clips — they are selected and moved together (G)" hidden><svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/><path d="M11 7h4a2 2 0 012 2v4M13 17H9a2 2 0 01-2-2v-4"/></svg><span>Group</span></button>
         <button class="tool" id="detachBtn" title="Put the sound on an audio track of its own"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="1.5"/><path d="M4 16.5c1.5-2 2.5 2 4 0s2.5 2 4 0 2.5 2 4 0 2.5 2 4 0"/><path d="M12 11v3"/></svg><span>Detach audio</span></button>
       </div>
       <div class="field" id="cpDurField">
@@ -630,8 +635,9 @@
     </div>
     <div class="field">
       <label for="metaBtn">Metadata</label>
-      <div class="meta-row"><span id="metaSummary" class="meta-sum">…</span><button type="button" class="btn-chip" id="metaBtn">Change…</button></div>
+      <div class="meta-row"><span id="metaSummary" class="meta-sum">…</span><button type="button" class="btn-chip info-chip" id="metaInfoBtn" title="Show exactly what goes into the video" aria-label="Metadata details">ⓘ</button><button type="button" class="btn-chip" id="metaBtn">Change…</button></div>
     </div>
+    <dl class="meta-list meta-info" id="metaInfo" hidden></dl>
     <div class="segment small scope" id="scopeToggle">
       <button type="button" class="seg-btn active" data-scope="all">Whole timeline</button>
       <button type="button" class="seg-btn" data-scope="selected">Selected clip only</button>
@@ -787,6 +793,22 @@
     </div>
     <p class="hint" id="bSummary" hidden></p>
     <button type="button" class="btn-primary wide" id="bStart" disabled>Convert</button>
+  </div>
+</div>
+
+<div class="modal-bg" id="markerModal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="mkTitle">
+    <div class="modal-head">
+      <h2 id="mkTitle">Marker <span class="mk-time" id="mkTime"></span></h2>
+      <button class="icon small" id="mkClose" title="Close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="field stack"><label for="mkLabel">Name</label><input type="text" id="mkLabel" maxlength="40" autocomplete="off" placeholder="e.g. Drop, Chorus, Scene 2"></div>
+    <div class="field stack"><label>Color</label><div class="mk-colors" id="mkColors"></div></div>
+    <p class="hint">Clips snap to markers. Drag a marker in the time ruler to move it.</p>
+    <div class="exit-actions">
+      <button type="button" class="btn-secondary" id="mkDelete">Delete</button>
+      <button type="button" class="btn-primary" id="mkJump">Jump here</button>
+    </div>
   </div>
 </div>
 
@@ -1046,6 +1068,9 @@
       <summary>Timeline &amp; editing</summary>
       <ul>
         <li>Phones: the <strong>playhead stays in the middle</strong> — scroll the timeline to move through the video. Desktop: <strong>click or drag in the time ruler</strong> (or drag the red line) to set the playhead; scrolling only moves the view.</li>
+        <li><strong>Markers:</strong> the flag below the timeline (or <kbd>K</kbd>) adds one at the playhead. Tap it in the ruler to jump there, tap again to name or color it, drag it to move it. Clips snap to markers.</li>
+        <li><strong>📎 Attach</strong> (Clip tab of an upper or audio clip): it moves along when the main-track clip below it moves. <strong>Group</strong> (several selected, or <kbd>G</kbd>): grouped clips are selected and moved together — tap again to pick just one.</li>
+        <li>The <strong>camera</strong> in the preview saves the current frame as a picture in the size of the created video.</li>
         <li>The <strong>pin</strong> in the preview's corner keeps the preview at the top while you scroll through the settings (phones and the classic layout).</li>
         <li>Zoom with the 🔍 buttons, two fingers (pinch) or Ctrl + mouse wheel. <strong>Fit</strong> (the button between them) shows the whole project — or the selected clip.</li>
         <li><strong>Exact timing:</strong> the clip panel's <em>Start</em> field takes a time like <em>0:43.79</em>; the buttons below move a clip by ±1 s, ±0.1 s or ±0.01 s (desktop: Alt + ←/→, with Shift for 0.01 s). Clips on the magnetic main track follow their order instead.</li>
@@ -1151,6 +1176,8 @@
         <tr><td><kbd>Home</kbd> / <kbd>End</kbd></td><td>Start / end</td></tr>
         <tr><td><kbd>C</kbd> or <kbd>S</kbd></td><td>Cut at playhead</td></tr>
         <tr><td><kbd>M</kbd></td><td>Mute / unmute clip</td></tr>
+        <tr><td><kbd>K</kbd></td><td>Add a marker at the playhead</td></tr>
+        <tr><td><kbd>G</kbd></td><td>Group / ungroup the selected clips</td></tr>
         <tr><td><kbd>Del</kbd> / <kbd>Backspace</kbd></td><td>Delete selected clip</td></tr>
         <tr><td><kbd>Esc</kbd></td><td>Deselect clips / close window</td></tr>
         <tr><td><kbd>Ctrl</kbd> + click / <kbd>Shift</kbd> + click</td><td>Add a clip to the selection / select a range</td></tr>

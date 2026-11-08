@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.11.4';
+  const VERSION = '0.12.0';
   const $ = (id) => document.getElementById(id);
 
   // ---------------------------------------------------------------------------
@@ -263,7 +263,24 @@
         if (!prev || Math.abs(clipEnd(prev) - c.tIn.dur - c.start) > 0.01 || c.tIn.dur > maxTransDur(prev, c) + 0.01) delete c.tIn;
       });
     }
+    if (tr.main) followMain(tr);
   }
+  // Attached clips (📎) move along when their main-track clip moves.
+  let mainStarts = null; // clip id -> start at the last layout of the main track
+  function followMain(tr) {
+    const prev = mainStarts;
+    mainStarts = new Map(tr.clips.map((c) => [c.id, c.start]));
+    if (!prev) return;
+    for (const t of tracks) {
+      if (t === tr) continue;
+      for (const c of t.clips) {
+        if (!c.attach || !mainStarts.has(c.attach) || !prev.has(c.attach)) continue;
+        const d = mainStarts.get(c.attach) - prev.get(c.attach);
+        if (Math.abs(d) > 1e-9) c.start = Math.max(0, c.start + d);
+      }
+    }
+  }
+  const markersOf = () => (tracks[0] && tracks[0].markers) || [];
   // Transition after a clip (its sound and picture are faded out there).
   function tOutOf(tr, c) {
     const i = tr.clips.indexOf(c), n = tr.clips[i + 1];
@@ -271,6 +288,7 @@
   }
   const relayout = () => tracks.forEach(layoutTrack);
   function setTracks(t) {
+    mainStarts = null; // a whole new state: nothing has moved
     tracks = [...t.filter((x) => !isAudioTrack(x)), ...t.filter(isAudioTrack)];
     if (!tracks.length || !tracks[0].main) tracks.unshift(newTrack(true));
     clips = tracks[0].clips;
@@ -311,7 +329,7 @@
   // ---------------------------------------------------------------------------
   function showStart(fromBack) {
     // Leaving the editor in a browser tab: drop the back-button guard again.
-    if (fromBack !== true && backGuarded() && !isStandalone() && !$('editorScreen').hidden) { skipPop++; history.back(); }
+    if (fromBack !== true && backGuarded() && !$('editorScreen').hidden) { skipPop++; history.back(); }
     pause();
     $('startScreen').hidden = false;
     $('editorScreen').hidden = true;
@@ -331,18 +349,25 @@
   // installed app it asks before closing. A history "guard" entry is added on
   // the first touch/key (browsers ignore entries added without one).
   // ---------------------------------------------------------------------------
-  const isStandalone = () => matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: fullscreen)').matches || navigator.standalone === true;
-  const backGuarded = () => !!(history.state && history.state.vcGuard);
+  const isStandalone = () => matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: fullscreen)').matches || matchMedia('(display-mode: minimal-ui)').matches || navigator.standalone === true;
+  // History levels: [start] → 'home' (installed app only) → 'editor'. Each level
+  // is its own entry, added during a tap/click/key so browsers don't skip it.
+  const histLevel = () => (history.state && history.state.vc) || null;
+  const backGuarded = () => histLevel() === 'editor';
   let skipPop = 0;
   const openModalsNow = () => [...document.querySelectorAll('.modal-bg:not([hidden])')].filter((m) => m.id !== 'busyModal');
-  function pushBackGuard() {
-    if (backGuarded()) return;
-    try { history.pushState({ ...(history.state || {}), vcGuard: 1 }, '', location.href); } catch (e) { /* ignore */ }
+  function pushLevel(level) {
+    try { history.pushState({ ...(history.state || {}), vc: level }, '', location.href); } catch (e) { /* ignore */ }
   }
-  const wantGuard = () => !$('editorScreen').hidden || isStandalone() || openModalsNow().length > 0;
-  ['pointerdown', 'keydown'].forEach((ev) => window.addEventListener(ev, (e) => {
+  function ensureLevels() {
+    const editing = !$('editorScreen').hidden;
+    if (isStandalone() && !histLevel()) pushLevel('home');
+    if (editing && histLevel() !== 'editor') pushLevel('editor');
+  }
+  const pushBackGuard = ensureLevels;
+  ['pointerup', 'click', 'keydown', 'touchend'].forEach((ev) => window.addEventListener(ev, (e) => {
     if (e.target && e.target.closest && e.target.closest('#exitModal')) return;
-    if (wantGuard()) pushBackGuard();
+    ensureLevels();
   }, { capture: true, passive: true }));
   window.addEventListener('popstate', () => {
     if (skipPop) { skipPop--; return; }
@@ -351,13 +376,13 @@
       const m = mods[mods.length - 1];
       const x = m.querySelector('.modal-head button:last-child') || m.querySelector('.modal-head button');
       if (x) x.click(); else m.hidden = true;
-      pushBackGuard();
+      ensureLevels(); // stay where we were (the next tap confirms the entry)
       return;
     }
-    if (!$('editorScreen').hidden) { showStart(true); if (isStandalone()) pushBackGuard(); return; }
-    if (isStandalone()) openModal('exitModal'); // pressing back once more closes the app
+    if (!$('editorScreen').hidden) { showStart(true); return; }
+    if (isStandalone() && !histLevel()) openModal('exitModal'); // pressing back once more closes the app
   });
-  $('exitStay').addEventListener('click', () => { closeModal('exitModal'); pushBackGuard(); });
+  $('exitStay').addEventListener('click', () => { closeModal('exitModal'); ensureLevels(); });
   $('exitClose').addEventListener('click', () => {
     try { window.close(); } catch (e) { /* not allowed */ }
     setTimeout(() => toast('Press back once more to close Videcutto.', 2500), 300);
@@ -1056,7 +1081,7 @@
   // Undo / redo (snapshots of all tracks)
   // ---------------------------------------------------------------------------
   const copyClip = (c) => (c.tIn ? { ...c, tIn: { ...c.tIn } } : { ...c });
-  const snapshot = () => tracks.map((t) => ({ ...t, clips: t.clips.map(copyClip) }));
+  const snapshot = () => tracks.map((t) => ({ ...t, clips: t.clips.map(copyClip), ...(t.markers ? { markers: t.markers.map((m) => ({ ...m })) } : {}) }));
   function pushUndo(before) {
     undoStack.push(before);
     while (undoStack.length > settings.undoSteps) undoStack.shift();
@@ -1217,12 +1242,21 @@
   }
   const multi = () => { syncSel(); return selIds.size > 1; };
   const selFinds = () => { syncSel(); return [...selIds].map(findClip).filter(Boolean); };
-  function selectOnly(id) { selIds.clear(); if (id) selIds.add(id); selectedId = id; selAnchor = id; }
+  // Grouped clips are selected together.
+  function groupIds(id) {
+    const f = findClip(id);
+    if (!f || !f.clip.group) return id ? [id] : [];
+    return allClips().filter((c) => c.group === f.clip.group).map((c) => c.id);
+  }
+  const wholeGroupSelected = (id) => { const g = groupIds(id); return g.length > 1 && selIds.size === g.length && g.every((x) => selIds.has(x)); };
+  function selectOnly(id) { selIds.clear(); for (const x of groupIds(id)) selIds.add(x); selectedId = id; selAnchor = id; }
+  function selectJust(id) { selIds.clear(); if (id) selIds.add(id); selectedId = id; selAnchor = id; }
   function selectToggle(id) {
+    const g = groupIds(id);
     if (selIds.has(id)) {
-      selIds.delete(id);
-      if (selectedId === id) selectedId = [...selIds].pop() || null;
-    } else { selIds.add(id); selectedId = id; }
+      g.forEach((x) => selIds.delete(x));
+      if (!selIds.has(selectedId)) selectedId = [...selIds].pop() || null;
+    } else { g.forEach((x) => selIds.add(x)); selectedId = id; }
     selAnchor = id;
   }
   function selectSet(ids, add) {
@@ -1262,6 +1296,147 @@
   $('selectBtn').addEventListener('click', () => { selectMode = !selectMode; afterSelect(); if (selectMode) toast('Tap clips to add or remove them.', 2000); });
   $('selAllBtn').addEventListener('click', selectAll);
   $('selDoneBtn').addEventListener('click', clearSelection);
+
+  // ---------------------------------------------------------------------------
+  // Groups (move and select together) and attaching (📎: a clip on an upper or
+  // audio track moves along with the main-track clip below it).
+  // ---------------------------------------------------------------------------
+  const isAttachedNow = (c) => !!(c.attach && tracks[0].clips.some((m) => m.id === c.attach));
+  function toggleGroup() {
+    const list = selFinds();
+    if (list.length < 2 && !(list[0] && list[0].clip.group)) return;
+    const grouped = list.some((f) => f.clip.group);
+    const allSame = list.length > 1 && list.every((f) => f.clip.group && f.clip.group === list[0].clip.group);
+    if (grouped && (allSame || list.length === 1)) {
+      commit(() => list.forEach((f) => { delete f.clip.group; }));
+      toast('Ungrouped.', 1500);
+    } else {
+      const gid = 'g' + (++uid);
+      commit(() => list.forEach((f) => { f.clip.group = gid; }));
+      toast(`${list.length} clips grouped — they are selected and moved together.`, 2500);
+    }
+  }
+  // The main-track clip under (or just before) time t.
+  function mainClipAt(t) {
+    const m = tracks[0].clips;
+    let best = null;
+    for (const c of m) { if (c.start <= t + 1e-6) best = c; if (t < clipEnd(c) - 1e-6 && c.start <= t + 1e-6) return c; }
+    return best || m[0] || null;
+  }
+  function setAttach(on) {
+    const list = (multi() ? selFinds() : [findClip(selectedId)].filter(Boolean)).filter((f) => !f.tr.main);
+    if (!list.length) return;
+    if (on && !tracks[0].clips.length) { toast('There is no clip on the main track to attach to.'); updateClipPanel(); return; }
+    commit(() => list.forEach((f) => {
+      if (on) { const m = mainClipAt(f.clip.start); if (m) f.clip.attach = m.id; } else delete f.clip.attach;
+    }));
+  }
+  function syncAttachUI(list) {
+    const others = list.filter((f) => !f.tr.main);
+    $('attachRow').hidden = !others.length || !tracks[0].clips.length;
+    const on = others.length > 0 && others.every((f) => isAttachedNow(f.clip));
+    $('attachChk').checked = on;
+    $('attachChk').indeterminate = !on && others.some((f) => isAttachedNow(f.clip));
+    const one = others.length === 1 ? others[0].clip : null;
+    const m = one && isAttachedNow(one) ? tracks[0].clips.find((x) => x.id === one.attach) : null;
+    $('attachInfo').textContent = m ? `Moves with the ${m.kind === 'video' || m.kind === 'image' ? (srcOf(m) ? srcOf(m).name : m.kind) : m.kind === 'text' ? 'text' : 'color clip'} at ${fmtTime(m.start, false)} on the main track.` : 'Moves along when the main-track clip below it moves (e.g. when you cut or reorder the main track).';
+    const grouped = list.some((f) => f.clip.group);
+    $('groupBtn').hidden = list.length < 2 && !grouped;
+    const allSame = list.length > 1 && list.every((f) => f.clip.group && f.clip.group === list[0].clip.group);
+    $('groupBtn').querySelector('span').textContent = grouped && (allSame || list.length === 1) ? 'Ungroup' : 'Group';
+    $('groupBtn').classList.toggle('on', grouped && (allSame || list.length === 1));
+  }
+  $('attachChk').addEventListener('change', (e) => setAttach(e.target.checked));
+  $('groupBtn').addEventListener('click', toggleGroup);
+
+  // ---------------------------------------------------------------------------
+  // Markers: named points on the timeline. Clips snap to them; tap one in the
+  // ruler to jump there (tap again to edit it), drag it to move it.
+  // ---------------------------------------------------------------------------
+  const MARKER_COLORS = ['#f2b233', '#4c8dff', '#3ecf8e', '#ef5a5a', '#b57bff'];
+  const markerAt = (t, tol = 0.04) => markersOf().find((m) => Math.abs(m.t - t) <= tol) || null;
+  function addMarker() {
+    if (!allClips().length) { toast('Add a clip first.'); return; }
+    const t = +playhead.toFixed(3);
+    const near = markerAt(t);
+    if (near) { openMarker(near.id); return; }
+    const n = markersOf().length + 1;
+    commit(() => {
+      const tr = tracks[0];
+      tr.markers = [...(tr.markers || []), { id: 'mk' + (++uid), t, label: '', color: MARKER_COLORS[(n - 1) % MARKER_COLORS.length] }].sort((a, b) => a.t - b.t);
+    });
+    toast(`Marker ${n} at ${fmtTime(t)} — tap it in the ruler to name it.`, 2500);
+  }
+  let editMarkerId = null;
+  function openMarker(id) {
+    const m = markersOf().find((x) => x.id === id);
+    if (!m) return;
+    editMarkerId = id;
+    $('mkLabel').value = m.label || '';
+    $('mkTime').textContent = fmtTime(m.t);
+    $('mkColors').querySelectorAll('[data-color]').forEach((b) => b.classList.toggle('active', b.dataset.color === (m.color || MARKER_COLORS[0])));
+    openModal('markerModal');
+  }
+  function patchMarker(patch) {
+    const id = editMarkerId;
+    commit(() => { tracks[0].markers = markersOf().map((x) => (x.id === id ? { ...x, ...patch } : x)); });
+  }
+  $('mkColors').append(...MARKER_COLORS.map((c) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'mk-swatch'; b.dataset.color = c; b.style.background = c; b.setAttribute('aria-label', 'Color ' + c); return b; }));
+  $('mkColors').addEventListener('click', (e) => { const b = e.target.closest('[data-color]'); if (!b) return; patchMarker({ color: b.dataset.color }); $('mkColors').querySelectorAll('[data-color]').forEach((x) => x.classList.toggle('active', x === b)); });
+  $('mkLabel').addEventListener('change', (e) => patchMarker({ label: e.target.value.trim().slice(0, 40) }));
+  $('mkLabel').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); closeModal('markerModal'); } });
+  $('mkJump').addEventListener('click', () => { const m = markersOf().find((x) => x.id === editMarkerId); closeModal('markerModal'); if (m) { pause(); seek(m.t); } });
+  $('mkDelete').addEventListener('click', () => { const id = editMarkerId; closeModal('markerModal'); commit(() => { tracks[0].markers = markersOf().filter((x) => x.id !== id); if (!tracks[0].markers.length) delete tracks[0].markers; }); });
+  $('mkClose').addEventListener('click', () => closeModal('markerModal'));
+  $('markerModal').addEventListener('click', (e) => { if (e.target.id === 'markerModal') closeModal('markerModal'); });
+  $('markerBtn').addEventListener('click', addMarker);
+  // Ruler: tap = jump (tap again = edit), drag = move (snaps to clip edges and the playhead).
+  let mkDrag = null;
+  let suppressRulerClick = false;
+  function initMarkerRuler() {
+  tlRuler.addEventListener('pointerdown', (e) => {
+    const f = e.target.closest('.marker');
+    if (f) startMarkerDrag(e, f);
+  }, true);
+  // The playhead line lies over a marker at the playhead: hand the press to the marker.
+  $('playheadLine').addEventListener('pointerdown', (e) => {
+    const f = document.elementsFromPoint(e.clientX, e.clientY).find((x) => x.classList && x.classList.contains('marker'));
+    if (f) startMarkerDrag(e, f);
+  }, true);
+  function startMarkerDrag(e, f) {
+    e.stopPropagation(); e.preventDefault();
+    const m = markersOf().find((x) => x.id === f.dataset.marker);
+    if (!m) return;
+    mkDrag = { id: m.id, el: f, x0: e.clientX, t0: m.t, t: m.t, moved: false, pid: e.pointerId };
+  }
+  window.addEventListener('pointermove', (e) => {
+    if (!mkDrag || e.pointerId !== mkDrag.pid) return;
+    const dx = e.clientX - mkDrag.x0;
+    if (!mkDrag.moved && Math.abs(dx) < 6) return;
+    mkDrag.moved = true;
+    let t = clamp(mkDrag.t0 + dx / pps, 0, totalDuration());
+    if (settings.snap && !e.altKey) {
+      const thr = (isCoarse ? 20 : 14) / pps;
+      let best = null;
+      for (const c of [playhead, ...allClips().flatMap((c) => [c.start, clipEnd(c)])]) { const d = Math.abs(c - t); if (d < thr && (!best || d < best.d)) best = { d, t: c }; }
+      if (best) t = best.t;
+    }
+    mkDrag.t = t;
+    mkDrag.el.style.left = (pad() + t * pps) + 'px';
+  });
+  const endMk = (e) => {
+    if (!mkDrag || e.pointerId !== mkDrag.pid) return;
+    const d = mkDrag;
+    mkDrag = null;
+    suppressRulerClick = true;
+    if (d.moved) { commit(() => { tracks[0].markers = markersOf().map((x) => (x.id === d.id ? { ...x, t: +d.t.toFixed(3) } : x)).sort((a, b) => a.t - b.t); }); return; }
+    const m = markersOf().find((x) => x.id === d.id);
+    if (!m) return;
+    if (Math.abs(playhead - m.t) < 0.02) openMarker(m.id); else { pause(); seek(m.t); }
+  };
+  window.addEventListener('pointerup', endMk);
+  window.addEventListener('pointercancel', (e) => { if (mkDrag && e.pointerId === mkDrag.pid) { mkDrag = null; renderTimeline(); } });
+  }
 
   function deleteSelected() {
     const list = selFinds();
@@ -1418,7 +1593,8 @@
     const src = srcOf(c);
     panel.hidden = false;
     panel.classList.toggle('multi', multi());
-    if (multi()) { updateMultiPanel(); updateTrackPanel(); return; }
+    if (multi()) { updateMultiPanel(); syncAttachUI(selFinds()); updateTrackPanel(); return; }
+    syncAttachUI([findClip(c.id)].filter(Boolean));
     $('cpStartField').hidden = false;
     $('cpKind').textContent = { video: 'Video', image: 'Image', color: 'Color clip', text: 'Text', audio: src && src.kind === 'video' ? 'Audio of video' : 'Audio' }[c.kind] || '';
     $('cpTitle').textContent = src ? src.name : c.kind === 'text' ? `${fontName(textOf(c).font)} · “${textOf(c).content.split('\n')[0].slice(0, 30)}”` : `${(c.color || DEFAULT_COLOR).toUpperCase()} · ${c.size === 'canvas' ? 'canvas size' : `${c.w}×${c.h}`}`;
@@ -2162,6 +2338,7 @@
   let contentsOpen = false;
   const openUses = new Set(); // files whose uses are unfolded in the Contents list
   // Pin the preview to the top of the screen while scrolling (classic layout / phones).
+  $('frameBtn').addEventListener('click', saveFrame);
   function setPinned(on) {
     document.body.classList.toggle('pv-pinned', on);
     $('pinBtn').classList.toggle('on', on);
@@ -2274,12 +2451,13 @@
     if (ci.texts.length) parts.push(plural(ci.texts.length, 'text'));
     if (ci.colors.length) parts.push(plural(ci.colors.length, 'color clip'));
     if (ci.cuts.length) parts.push(plural(ci.cuts.length, 'transition'));
+    if (markersOf().length) parts.push(plural(markersOf().length, 'marker'));
     $('mediaSummary').textContent = parts.length ? parts.join(' · ') : 'nothing yet';
     if ($('mediaBody').hidden) return;
     const ul = $('mediaList');
     const head = (label) => { const h = document.createElement('li'); h.className = 'm-group'; h.textContent = label; return h; };
     const groups = [];
-    const extra = ci.texts.length || ci.colors.length || ci.cuts.length;
+    const extra = ci.texts.length || ci.colors.length || ci.cuts.length || markersOf().length;
     if (list.length && extra) groups.push(head('Files'));
     groups.push(...list.map((src) => {
       const li = document.createElement('li');
@@ -2387,7 +2565,21 @@
         groups.push(contentRow('trans', th, (TRANS_NAMES[c.tIn.type] || c.tIn.type) + dir, `at ${fmtTime(c.start, false)} · ${c.tIn.dur.toFixed(1)} s${tr.main ? '' : ' · upper track'}`, { cutTrack: tr.id, cutClip: c.id }));
       }
     }
+    if (markersOf().length) {
+      groups.push(head('Markers'));
+      markersOf().forEach((m, k) => {
+        const th = document.createElement('div');
+        th.className = 'm-thumb mk-th';
+        th.style.setProperty('--mk', m.color || MARKER_COLORS[0]);
+        const row = contentRow('marker', th, m.label || `Marker ${k + 1}`, `at ${fmtTime(m.t)}`, { marker: m.id });
+        const ed = document.createElement('button');
+        ed.type = 'button'; ed.className = 'm-edit'; ed.textContent = '✎'; ed.title = 'Name, color, delete'; ed.dataset.act = 'marker-edit';
+        row.append(ed);
+        groups.push(row);
+      });
+    }
     ul.replaceChildren(...groups);
+    markLiveContents(true);
   }
   // Tap a text, color clip or transition: select it and move the playhead there.
   function jumpToContent(li) {
@@ -2426,6 +2618,11 @@
   $('mediaList').addEventListener('click', async (e) => {
     const li = e.target.closest('li');
     if (!li || li.classList.contains('m-group')) return;
+    if (li.dataset.marker) {
+      if (e.target.closest('[data-act="marker-edit"]')) openMarker(li.dataset.marker);
+      else { const m = markersOf().find((x) => x.id === li.dataset.marker); if (m) { pause(); seek(m.t); } }
+      return;
+    }
     if (li.dataset.clip || li.dataset.cutClip) { jumpToContent(li); return; }
     const useRow = e.target.closest('.m-use');
     if (useRow) {
@@ -2856,6 +3053,26 @@
         frag.appendChild(m);
       }
     }
+    // Markers: a flag in the ruler and a thin line across the tracks
+    tlInner.querySelectorAll('.mk-line').forEach((x) => x.remove());
+    for (const m of markersOf()) {
+      const x = p + m.t * pps;
+      const f = document.createElement('div');
+      f.className = 'marker';
+      f.dataset.marker = m.id;
+      f.style.left = x + 'px';
+      f.style.setProperty('--mk', m.color || MARKER_COLORS[0]);
+      f.title = (m.label || 'Marker') + ' · ' + fmtTime(m.t) + ' — tap: jump there · tap again: edit · drag: move';
+      const lab = document.createElement('span');
+      lab.textContent = m.label || '';
+      f.append(lab);
+      frag.appendChild(f);
+      const ln = document.createElement('div');
+      ln.className = 'mk-line';
+      ln.style.left = x + 'px';
+      ln.style.setProperty('--mk', m.color || MARKER_COLORS[0]);
+      tlInner.appendChild(ln);
+    }
     tlRuler.replaceChildren(frag);
     renderClips();
     renderTrackHeads();
@@ -2890,7 +3107,7 @@
     const src = srcOf(c);
     const p = pad();
     const el = document.createElement('div');
-    el.className = 'clip' + (selIds.has(c.id) ? ' selected' : '') + (selIds.size > 1 && c.id === selectedId ? ' primary' : '') + (c.kind === 'color' ? ' color-clip' : '') + (c.kind === 'text' ? ' text-clip' : '') + (c.kind === 'audio' ? ' audio-clip' : tr.main ? '' : ' overlay');
+    el.className = 'clip' + (c.attach && isAttachedNow(c) ? ' attached' : '') + (c.group ? ' grouped' : '') + (selIds.has(c.id) ? ' selected' : '') + (selIds.size > 1 && c.id === selectedId ? ' primary' : '') + (c.kind === 'color' ? ' color-clip' : '') + (c.kind === 'text' ? ' text-clip' : '') + (c.kind === 'audio' ? ' audio-clip' : tr.main ? '' : ' overlay');
     if (c.kind === 'color') el.style.background = c.color || DEFAULT_COLOR;
     el.dataset.id = c.id;
     el.dataset.idx = i;
@@ -3393,7 +3610,11 @@
       if (e.shiftKey && selAnchor && findClip(selAnchor)) selectRange(selAnchor, id, add);
       else if (add || selectMode) selectToggle(id);
       else if (selectedId === id && selIds.size === 1) selectedId = null;
-      else selectOnly(id);
+      else if (wholeGroupSelected(id)) selectJust(id); // tap again: just this clip of the group
+      else {
+        selectOnly(id);
+        if (selIds.size > 1 && !store.get('groupTip', false)) { store.set('groupTip', true); toast('A group is selected — tap the clip again to edit only that one.', 3500); }
+      }
     }
     afterSelect();
   });
@@ -3439,7 +3660,7 @@
     const snapTo = (t) => {
       if (!settings.snap || e.altKey) return null;
       let best = null;
-      const cands = [playhead];
+      const cands = [playhead, ...markersOf().map((m) => m.t)];
       for (const c of allClips()) if (c.id !== o.id) cands.push(c.start, clipEnd(c));
       for (const cnd of cands) { const d = Math.abs(t - cnd); if (d < thr && (!best || d < best.d)) best = { d, t: cnd }; }
       return best;
@@ -3688,7 +3909,7 @@
       if (settings.snap && !drag.alt) {
         const thr = (isCoarse ? 20 : 14) / pps;
         let best = null;
-        const cands = [playhead, 0];
+        const cands = [playhead, 0, ...markersOf().map((m) => m.t)];
         for (const c of allClips()) if (!ids.has(c.id)) cands.push(c.start, clipEnd(c));
         for (const cnd of cands) for (const [edge, off] of [[t, 0], [t + len, len]]) {
           const d = Math.abs(edge - cnd);
@@ -3737,7 +3958,7 @@
       const thr = (isCoarse ? 20 : 14) / pps;
       let best = null;
       const len = clipLen(f.clip);
-      const cands = [playhead, 0];
+      const cands = [playhead, 0, ...markersOf().map((m) => m.t)];
       for (const c of allClips()) if (c.id !== drag.id) cands.push(c.start, clipEnd(c));
       for (const cnd of cands) {
         for (const [edge, off] of [[drag.time, 0], [drag.time + len, len]]) {
@@ -4229,6 +4450,28 @@
   function updateTime() {
     $('curTime').textContent = fmtTime(playhead);
     $('totalTime').textContent = fmtTime(totalDuration());
+    markLiveContents();
+  }
+  // Contents list: frame what is under the playhead right now (only while it's unfolded).
+  let liveSig = '';
+  function markLiveContents(force) {
+    if ($('mediaBody').hidden) { liveSig = ''; return; }
+    const t = playhead;
+    const ids = new Set();
+    const srcs = new Set();
+    for (const tr of tracks) tr.clips.forEach((c, i) => {
+      if (t >= c.start - 1e-6 && t < clipEnd(c) - 1e-6) { ids.add(c.id); if (c.srcId) srcs.add(c.srcId); }
+      if (c.tIn && i > 0 && t >= c.start - 1e-6 && t < c.start + c.tIn.dur) ids.add('cut:' + c.id);
+    });
+    for (const m of markersOf()) if (Math.abs(m.t - t) < 0.02) ids.add('mk:' + m.id);
+    const sig = [...ids, ...srcs].sort().join(',');
+    if (sig === liveSig && !force) return;
+    liveSig = sig;
+    $('mediaList').querySelectorAll('li, .m-use').forEach((el) => {
+      const d = el.dataset;
+      const on = d.src ? srcs.has(d.src) : d.clip ? ids.has(d.clip) : d.use ? ids.has(d.use) : d.cutClip ? ids.has('cut:' + d.cutClip) : d.marker ? ids.has('mk:' + d.marker) : false;
+      el.classList.toggle('live', on);
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -4326,6 +4569,7 @@
   setCanvasFolded(store.get('canvasFolded', false));
   setMediaFolded(true);
   initMediaDrop();
+  initMarkerRuler();
 
   function onCanvasChange() {
     syncCanvasUI();
@@ -4437,6 +4681,13 @@
       if (d) drawCropMode(sel, d, W, H);
       return;
     }
+    const r = buildLayers(t, out, mode, sel);
+    if (r.wait) return; // keep the last frame while a video is still seeking
+    Render.composite(pvCtx, W, H, r.layers, canvasState.bg === 'blur' ? 'blur' : 'bars', bg);
+    if (mode === 'move' && r.selLayer) drawMoveOverlay(r.selLayer.clip, r.selLayer.d, W, H, dpr);
+  }
+  // Layers of all visible tracks at time t (shared by the preview and the frame snapshot).
+  function buildLayers(t, out, mode, sel) {
     const layers = [];
     let selLayer = null;
     for (let ti = 0; ti < tracks.length; ti++) {
@@ -4463,10 +4714,33 @@
         const l = layerOf(b);
         if (l) layers.push(l);
       }
-      if (wait) return; // keep the last frame while a video is still seeking
+      if (wait) return { wait: true, layers, selLayer };
     }
-    Render.composite(pvCtx, W, H, layers, canvasState.bg === 'blur' ? 'blur' : 'bars', bg);
-    if (mode === 'move' && selLayer) drawMoveOverlay(selLayer.clip, selLayer.d, W, H, dpr);
+    return { wait: false, layers, selLayer };
+  }
+
+  // Snapshot: the current frame in the size of the created video, as PNG.
+  async function saveFrame() {
+    if (!allClips().length) return;
+    pause();
+    const out = outputDims();
+    const t = viewTime();
+    await Promise.all([...new Set(allClips().filter((c) => c.kind === 'text').map((c) => textOf(c).font))].map(ensureFont));
+    let r = buildLayers(t, out, null, null);
+    for (let k = 0; r.wait && k < 20; k++) { await new Promise((res) => setTimeout(res, 100)); r = buildLayers(t, out, null, null); }
+    const cv = document.createElement('canvas');
+    cv.width = out.w; cv.height = out.h;
+    Render.composite(cv.getContext('2d'), out.w, out.h, r.layers, canvasState.bg === 'blur' ? 'blur' : 'bars', canvasState.bgColor);
+    const blob = await new Promise((res) => cv.toBlob(res, 'image/png'));
+    if (!blob) { toast('The frame couldn\'t be saved.'); return; }
+    const ts = fmtTime(t).replace(/:/g, '-').replace('.', '_');
+    const name = `${cleanFileName(expandName(rawName())) || 'video'}_${ts}.png`;
+    const file = new File([blob], name, { type: 'image/png' });
+    if (isCoarse && navigator.canShare && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file] }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
+    }
+    downloadBlob(blob, name);
+    toast(`Frame saved as ${name} (${out.w}×${out.h}).`, 3000);
   }
 
   // Preview <video> elements are already rotated by the browser, so rotation 0 here.
@@ -4954,6 +5228,8 @@
     else if (e.key === ' ') { e.preventDefault(); playing ? pause() : play(); }
     else if (k === 's' || k === 'c') splitAtPlayhead();
     else if (k === 'm') toggleMuteClip();
+    else if (k === 'k') addMarker();
+    else if (k === 'g' && selIds.size > 1) toggleGroup();
     else if (e.key === 'Escape') clearSelection();
     else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSelected(); }
     else if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && selClip()) { e.preventDefault(); nudge((e.key === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 0.01 : 0.1)); }
@@ -5123,7 +5399,18 @@
   const defaultMetaChoice = () => ({ mode: 'auto', srcId: null, loc: true, custom: {} });
   let metaChoice = defaultMetaChoice();
   const META_FIELDS = ['title', 'description', 'author', 'make', 'model', 'software'];
-  const hasMeta = (m) => !!m && (m.utc != null || m.lat != null || META_FIELDS.some((f) => m[f]));
+  const CAMERA_FIELDS = ['iso', 'fnumber', 'exposure', 'ev', 'focal', 'focal35', 'lens'];
+  const hasMeta = (m) => !!m && (m.utc != null || m.lat != null || META_FIELDS.some((f) => m[f]) || CAMERA_FIELDS.some((f) => m[f] != null));
+  // "ISO 25 · 23 mm · 0.0 EV · f/1.8 · 1/403 s" like a phone's gallery.
+  function cameraLine(m) {
+    const p = [];
+    if (m.iso) p.push(`ISO ${m.iso}`);
+    if (m.focal35) p.push(`${m.focal35} mm`); else if (m.focal) p.push(`${m.focal} mm`);
+    if (m.ev != null) p.push(`${m.ev >= 0 ? '' : '−'}${Math.abs(m.ev).toFixed(1)} EV`);
+    if (m.fnumber) p.push(`f/${m.fnumber}`);
+    if (m.exposure) p.push(m.exposure);
+    return p.join(' · ');
+  }
   const metaFiles = () => [...sources.values()].filter((x) => (x.kind === 'video' || x.kind === 'image') && hasMeta(x.fileMeta));
   function metaSource() {
     if (metaChoice.mode === 'none') return null;
@@ -5157,18 +5444,39 @@
     $('metaSummary').title = ms.src ? ms.src.name : '';
     return `${from} · ${what}`;
   }
-  function metaRows(m) {
+  function extraText(e) {
+    if (e.t !== 1) return '(data)';
+    try { const b = atob(e.d); return decodeURIComponent(escape(b)).slice(0, 80); } catch (er) { return '(data)'; }
+  }
+  function metaRows(m, full) {
     const rows = [];
     if (!m) return rows;
     if (m.utc != null) rows.push(['Recorded', fmtMetaDate(m)]);
     if (m.lat != null) rows.push(['Place', `${m.lat.toFixed(5)}, ${m.lon.toFixed(5)}${m.alt != null ? ` · ${Math.round(m.alt)} m` : ''}`]);
     if (m.make || m.model) rows.push(['Camera', [m.make, m.model].filter(Boolean).join(' ')]);
+    if (cameraLine(m)) rows.push(['Settings', cameraLine(m)]);
+    if (m.lens) rows.push(['Lens', m.lens]);
     for (const [f, l] of [['software', 'Software'], ['title', 'Title'], ['description', 'Description'], ['author', 'Author']]) if (m[f]) rows.push([l, m[f]]);
-    if (m.extra && m.extra.length) rows.push(['More', `${m.extra.length} other entr${m.extra.length === 1 ? 'y' : 'ies'} (copied as they are)`]);
+    if (m.extra && m.extra.length) {
+      if (full) for (const e of m.extra) rows.push([e.k.replace(/^com\.(apple\.quicktime|android)\./, ''), extraText(e)]);
+      else rows.push(['More', `${m.extra.length} other entr${m.extra.length === 1 ? 'y' : 'ies'} (copied as they are)`]);
+    }
     return rows;
   }
+  function syncMetaInfo() {
+    const rows = metaRows(exportMeta(), true);
+    const dl = $('metaInfo');
+    dl.replaceChildren(...(rows.length ? rows : [['', 'Nothing — the video gets no recording date, place or camera information.']]).flatMap(([k, v]) => [Object.assign(document.createElement('dt'), { textContent: k }), Object.assign(document.createElement('dd'), { textContent: v })]));
+  }
+  $('metaInfoBtn').addEventListener('click', () => {
+    const show = $('metaInfo').hidden;
+    $('metaInfo').hidden = !show;
+    $('metaInfoBtn').classList.toggle('on', show);
+    if (show) syncMetaInfo();
+  });
   function syncMetaUI() {
     $('metaSummary').textContent = metaSummary();
+    if (!$('metaInfo').hidden) syncMetaInfo();
     if ($('metaModal').hidden) return;
     const sel = $('metaSel');
     const opt = (v, l) => Object.assign(document.createElement('option'), { value: v, textContent: l });
@@ -5228,6 +5536,7 @@
     if (isFinite(lat) && isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180) { m.lat = lat; m.lon = lon; if (old.lat === lat && old.lon === lon && old.alt != null) m.alt = old.alt; }
     for (const f of META_FIELDS) { const v = $('meta_' + f).value.trim(); if (v) m[f] = v; }
     if (old.extra) m.extra = old.extra;
+    for (const f of CAMERA_FIELDS) if (old[f] != null) m[f] = old[f];
     return m;
   }
   let metaView = null; // file whose metadata is shown (opened with 🏷)
@@ -6211,7 +6520,7 @@
     const tl = (p.tracks && p.tracks.length ? p.tracks : [{ clips: [] }]);
     const savedUndo = Array.isArray(p.undo) ? p.undo.filter(Array.isArray) : [];
     const savedRedo = Array.isArray(p.redo) ? p.redo.filter(Array.isArray) : [];
-    for (const list of [tl, ...savedUndo, ...savedRedo]) list.forEach((t) => { if (t.id) bump(t.id); (t.clips || []).forEach((c) => bump(c.id)); });
+    for (const list of [tl, ...savedUndo, ...savedRedo]) list.forEach((t) => { if (t.id) bump(t.id); (t.clips || []).forEach((c) => { bump(c.id); if (c.group) bump(c.group); }); (t.markers || []).forEach((m) => bump(m.id)); });
     uid = Math.max(uid, maxId);
     // Projects before 0.8 have one track without track settings.
     const normTracks = (list) => list.map((t, i) => ({
@@ -6223,6 +6532,7 @@
       muted: !!t.muted,
       volume: t.volume != null ? clamp(+t.volume, 0, 1) : 1,
       manual: !!t.manual,
+      ...(i === 0 && Array.isArray(t.markers) && t.markers.length ? { markers: t.markers.map((m) => ({ ...m })) } : {}),
       clips: (t.clips || []).map((c) => ({ ...c, kind: c.kind || 'video' })),
     })).filter((t, i) => i === 0 || t.clips.length || t.manual);
     setTracks(normTracks(tl));

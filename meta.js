@@ -2,7 +2,8 @@
  * meta.js — reads the EXIF data of photos (JPEG, WebP, PNG eXIf) for Videcutto:
  * recording date, place (GPS), camera, software, description, author.
  * Result in the same shape as MP4.readMeta():
- *   { utc, tz, lat, lon, alt, make, model, software, description, author }
+ *   { utc, tz, lat, lon, alt, make, model, software, description, author,
+ *     iso, fnumber, exposure, ev, focal, focal35, lens }
  */
 (function (global) {
   'use strict';
@@ -12,7 +13,7 @@
     const le = v.getUint16(0) === 0x4949;
     if (!le && v.getUint16(0) !== 0x4d4d) return null;
     const u16 = (p) => v.getUint16(p, le), u32 = (p) => v.getUint32(p, le);
-    const SIZE = { 1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 7: 1, 9: 4, 10: 8 };
+    const SIZE = { 1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 7: 1, 9: 4, 10: 8, 11: 4, 12: 8 };
     function ifd(p) {
       const out = {};
       if (p <= 0 || p + 2 > v.byteLength) return out;
@@ -26,6 +27,8 @@
         if (at + len > v.byteLength) continue;
         if (type === 2) { let s = ''; for (let k = 0; k < count; k++) { const c = v.getUint8(at + k); if (!c) break; s += String.fromCharCode(c); } out[tag] = s.trim(); }
         else if (type === 5 || type === 10) { const a = []; for (let k = 0; k < count; k++) { const d = u32(at + k * 8 + 4); a.push(d ? (type === 10 ? v.getInt32(at + k * 8, le) : u32(at + k * 8)) / d : 0); } out[tag] = a; }
+        else if (type === 12) out[tag] = v.getFloat64(at, le);
+        else if (type === 11) out[tag] = v.getFloat32(at, le);
         else if (type === 3) out[tag] = u16(at);
         else if (type === 4) out[tag] = u32(at);
         else if (type === 1 || type === 7) out[tag] = v.getUint8(at);
@@ -42,6 +45,20 @@
     if (i0[0x0131]) m.software = utf(i0[0x0131]);
     if (i0[0x010e]) m.description = utf(i0[0x010e]);
     if (i0[0x013b]) m.author = utf(i0[0x013b]);
+    // Camera settings: ISO, aperture, exposure time, exposure bias, focal length, lens
+    const num = (v) => (Array.isArray(v) ? v[0] : v);
+    const iso = num(ex[0x8827]);
+    if (iso) m.iso = Math.round(iso);
+    const fn = num(ex[0x829d]);
+    if (fn) m.fnumber = +fn.toFixed(1);
+    const et = num(ex[0x829a]);
+    if (et) m.exposure = et >= 1 ? `${+et.toFixed(1)} s` : `1/${Math.round(1 / et)} s`;
+    const ev = num(ex[0x9204]);
+    if (ev != null && isFinite(ev)) m.ev = +ev.toFixed(1);
+    const fl = num(ex[0x920a]);
+    if (fl) m.focal = +fl.toFixed(1);
+    if (ex[0xa405]) m.focal35 = Math.round(num(ex[0xa405]));
+    if (ex[0xa434]) m.lens = utf(ex[0xa434]);
     const date = ex[0x9003] || ex[0x9004] || i0[0x0132];
     const zone = ex[0x9011] || ex[0x9010];
     if (date && global.MP4) {

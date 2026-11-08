@@ -597,6 +597,9 @@
       } else if (name === 'com.apple.quicktime.creationdate' || name === '©day') {
         const d = parseDate(text);
         if (d && (m.dateFromHeader || m.utc == null)) { m.utc = d.utc; m.tz = d.tz; m.dateFromHeader = false; }
+      } else if (name.startsWith('world.michels.videcutto.camera.')) {
+        const f = name.slice(31);
+        if (text) m[f] = /^-?[\d.]+$/.test(text) ? +text : text;
       } else if (KEY_FIELDS[name]) {
         if (text && m[KEY_FIELDS[name]] == null) m[KEY_FIELDS[name]] = text;
       } else if (mdta && name.includes('.') && val.length <= 4096) extra.push({ k: name, t: type, d: b64(val) }); // namespaced keys only (skips encoder notes like major_brand)
@@ -652,6 +655,12 @@
     if (meta.utc != null) { udta.push(qt('©day', formatDate(meta, false))); key('com.apple.quicktime.creationdate', formatDate(meta, false)); }
     const text = [['make', '©mak', 'make'], ['model', '©mod', 'model'], ['software', '©swr', 'software'], ['title', '©nam', 'title'], ['description', '©des', 'description'], ['author', '©ART', 'author']];
     for (const [f, qtType, apple] of text) if (meta[f]) { udta.push(qt(qtType, meta[f])); key('com.apple.quicktime.' + apple, meta[f]); }
+    // Camera settings (from photos): lens and 35 mm focal length have Apple keys;
+    // the rest has no standard place in videos and is kept under our own keys.
+    const has = (k) => (meta.extra || []).some((e) => e.k === k);
+    if (meta.lens && !has('com.apple.quicktime.camera.lens_model')) key('com.apple.quicktime.camera.lens_model', String(meta.lens));
+    if (meta.focal35 && !has('com.apple.quicktime.camera.focal_length.35mm_equivalent')) key('com.apple.quicktime.camera.focal_length.35mm_equivalent', String(meta.focal35));
+    for (const f of ['iso', 'fnumber', 'exposure', 'ev', 'focal']) if (meta[f] != null && meta[f] !== '') key('world.michels.videcutto.camera.' + f, String(meta[f]));
     for (const e of meta.extra || []) {
       if (!hasLoc && /location/i.test(e.k)) continue;
       try { keys.push({ k: e.k, t: e.t, val: unb64(e.d) }); } catch (er) { /* skip broken entry */ }

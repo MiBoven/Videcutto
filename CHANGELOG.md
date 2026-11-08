@@ -1,5 +1,14 @@
 # Changelog
 
+### 0.12.0 — 2026-11-08 — Markers, groups & attaching
+- Markers: add at the playhead (flag button / K), name and color, drag in the ruler, jump by tapping; clips snap to them; listed in Contents
+- 📎 Attach: a clip on an upper or audio track moves along with the main-track clip below it
+- Group / Ungroup (G): grouped clips are selected and moved together; tap again to pick one
+- Frame snapshot: camera button in the preview saves the current frame as PNG in the video's size
+- Contents: everything under the playhead is framed while the list is open
+- Metadata: camera settings of photos (ISO, focal length, exposure bias, aperture, exposure time, lens); ⓘ in the export window lists exactly what goes into the video
+- Fixed: the "Close Videcutto?" question didn't appear in the installed app (history entries were added without a tap and got skipped)
+
 ### 0.11.4 — 2026-11-07 — Batch convert
 - Menu → Batch convert…: many videos with the same settings (max. resolution, quality, fps, codec, sound, metadata), each keeps its own format; automatic names or naming patterns; keep the original if the result would be bigger; download each, one ZIP, or save into a folder (desktop Chrome/Edge)
 - Contents: tapping a file folds out where each of its clips is used (start, track, effects, sound) — tap one to jump there; folded by default per project (remembered when left open)

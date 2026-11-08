@@ -687,3 +687,33 @@ body.pv-pinned:not(.wide) .ed-stage { position: sticky; top: var(--pin-top, 0px)
 .batch-list .b-bar { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--accent); width: 0; transition: width .2s; }
 .batch-list button { flex: none; width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
 .batch-modal .field label { min-width: 110px; }
+/* ---------- 0.12.0 ---------- */
+.frame-btn { position: absolute; top: 8px; right: 48px; z-index: 3; width: 32px; height: 32px; border-radius: 8px; border: 1px solid rgba(255,255,255,.25); background: rgba(0,0,0,.45); color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; opacity: .7; padding: 0; }
+.frame-btn:hover { opacity: 1; }
+.frame-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; }
+body.wide .frame-btn { right: 8px; }
+body:not(.editing) .frame-btn { display: none; }
+.info-chip { min-width: 34px; padding-left: 8px; padding-right: 8px; }
+.info-chip.on { border-color: var(--accent); color: var(--accent); }
+.meta-info { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; margin-top: -4px; }
+/* What is under the playhead (Contents list) */
+#mediaList li.live { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+#mediaList .m-use.live { outline: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--surface-2)); }
+/* Markers */
+.tl-ruler .marker { position: absolute; top: 0; height: 24px; width: 18px; margin-left: -9px; cursor: pointer; z-index: 5; touch-action: none; }
+.tl-ruler .marker::before { content: ''; position: absolute; left: 4px; top: 3px; width: 10px; height: 10px; background: var(--mk); transform: rotate(45deg); border-radius: 2px; box-shadow: 0 0 0 1px rgba(0,0,0,.4); }
+.tl-ruler .marker::after { content: ''; position: absolute; left: 8.5px; top: 12px; bottom: 0; width: 1px; background: var(--mk); }
+.tl-ruler .marker span { position: absolute; left: 17px; top: 2px; font-size: 10px; font-weight: 700; color: var(--mk); white-space: nowrap; pointer-events: none; text-shadow: 0 0 3px var(--timeline-bg); }
+.mk-line { position: absolute; top: 24px; bottom: 0; width: 0; border-left: 1px dashed var(--mk); opacity: .55; pointer-events: none; z-index: 3; }
+.mk-colors { display: flex; gap: 10px; }
+.mk-swatch { width: 30px; height: 30px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; }
+.mk-swatch.active { border-color: var(--text); box-shadow: 0 0 0 2px var(--surface); }
+.mk-time { font-weight: 500; color: var(--text-secondary); font-size: 14px; margin-left: 6px; }
+#mediaList .m-thumb.mk-th { background: var(--surface-2); position: relative; }
+#mediaList .m-thumb.mk-th::before { content: ''; position: absolute; left: 50%; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px; background: var(--mk); transform: rotate(45deg); border-radius: 2px; }
+#mediaList .m-edit { margin-left: auto; flex: none; width: 34px; height: 34px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
+/* Attached (📎) and grouped clips */
+.clip.attached::before { content: '📎'; position: absolute; right: 3px; top: 2px; font-size: 10px; z-index: 3; pointer-events: none; }
+.clip.grouped, .clip.grouped.selected { border-bottom: 3px solid #b57bff; }
+.attach-info { margin-top: -4px; }
+#attachRow[hidden] + .attach-info { display: none; }
