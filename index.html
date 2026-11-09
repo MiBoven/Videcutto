@@ -104,11 +104,11 @@
       <video id="vidB" playsinline preload="auto" muted></video>
       <!-- The canvas shows the composition; the videos underneath only supply frames and sound. -->
       <canvas id="pvCanvas"></canvas>
-      <div class="frame-menu" id="frameMenu" hidden><button type="button" data-how="copy" id="frameCopy">Copy to clipboard</button><button type="button" data-how="file" id="frameFile">Save as file</button><button type="button" data-how="share" id="frameShare">Share…</button></div>
-      <button type="button" class="pv-btn frame-btn" id="frameBtn" title="Snapshot of this frame (in the size of the created video)" aria-label="Snapshot"><svg viewBox="0 0 24 24"><path d="M4 8h3l2-2.5h6L17 8h3v11H4z"/><circle cx="12" cy="13.5" r="3.5"/></svg></button>
-      <button type="button" class="pin-btn" id="pinBtn" title="Pin the preview (stays at the top while scrolling)" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M9 3h6l-1 6 4 4H6l4-4z"/><path d="M12 13v8"/></svg></button>
       <div class="preview-empty" id="previewEmpty" hidden>Timeline is empty — add a video, an image or a color clip</div>
     </div>
+    <div class="frame-menu" id="frameMenu" hidden><button type="button" data-how="copy" id="frameCopy">Copy to clipboard</button><button type="button" data-how="file" id="frameFile">Save as file</button><button type="button" data-how="share" id="frameShare">Share…</button></div>
+    <button type="button" class="pv-btn frame-btn" id="frameBtn" title="Snapshot of this frame (in the size of the created video)" aria-label="Snapshot"><svg viewBox="0 0 24 24"><path d="M4 8h3l2-2.5h6L17 8h3v11H4z"/><circle cx="12" cy="13.5" r="3.5"/></svg></button>
+    <button type="button" class="pin-btn" id="pinBtn" title="Pin the preview (stays at the top while scrolling)" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M9 3h6l-1 6 4 4H6l4-4z"/><path d="M12 13v8"/></svg></button>
   </div>
 
   <div class="transport">
@@ -629,16 +629,28 @@
       <div class="field-col">
         <div class="name-row">
           <div class="input-unit"><input type="text" id="fileNameInput" autocomplete="off" spellcheck="false" maxlength="160"><span>.mp4</span></div>
-          <select id="fileNameSel" class="name-sel" aria-label="Name options" title="Name options: automatic, original, add resolution/quality/fps …, placeholders"></select>
+          <button type="button" class="btn-chip info-chip" id="nameMoreBtn" title="Name options: automatic, original, tags to add, placeholders" aria-expanded="false" aria-controls="nameBox">▾</button>
         </div>
         <div class="name-preview" id="fileNamePreview" hidden></div>
       </div>
     </div>
-    <div class="field">
-      <label for="metaBtn">Metadata</label>
-      <div class="meta-row"><span id="metaSummary" class="meta-sum">…</span><button type="button" class="btn-chip info-chip" id="metaInfoBtn" title="Show exactly what goes into the video" aria-label="Metadata details">ⓘ</button><button type="button" class="btn-chip" id="metaBtn">Change…</button></div>
+    <div class="x-box" id="nameBox" hidden>
+      <span class="mini-label">Name</span>
+      <div class="chips" id="nameChips"></div>
+      <span class="mini-label">Add to the name</span>
+      <div class="chips" id="tagChips"></div>
+      <button type="button" class="link-btn" id="namePhBtn">Placeholders: * # $Y $M $D $h $m $s $R $P $Q $F $B …</button>
     </div>
-    <dl class="meta-list meta-info" id="metaInfo" hidden></dl>
+    <div class="field">
+      <label for="metaInfoBtn">Metadata</label>
+      <div class="meta-row"><span id="metaSummary" class="meta-sum">…</span><button type="button" class="btn-chip info-chip" id="metaInfoBtn" title="Metadata: what goes into the video and where it comes from" aria-expanded="false" aria-controls="metaInfo">ⓘ</button></div>
+    </div>
+    <div class="x-box" id="metaInfo" hidden>
+      <div class="field stack"><label for="metaQuick">Comes from</label><select id="metaQuick"></select></div>
+      <dl class="meta-list" id="metaInfoList"></dl>
+      <label class="check-row"><input type="checkbox" id="metaLocQuick" checked> Include the place (GPS location)</label>
+      <button type="button" class="btn-chip" id="metaBtn">Edit own values…</button>
+    </div>
     <div class="segment small scope" id="scopeToggle">
       <button type="button" class="seg-btn active" data-scope="all">Whole timeline</button>
       <button type="button" class="seg-btn" data-scope="selected">Selected clip only</button>
@@ -843,8 +855,10 @@
     <p class="hint" id="metaEmpty" hidden></p>
     <button type="button" class="btn-chip" id="metaEditBtn">Edit as own values…</button>
     <div id="metaCustom" class="meta-custom" hidden>
+      <div class="field stack" id="metaFillRow"><label for="metaFillSel">Fill from a file</label><select id="metaFillSel"></select></div>
       <div class="field stack"><label for="metaDate">Recorded</label><div class="name-row"><input type="datetime-local" id="metaDate" step="1"><button type="button" class="btn-chip" id="metaNow">Now</button></div></div>
-      <div class="field stack"><label for="metaLat">Place (latitude, longitude)</label><div class="name-row"><input type="number" id="metaLat" step="any" min="-90" max="90" placeholder="38.7223" aria-label="Latitude"><input type="number" id="metaLon" step="any" min="-180" max="180" placeholder="-9.1393" aria-label="Longitude"><button type="button" class="btn-chip" id="metaHere" title="Use my current location">📍 Here</button></div></div>
+      <div class="field stack"><label for="metaLat">Place (latitude, longitude)</label><div class="name-row"><input type="number" id="metaLat" step="any" min="-90" max="90" placeholder="38.7223" aria-label="Latitude"><input type="number" id="metaLon" step="any" min="-180" max="180" placeholder="-9.1393" aria-label="Longitude"><button type="button" class="btn-chip" id="metaHere" title="Use my current location">📍 Here</button><button type="button" class="btn-chip" id="metaThere" title="Paste a map link or coordinates">🗺 There</button></div></div>
+      <div class="field stack" id="metaThereRow" hidden><label for="metaThereInput">Paste a Google Maps / OpenStreetMap link or coordinates</label><div class="name-row"><input type="text" id="metaThereInput" placeholder="e.g. 37.0889, -8.2278 or a maps link" autocomplete="off"><button type="button" class="btn-chip" id="metaThereOk">Use</button></div></div>
       <div class="field stack"><label for="meta_title">Title</label><input type="text" id="meta_title" maxlength="200"></div>
       <div class="field stack"><label for="meta_description">Description</label><input type="text" id="meta_description" maxlength="500"></div>
       <div class="field stack"><label for="meta_author">Author</label><input type="text" id="meta_author" maxlength="200"></div>

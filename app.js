@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.12.1';
+  const VERSION = '0.12.2';
   const $ = (id) => document.getElementById(id);
 
   // ---------------------------------------------------------------------------
@@ -4485,7 +4485,7 @@
         held = true;
         if (dir > 0) play();
         else rep = setInterval(() => { if (playhead <= 0.001) { stop(); return; } seek(Math.max(0, playhead - 0.1)); }, 100);
-      }, 450);
+      }, 1000);
     });
     ['pointerup', 'pointerleave', 'pointercancel'].forEach((ev) => btn.addEventListener(ev, stop));
     btn.addEventListener('click', (e) => { if (e.detail === 0) frameStep(dir); }); // keyboard
@@ -5183,10 +5183,14 @@
         const thr = 10 * dpr;
         const g = layoutFor(c, W, H, { ...Render.tfOf(c.tf), dx, dy });
         const guides = { x: [], y: [] };
+        // The element's centre and edges snap to the canvas edges and centre line
+        // (centre on a corner works by snapping both directions).
         const snap1 = (pos, half, size) => {
-          const cands = [[pos - size / 2, size / 2], [pos - half, 0], [pos + half - size, size]];
           let best = null;
-          for (const [diff, line] of cands) if (Math.abs(diff) < thr && (!best || Math.abs(diff) < Math.abs(best[0]))) best = [diff, line];
+          for (const off of [0, -half, half]) for (const line of [0, size / 2, size]) {
+            const diff = pos + off - line;
+            if (Math.abs(diff) < thr && (!best || Math.abs(diff) < Math.abs(best[0]))) best = [diff, line];
+          }
           return best;
         };
         const sx = snap1(g.cx, g.bbW / 2, W);
@@ -5409,40 +5413,41 @@
     $('fileNamePreview').textContent = '→ ' + (cleanFileName(expandName(cleanPattern(v))) || 'video') + '.mp4';
   });
   // The ▾ menu next to the name: whole names, parts to add, placeholders.
+  // The ▾ box next to the name: whole names, tags to add, placeholders.
   function fillNameOptions() {
-    const sel = $('fileNameSel');
+    if ($('nameBox').hidden) return;
     const i = nameInfo();
-    const opt = (v, label) => Object.assign(document.createElement('option'), { value: v, textContent: label });
-    const grp = (label, opts) => { const g = document.createElement('optgroup'); g.label = label; g.append(...opts); return g; };
+    const chip = (v, label, title, active) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'btn-chip' + (active ? ' active' : ''); b.dataset.v = v; b.textContent = label; b.title = title || label; return b; };
     const orig = i.src ? cleanFileName(baseName(i.src.name)) : null;
-    const names = [opt('auto', `Automatic · ${autoName()}`)];
-    if (orig) names.push(opt('name:' + orig, `Original name · ${orig}`));
-    names.push(opt('name:' + (orig || projectBase()) + '_videcutto', `${orig || projectBase()}_videcutto`));
-    if (!orig || orig !== projectBase()) names.push(opt('name:' + projectBase(), `Project name · ${projectBase()}`));
+    const cur = rawName();
+    const names = [chip('auto', 'Automatic', autoName(), !exportName)];
+    if (orig) names.push(chip('name:' + orig, 'Original', orig, !!exportName && cur === orig));
+    const vc = (orig || projectBase()) + '_videcutto';
+    names.push(chip('name:' + vc, '…_videcutto', vc, cur === vc));
+    if (!orig || orig !== projectBase()) names.push(chip('name:' + projectBase(), 'Project name', projectBase(), !!exportName && cur === projectBase()));
     const add = [i.t.res, i.t.quality, i.t.fps, i.t.bitrate, i.t.dims, i.t.codec];
     const c = exportClips();
     if (i.src && c.some((x) => x.kind === 'video' && (x.in > (i.src.rangeIn || 0) + 0.05 || x.out < (i.src.rangeOut || x.out) - 0.05))) add.push('cut');
     if (c.some((x) => x.tf && x.tf.crop && (x.tf.crop.w < 0.999 || x.tf.crop.h < 0.999))) add.push('crop');
     if (muteAll || (c.length && c.filter(isSoundClip).every((x) => x.muted))) add.push('mute');
-    sel.replaceChildren(
-      opt('', '▾'),
-      grp('Name', names),
-      grp('Add to the name', add.map((x) => opt('add:' + x, '+ _' + x))),
-      grp('Pattern', [opt('help', 'Placeholders…')]),
-    );
-    sel.value = '';
+    $('nameChips').replaceChildren(...names);
+    $('tagChips').replaceChildren(...add.map((x) => chip('add:' + x, '+ _' + x, 'Add _' + x + ' to the name', cur.split('_').includes(x))));
   }
-  $('fileNameSel').addEventListener('change', (e) => {
-    const v = e.target.value;
-    e.target.value = '';
-    if (!v) return;
-    if (v === 'help') { openModal('namePhModal'); return; }
+  function applyNameOption(v) {
     if (v === 'auto') exportName = '';
     else if (v.startsWith('name:')) exportName = v.slice(5) === autoName() ? '' : v.slice(5);
     else if (v.startsWith('add:')) exportName = rawName() + '_' + v.slice(4);
     syncFileName();
     scheduleSave();
+  }
+  $('nameBox').addEventListener('click', (e) => { const b = e.target.closest('[data-v]'); if (b) applyNameOption(b.dataset.v); });
+  $('nameMoreBtn').addEventListener('click', () => {
+    const open = $('nameBox').hidden;
+    $('nameBox').hidden = !open;
+    $('nameMoreBtn').setAttribute('aria-expanded', String(open));
+    fillNameOptions();
   });
+  $('namePhBtn').addEventListener('click', () => openModal('namePhModal'));
   $('namePhClose').addEventListener('click', () => closeModal('namePhModal'));
   $('namePhOk').addEventListener('click', () => closeModal('namePhModal'));
   $('namePhModal').addEventListener('click', (e) => { if (e.target.id === 'namePhModal') closeModal('namePhModal'); });
@@ -5518,33 +5523,41 @@
     }
     return rows;
   }
+  function metaSourceOptions(sel, withAutoName) {
+    const opt = (v, l) => Object.assign(document.createElement('option'), { value: v, textContent: l });
+    const msA = metaChoice.mode === 'auto' ? metaSource() : null;
+    const auto = withAutoName && msA && msA.src ? msA.src.name : null;
+    sel.replaceChildren(
+      opt('auto', 'Automatic · first clip with metadata' + (auto ? ` (${auto})` : '')),
+      ...metaFiles().map((x) => opt('file:' + x.id, 'File: ' + x.name)),
+      opt('custom', 'Own values (kept in this project)'),
+      opt('none', 'None — remove all'),
+    );
+    sel.value = metaChoice.mode === 'file' && sources.has(metaChoice.srcId) ? 'file:' + metaChoice.srcId : metaChoice.mode === 'file' ? 'auto' : metaChoice.mode;
+  }
   function syncMetaInfo() {
+    metaSourceOptions($('metaQuick'), true);
+    $('metaLocQuick').checked = metaChoice.loc !== false;
     const rows = metaRows(exportMeta(), true);
-    const dl = $('metaInfo');
+    const dl = $('metaInfoList');
     dl.replaceChildren(...(rows.length ? rows : [['', 'Nothing — the video gets no recording date, place or camera information.']]).flatMap(([k, v]) => [Object.assign(document.createElement('dt'), { textContent: k }), Object.assign(document.createElement('dd'), { textContent: v })]));
   }
   $('metaInfoBtn').addEventListener('click', () => {
     const show = $('metaInfo').hidden;
     $('metaInfo').hidden = !show;
-    $('metaInfoBtn').classList.toggle('on', show);
+    $('metaInfoBtn').setAttribute('aria-expanded', String(show));
     if (show) syncMetaInfo();
   });
+  $('metaQuick').addEventListener('change', (e) => setMetaSource(e.target.value));
+  $('metaLocQuick').addEventListener('change', (e) => { metaChoice.loc = e.target.checked; syncMetaUI(); scheduleSave(); });
   function syncMetaUI() {
     $('metaSummary').textContent = metaSummary();
     if (!$('metaInfo').hidden) syncMetaInfo();
     if ($('metaModal').hidden) return;
-    const sel = $('metaSel');
+    metaSourceOptions($('metaSel'), true);
     const opt = (v, l) => Object.assign(document.createElement('option'), { value: v, textContent: l });
-    const msA = metaChoice.mode === 'auto' ? metaSource() : null;
-    const auto = msA && msA.src ? msA.src.name : null;
-    const files = metaFiles();
-    sel.replaceChildren(
-      opt('auto', 'Automatic · first clip with metadata' + (auto ? ` (${auto})` : '')),
-      ...files.map((x) => opt('file:' + x.id, 'From ' + x.name)),
-      opt('custom', 'Own values…'),
-      opt('none', 'None — remove all'),
-    );
-    sel.value = metaChoice.mode === 'file' && sources.has(metaChoice.srcId) ? 'file:' + metaChoice.srcId : metaChoice.mode === 'file' ? 'auto' : metaChoice.mode;
+    $('metaFillSel').replaceChildren(opt('', 'Choose a file…'), ...metaFiles().map((x) => opt(x.id, x.name)));
+    $('metaFillRow').hidden = !metaFiles().length;
     const custom = metaChoice.mode === 'custom';
     $('metaCustom').hidden = !custom;
     $('metaLocChk').checked = metaChoice.loc !== false;
@@ -5605,18 +5618,62 @@
     syncMetaUI(); renderMediaList(); syncFileName(); scheduleSave();
   }
   $('metaUseBtn').addEventListener('click', () => { if (metaView) useMetaOf(metaView); });
-  $('metaBtn').addEventListener('click', () => openMeta());
-  $('metaSel').addEventListener('change', (e) => {
-    const v = e.target.value;
-    if (v === 'custom' && metaChoice.mode !== 'custom') {
+  $('metaBtn').addEventListener('click', () => { setMetaSource('custom'); openMeta(); });
+  // Own values stay in the project when another source is chosen in between;
+  // they are only prefilled (from the current source) the very first time.
+  function setMetaSource(v) {
+    if (v === 'custom' && metaChoice.mode !== 'custom' && !Object.keys(metaChoice.custom || {}).length) {
       const ms = metaSource();
       metaChoice.custom = ms && ms.meta ? JSON.parse(JSON.stringify(ms.meta)) : {};
     }
     if (v.startsWith('file:')) metaChoice = { ...metaChoice, mode: 'file', srcId: v.slice(5) };
     else metaChoice = { ...metaChoice, mode: v };
     syncMetaUI(); syncFileName(); renderMediaList(); scheduleSave();
+  }
+  $('metaSel').addEventListener('change', (e) => setMetaSource(e.target.value));
+  $('metaEditBtn').addEventListener('click', () => setMetaSource('custom'));
+  $('metaFillSel').addEventListener('change', (e) => {
+    const x = sources.get(e.target.value);
+    e.target.value = '';
+    if (!x || !x.fileMeta) return;
+    metaChoice.custom = JSON.parse(JSON.stringify(x.fileMeta));
+    fillMetaForm(metaChoice.custom);
+    syncMetaUI(); syncFileName(); scheduleSave();
+    toast(`Own values filled from ${x.name}.`, 2000);
   });
-  $('metaEditBtn').addEventListener('click', () => { $('metaSel').value = 'custom'; $('metaSel').dispatchEvent(new Event('change')); });
+  // "There": a pasted map link or coordinates.
+  function parseLocation(str) {
+    const t = decodeURIComponent(String(str || '')).trim();
+    const num = '(-?\\d{1,3}(?:\\.\\d+)?)';
+    const tries = [
+      new RegExp('!3d' + num + '!4d' + num),                   // google: the exact pin of a place
+      new RegExp('@' + num + ',' + num),                       // google.com/maps/@lat,lon,zoom
+      new RegExp('[?&](?:q|query|ll|center|daddr)=' + num + ',\\s*' + num),
+      new RegExp('mlat=' + num + '.*?mlon=' + num),            // openstreetmap marker
+      new RegExp('#map=\\d+/' + num + '/' + num),            // openstreetmap view
+      new RegExp('geo:' + num + ',' + num),
+      new RegExp('^' + num + '\\s*[,; ]\\s*' + num + '$'),
+    ];
+    for (const re of tries) { const m = re.exec(t); if (m) { const lat = +m[1], lon = +m[2]; if (Math.abs(lat) <= 90 && Math.abs(lon) <= 180) return { lat, lon }; } }
+    // 37°05'20"N 8°13'40"W
+    const dms = /(\d{1,3})°\s*(\d{1,2})['′]\s*([\d.]+)["″]?\s*([NS])[,\s]+(\d{1,3})°\s*(\d{1,2})['′]\s*([\d.]+)["″]?\s*([EOW])/i.exec(t);
+    if (dms) {
+      const v = (d, m2, sec, h) => (+d + m2 / 60 + sec / 3600) * (/[SW]/i.test(h) ? -1 : 1);
+      return { lat: +v(dms[1], dms[2], dms[3], dms[4]).toFixed(6), lon: +v(dms[5], dms[6], dms[7], dms[8]).toFixed(6) };
+    }
+    return null;
+  }
+  $('metaThere').addEventListener('click', () => { $('metaThereRow').hidden = !$('metaThereRow').hidden; if (!$('metaThereRow').hidden) $('metaThereInput').focus(); });
+  const useThere = () => {
+    const loc = parseLocation($('metaThereInput').value);
+    if (!loc) { toast('No coordinates found — paste a map link (Google Maps, OpenStreetMap) or e.g. 37.0889, -8.2278.', 4000); return; }
+    $('metaLat').value = loc.lat; $('metaLon').value = loc.lon;
+    $('metaThereRow').hidden = true; $('metaThereInput').value = '';
+    $('metaCustom').dispatchEvent(new Event('change'));
+    toast(`Place set to ${loc.lat.toFixed(5)}, ${loc.lon.toFixed(5)}.`, 2000);
+  };
+  $('metaThereOk').addEventListener('click', useThere);
+  $('metaThereInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); useThere(); } });
   $('metaCustom').addEventListener('change', () => { metaChoice.custom = readMetaForm(); $('metaSummary').textContent = metaSummary(); syncFileName(); scheduleSave(); });
   $('metaLocChk').addEventListener('change', (e) => { metaChoice.loc = e.target.checked; syncMetaUI(); scheduleSave(); });
   $('metaHere').addEventListener('click', () => {
@@ -6943,7 +7000,7 @@
     const meta2 = document.createElement('span');
     const bytes = Project.projectBytes(d, sizes);
     const linked = (d.media || []).filter((m) => m.storage === 'handle').length;
-    meta2.textContent = bytes ? `${fmtSize(bytes)} in browser storage${linked ? ` · ${linked} linked` : ''}` : linked ? `${linked} linked file${linked === 1 ? '' : 's'} · no extra space` : 'No stored copies';
+    meta2.textContent = bytes ? `${fmtSize(bytes)} in browser storage${linked ? ` · ${linked} linked` : ''}` : linked ? `${linked} linked file${linked === 1 ? '' : 's'} · no extra space` : 'Not stored — uses the picked file (select it again after a restart)';
     info.append(name, meta, meta2);
     if (d.id === projectId) {
       const b = document.createElement('span'); b.className = 'pc-badge'; b.textContent = 'Open in this tab'; info.append(b);

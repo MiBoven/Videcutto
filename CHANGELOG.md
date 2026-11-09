@@ -1,5 +1,14 @@
 # Changelog
 
+### 0.12.2 — 2026-11-09 — Compact export window, snapping
+- Export window: file name options and metadata in fold-out boxes (▾ / ⓘ) — the box shows where the metadata comes from and lets you switch it
+- Own metadata values stay in the project when you switch sources in between; "Fill from a file" copies a file's values on purpose
+- 🗺 There: place from a pasted map link (Google Maps, OpenStreetMap, geo:) or coordinates
+- Snapping in the preview: the centre and the edges of an element snap to the canvas edges and centre lines (centre on a corner works too)
+- Frame buttons: hold for one second before playback starts
+- Snapshot and pin buttons sit in the corners of the whole preview box
+- Projects without a working copy say "Not stored — uses the picked file (select it again after a restart)"
+
 ### 0.12.1 — 2026-11-08 — Polish
 - Frame buttons: one frame per click; hold to keep going (forward plays, backward runs back)
 - The preview loads its videos again by itself after switching apps or a long screen-off

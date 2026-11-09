@@ -728,3 +728,17 @@ body.wide .frame-btn { right: auto; }
 .frame-menu button[hidden] { display: none; }
 body:not(.editing) .frame-menu { display: none; }
 .busy-cancel { margin-top: 14px; }
+/* 0.12.2: corner buttons in the outer preview box, option boxes in the export window */
+.preview-wrap .pin-btn { top: 6px; right: 6px; }
+.preview-wrap .frame-btn { top: 6px; left: 6px; right: auto; }
+.preview-wrap .frame-menu { top: 44px; left: 6px; }
+.x-box { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin: -4px 0 12px; }
+.x-box .mini-label { display: block; margin: 2px 0 4px; }
+.x-box .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.x-box .chips .btn-chip { font-size: 12.5px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.x-box .chips .btn-chip.active { border-color: var(--accent); color: var(--accent); }
+.x-box .meta-list { margin: 8px 0; }
+.x-box .field.stack { margin-bottom: 4px; }
+.info-chip[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
+#nameMoreBtn { flex: none; }
+.x-box .chips .btn-chip.active { background: var(--surface); }
