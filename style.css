@@ -773,3 +773,9 @@ body:not(.editing) .frame-menu { display: none; }
 .cf-text { font-size: 14px; line-height: 1.5; }
 #bgColor + .hex-in { width: 78px; }
 .bg-row { flex-wrap: wrap; row-gap: 6px; }
+/* 0.13.1: eyedropper */
+.eyedrop { flex: none; width: 34px; height: 34px; margin-left: 6px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; vertical-align: middle; }
+.eyedrop svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.eyedrop.on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft, var(--surface-2)); }
+.check-row .eyedrop { width: 30px; height: 30px; }
+body.picking #pvCanvas { cursor: crosshair !important; }

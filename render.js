@@ -123,13 +123,17 @@
   // anchor: which point of the clip sits on the same point of the canvas.
   // dx, dy: extra offset as a fraction of the canvas width/height.
   // sx, sy: extra stretch of width/height (free size, 1 = none).
-  // rotFill: a rotation that isn't a multiple of 90° zooms in so that no empty
-  //   corners show — the picture keeps its frame and the edges are cut off.
+  // rotMode — how a turn that isn't a multiple of 90° behaves:
+  //   'free'  the picture keeps its size; whatever turns out of the canvas is cut off (default)
+  //   'fit'   it gets smaller so the whole turned picture stays inside the canvas (before 0.13)
+  //   'frame' it turns inside its own frame and zooms in, the corners are cut off (Crop tab)
+  //   (rotFill: true from 0.13.0 = 'frame'.)
   const DEFAULT_TF = Object.freeze({
     crop: Object.freeze({ x: 0, y: 0, w: 1, h: 1 }), cropRatio: null,
     fit: 'fit', scale: 1, anchor: 'c', dx: 0, dy: 0, rot: 0, flipH: false, flipV: false,
-    sx: 1, sy: 1, rotFill: false,
+    sx: 1, sy: 1, rotFill: false, rotMode: null,
   });
+  const rotModeOf = (t) => t.rotMode || (t.rotFill ? 'frame' : 'fit');
   const ANCHORS = { tl: [0, 0], t: [0.5, 0], tr: [1, 0], l: [0, 0.5], c: [0.5, 0.5], r: [1, 0.5], bl: [0, 1], b: [0.5, 1], br: [1, 1] };
   const tfOf = (tf) => (tf ? { ...DEFAULT_TF, ...tf, crop: { ...DEFAULT_TF.crop, ...(tf.crop || {}) } } : { ...DEFAULT_TF, crop: { ...DEFAULT_TF.crop } });
 
@@ -140,10 +144,11 @@
    */
   function clipLayout(cw, ch, W, H, tfIn) {
     const t = tfOf(tfIn);
-    // With rotFill only the 90° part turns the frame; the rest turns the picture inside it.
+    // Size and anchoring follow the 90° part only (except 'fit'); 'frame' turns the rest inside the frame.
+    const mode = rotModeOf(t);
     let outer = t.rot, fine = 0;
-    if (t.rotFill) { outer = Math.round(t.rot / 90) * 90; fine = t.rot - outer; }
-    const rad = outer * Math.PI / 180;
+    if (mode !== 'fit') { outer = Math.round(t.rot / 90) * 90; fine = t.rot - outer; }
+    let rad = outer * Math.PI / 180;
     const c = Math.abs(Math.cos(rad)), s = Math.abs(Math.sin(rad));
     const free = t.fit === 'free' || t.fit === 'abs';
     const sx = free ? t.sx || 1 : 1, sy = free ? t.sy || 1 : 1;
@@ -156,8 +161,10 @@
     const bbW = dw * c + dh * s, bbH = dw * s + dh * c;
     const [ax, ay] = ANCHORS[t.anchor] || ANCHORS.c;
     // Zoom that makes the turned picture cover its (unturned) frame.
-    const fr = fine * Math.PI / 180, fc = Math.abs(Math.cos(fr)), fs = Math.abs(Math.sin(fr));
-    const k = fine ? Math.max((dw * fc + dh * fs) / dw, (dw * fs + dh * fc) / dh) : 1;
+    let fr = fine * Math.PI / 180;
+    const fc = Math.abs(Math.cos(fr)), fs = Math.abs(Math.sin(fr));
+    let k = fine ? Math.max((dw * fc + dh * fs) / dw, (dw * fs + dh * fc) / dh) : 1;
+    if (mode === 'free') { rad += fr; fr = 0; k = 1; } // the whole frame turns, same size
     return {
       cx: ax * (W - bbW) + bbW / 2 + t.dx * W,
       cy: ay * (H - bbH) + bbH / 2 + t.dy * H,
@@ -953,6 +960,6 @@
 
   global.Render = {
     QUALITY, presetBitrate, computeOutput, estimateSize, drawClip, composite, clipAtTime, clipLayout, tfOf, DEFAULT_TF, ANCHORS, displaySize,
-    hasWebCodecs, canDecodeVideo, canDecodeAudio, canEncodeHevc, exportTimeline, audioPeaks, clipGain, pictureAlpha, animState, fxAt, animOf, clipsAtTime, TRANSITIONS,
+    hasWebCodecs, canDecodeVideo, canDecodeAudio, canEncodeHevc, exportTimeline, audioPeaks, clipGain, pictureAlpha, rotModeOf, animState, fxAt, animOf, clipsAtTime, TRANSITIONS,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

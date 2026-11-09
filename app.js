@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.13.0';
+  const VERSION = '0.13.1';
   const $ = (id) => document.getElementById(id);
 
   // ---------------------------------------------------------------------------
@@ -1538,8 +1538,49 @@
       };
       hx.addEventListener('change', apply);
       hx.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); apply(); hx.blur(); } });
+      // Eyedropper: pick a colour from the preview.
+      const ed = document.createElement('button');
+      ed.type = 'button'; ed.className = 'eyedrop'; ed.title = 'Pick a colour from the preview'; ed.setAttribute('aria-label', 'Pick a colour from the preview');
+      ed.innerHTML = '<svg viewBox="0 0 24 24"><path d="M14.5 4.5l5 5M17 7l-9.5 9.5L5 19l2.5-2.5L17 7z"/><path d="M13 6l5 5"/></svg>';
+      hx.insertAdjacentElement('afterend', ed);
+      ed.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); startPick(ci, ed); });
     });
   }
+  // Pick mode: the next tap/click on the preview takes the colour under it.
+  let pickTarget = null, pickBtn = null;
+  function startPick(input, btn) {
+    if (pickTarget === input) { stopPick(); return; }
+    stopPick();
+    if (!allClips().length) { toast('Add a clip first.'); return; }
+    pickTarget = input; pickBtn = btn;
+    btn.classList.add('on');
+    document.body.classList.add('picking');
+    renderPreview(); // without selection frame and guides
+    toast('Tap the preview to pick a colour.', 2500);
+    if (window.matchMedia('(max-width: 899px)').matches) $('previewWrap').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+  function stopPick() {
+    if (pickBtn) pickBtn.classList.remove('on');
+    pickTarget = null; pickBtn = null;
+    document.body.classList.remove('picking');
+  }
+  function initPicker() {
+  pv.addEventListener('pointerdown', (e) => {
+    if (!pickTarget) return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    const p = pvPoint(e);
+    const px = pvCtx.getImageData(clamp(Math.round(p.x), 0, pv.width - 1), clamp(Math.round(p.y), 0, pv.height - 1), 1, 1).data;
+    const hex = '#' + [px[0], px[1], px[2]].map((v) => v.toString(16).padStart(2, '0')).join('');
+    const input = pickTarget;
+    stopPick();
+    input.value = hex;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    toast(`Colour ${hex.toUpperCase()} picked.`, 1800);
+    renderPreview();
+  }, true);
+  }
+  window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && pickTarget) { stopPick(); renderPreview(); } });
   addHexFields();
 
   // ---------------------------------------------------------------------------
@@ -4750,6 +4791,7 @@
   setMediaFolded(true);
   initMediaDrop();
   initMarkerRuler();
+  initPicker();
 
   function onCanvasChange() {
     syncCanvasUI();
@@ -4864,7 +4906,19 @@
     const r = buildLayers(t, out, mode, sel);
     if (r.wait) return; // keep the last frame while a video is still seeking
     Render.composite(pvCtx, W, H, r.layers, canvasState.bg === 'blur' ? 'blur' : 'bars', bg);
-    if (mode === 'move' && r.selLayer) drawMoveOverlay(r.selLayer.clip, r.selLayer.d, W, H, dpr);
+    if (mode === 'move' && r.selLayer && !pickTarget) drawMoveOverlay(r.selLayer.clip, r.selLayer.d, W, H, dpr);
+    if ((rotGuide || rotateMode()) && !pickTarget) {
+      // Straightening grid over the whole canvas: two lines each way (thirds).
+      pvCtx.save();
+      pvCtx.strokeStyle = 'rgba(255,255,255,.6)';
+      pvCtx.lineWidth = 1 * dpr;
+      for (let k = 1; k < 3; k++) {
+        const x = Math.round(W * k / 3) + 0.5, y = Math.round(H * k / 3) + 0.5;
+        pvCtx.beginPath(); pvCtx.moveTo(x, 0); pvCtx.lineTo(x, H); pvCtx.stroke();
+        pvCtx.beginPath(); pvCtx.moveTo(0, y); pvCtx.lineTo(W, y); pvCtx.stroke();
+      }
+      pvCtx.restore();
+    }
     syncPvMode();
   }
   // Layers of all visible tracks at time t (shared by the preview and the frame snapshot).
@@ -5082,8 +5136,9 @@
     if (document.activeElement !== $('scaleRange')) $('scaleRange').value = clamp(pct, 10, 400);
     $('scaleVal').textContent = pct + '%';
     syncWheel(t.rot);
-    $('rotFillChk').checked = !!t.rotFill;
-    $('rotFillRow').hidden = c.kind === 'text';
+    const rm = c.tf && (c.tf.rotMode || c.tf.rotFill !== undefined) ? Render.rotModeOf(t) : 'free';
+    $('rotFillChk').checked = rm === 'fit';
+    $('cropFrameChk').checked = rm === 'frame';
     $('flipHBtn').classList.toggle('on', t.flipH);
     $('flipVBtn').classList.toggle('on', t.flipV);
     $('cropPresets').querySelectorAll('.btn-chip').forEach((b) => b.classList.toggle('active', b.dataset.ratio === (t.cropRatio || 'free')));
@@ -5233,7 +5288,8 @@
     ensureVisible();
     setTf(rotPatch(c, d === 0 ? 0 : Render.tfOf(c.tf).rot + d));
   });
-  $('rotFillChk').addEventListener('change', (e) => { ensureVisible(); setTf({ rotFill: e.target.checked }); });
+  $('rotFillChk').addEventListener('change', (e) => { ensureVisible(); setTf({ rotMode: e.target.checked ? 'fit' : 'free', rotFill: false }); });
+  $('cropFrameChk').addEventListener('change', (e) => { ensureVisible(); setTf({ rotMode: e.target.checked ? 'frame' : 'free', rotFill: false }); });
   $('rotReset').addEventListener('click', () => { ensureVisible(); setTf({ rot: 0, flipH: false, flipV: false, sx: 1, sy: 1 }); });
 
   // Crop presets
@@ -5286,16 +5342,6 @@
     pvCtx.strokeStyle = ACCENT;
     pvCtx.strokeRect(-g.dw / 2, -g.dh / 2, g.dw, g.dh);
     pvCtx.setLineDash([]);
-    if (rotGuide || rotateMode()) {
-      // Straightening grid (thirds strong, ninths faint) inside the frame.
-      for (let k = 1; k < 9; k++) {
-        pvCtx.strokeStyle = k % 3 ? 'rgba(255,255,255,.18)' : 'rgba(255,255,255,.55)';
-        pvCtx.lineWidth = (k % 3 ? 1 : 1.5) * dpr;
-        const x = -g.dw / 2 + g.dw * k / 9, y = -g.dh / 2 + g.dh * k / 9;
-        pvCtx.beginPath(); pvCtx.moveTo(x, -g.dh / 2); pvCtx.lineTo(x, g.dh / 2); pvCtx.stroke();
-        pvCtx.beginPath(); pvCtx.moveTo(-g.dw / 2, y); pvCtx.lineTo(g.dw / 2, y); pvCtx.stroke();
-      }
-    }
     pvCtx.fillStyle = ACCENT;
     pvCtx.beginPath();
     pvCtx.arc(0, 0, 4 * dpr, 0, Math.PI * 2);
@@ -5396,9 +5442,11 @@
   // A new rotation turns on "fill the frame" for videos and images (not for clips already turned the old way).
   function rotPatch(c, rot) {
     const p = { rot: Math.round(normAngle(rot) * 10) / 10 };
-    if (!c.tf || c.tf.rotFill === undefined) {
+    if (!c.tf || !c.tf.rotMode) {
+      // New turns keep the size ('free'); clips turned the old way keep their look.
       const t0 = Render.tfOf(c.tf);
-      p.rotFill = (c.kind === 'video' || c.kind === 'image') && Math.abs(t0.rot % 90) < 0.05;
+      p.rotMode = t0.rotFill ? 'frame' : Math.abs(t0.rot % 90) < 0.05 ? 'free' : 'fit';
+      p.rotFill = false;
     }
     return p;
   }

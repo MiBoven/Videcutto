@@ -352,6 +352,7 @@
         <button type="button" class="btn-chip" data-ratio="4:3">4:3</button>
       </div>
       <p class="hint">Drag the frame or its corners in the preview. Presets keep their aspect ratio while you resize.</p>
+      <label class="check-row"><input type="checkbox" id="cropFrameChk"> Straighten inside the frame — a turn (Rotate tab) zooms in and cuts the corners, the frame stays</label>
       <div class="btn-row">
         <button type="button" class="btn-secondary" id="cropReset">Reset crop</button>
         <button type="button" class="btn-primary" id="cropAsCanvas" title="Canvas format and resolution follow this crop">Use as canvas</button>
@@ -559,7 +560,7 @@
         <button type="button" class="btn-chip" data-rot="0.1">+0.1°</button>
         <button type="button" class="btn-chip" data-rot="1">+1°</button>
       </div>
-      <label class="check-row" id="rotFillRow"><input type="checkbox" id="rotFillChk"> Fill the frame (cut the edges)</label>
+      <label class="check-row" id="rotFillRow"><input type="checkbox" id="rotFillChk"> Keep inside the canvas (gets smaller when turned)</label>
       <button type="button" class="btn-secondary wide" id="rotReset">Reset rotation &amp; flip</button>
     </div>
   </section>
@@ -1183,7 +1184,8 @@
         <li><strong>In every tab</strong> (except Audio) a selected picture can be <strong>dragged in the preview</strong>; a tap next to it deselects it.</li>
         <li><strong>Phones:</strong> drag (after resting the finger a moment) = move, two fingers = size. <strong>Double-tap</strong> it for <em>Turn</em>: one finger turns around the centre, two fingers turn and size; double-tap again to move.</li>
         <li><strong>Mouse:</strong> drag = move · <kbd>Shift</kbd> = turn · <kbd>Ctrl</kbd> = size · <kbd>Shift</kbd>+<kbd>Ctrl</kbd> = free size (width and height apart) · <kbd>Shift</kbd>+<kbd>Ctrl</kbd>+<kbd>Alt</kbd> = crop. Turning snaps to 45° steps — hold <kbd>Alt</kbd> for free.</li>
-        <li><strong>Rotate tab:</strong> drag the wheel (0.1° steps, double-click = 0), or the ±0.1°/±1° buttons. <em>Fill the frame</em> zooms in so no empty corners show.</li>
+        <li><strong>Rotate tab:</strong> drag the wheel (0.1° steps, double-click = 0), or the ±0.1°/±1° buttons. The picture keeps its size; <em>Keep inside the canvas</em> shrinks it instead, <em>Straighten inside the frame</em> (Crop tab) zooms in and cuts the corners.</li>
+        <li>Next to every colour: a <strong>hex field</strong> and an <strong>eyedropper</strong> — tap it, then tap the preview.</li>
         <li><strong>Opacity</strong> (Clip tab) for every picture. On the main track Videcutto offers a colour clip underneath.</li>
         <li>Optional snapping to centre and edges (Position tab) — hold <strong>Alt</strong> to move freely.</li>
         <li>Each drag or slider move is <strong>one undo step</strong>.</li>

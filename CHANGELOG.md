@@ -1,5 +1,11 @@
 # Changelog
 
+### 0.13.1 — 2026-11-09 — Turning keeps the size, eyedropper
+- Turning keeps the picture's size; parts that turn out of the canvas are cut off (new default)
+- Rotate tab: "Keep inside the canvas" makes it smaller instead; Crop tab: "Straighten inside the frame" zooms in and cuts the corners
+- Turning grid over the whole canvas with two lines each way
+- Eyedropper next to every colour field: pick a colour from the preview
+
 ### 0.13.0 — 2026-11-09 — Edit in the preview
 - Selected pictures can be moved in the preview from every tab; a tap next to it deselects
 - Touch: moving starts after a short rest (taps don't shift it), two fingers size; double-tap switches to Turn (one finger turns, two fingers turn and size)
