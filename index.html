@@ -104,6 +104,7 @@
       <video id="vidB" playsinline preload="auto" muted></video>
       <!-- The canvas shows the composition; the videos underneath only supply frames and sound. -->
       <canvas id="pvCanvas"></canvas>
+      <div class="pv-mode" id="pvMode" hidden></div>
       <div class="preview-empty" id="previewEmpty" hidden>Timeline is empty — add a video, an image or a color clip</div>
     </div>
     <div class="frame-menu" id="frameMenu" hidden><button type="button" data-how="copy" id="frameCopy">Copy to clipboard</button><button type="button" data-how="file" id="frameFile">Save as file</button><button type="button" data-how="share" id="frameShare">Share…</button></div>
@@ -297,6 +298,13 @@
         <button type="button" class="btn-chip" data-nudge="0.1" title="0.1 s later (Alt + →)">+0.1</button>
         <button type="button" class="btn-chip" data-nudge="1" title="1 second later">+1 s</button>
       </div>
+      <div id="opRow" hidden>
+        <span class="mini-label">Opacity</span>
+        <div class="range-row">
+          <input type="range" id="opRange" min="0" max="100" step="1" value="100" aria-label="Opacity">
+          <span class="range-val" id="opVal">100%</span>
+        </div>
+      </div>
       <label class="check-row" id="attachRow" hidden><input type="checkbox" id="attachChk"> 📎 Attach to the main-track clip below</label>
       <p class="hint attach-info" id="attachInfo"></p>
       <p class="hint" id="cpMagHint" hidden>On the magnetic main track the order decides where a clip starts. Release the magnet in the main track's settings to place clips freely.</p>
@@ -387,7 +395,7 @@
         <span class="range-val" id="scaleVal">100%</span>
       </div>
       <label class="check-row"><input type="checkbox" id="snapChk"> Snap to center and edges <span class="hint-inline">(hold Alt to move freely)</span></label>
-      <p class="hint">Drag the clip in the preview to move it, pinch or scroll to resize. Parts outside the canvas are cut off.</p>
+      <p class="hint">Drag the clip in the preview to move it, pinch or scroll to resize (mouse: Shift = turn, Ctrl = size, Shift+Ctrl = free size). Parts outside the canvas are cut off.</p>
     </div>
 
     <!-- Rotate & flip -->
@@ -539,11 +547,19 @@
         <button class="tool" id="flipHBtn" title="Flip horizontally"><svg viewBox="0 0 24 24"><path d="M12 3v18"/><path d="M8 7L3 12l5 5zM16 7l5 5-5 5z"/></svg><span>Flip ↔</span></button>
         <button class="tool" id="flipVBtn" title="Flip vertically"><svg viewBox="0 0 24 24"><path d="M3 12h18"/><path d="M7 8l5-5 5 5zM7 16l5 5 5-5z"/></svg><span>Flip ↕</span></button>
       </div>
-      <span class="mini-label">Angle</span>
-      <div class="range-row">
-        <input type="range" id="rotRange" min="-180" max="180" step="1" value="0" aria-label="Angle">
-        <span class="range-val" id="rotVal">0°</span>
+      <div class="rot-head"><span class="mini-label">Straighten</span><span class="rot-val" id="rotVal">0.0°</span></div>
+      <div class="rot-wheel" id="rotWheel" tabindex="0" role="slider" aria-label="Angle (drag, arrow keys: 0.1°, Page Up/Down: 1°, double-click: 0)" aria-valuemin="-180" aria-valuemax="180" aria-valuenow="0">
+        <div class="rw-tape" id="rwTape"></div>
+        <div class="rw-mark"></div>
       </div>
+      <div class="rot-fine">
+        <button type="button" class="btn-chip" data-rot="-1">−1°</button>
+        <button type="button" class="btn-chip" data-rot="-0.1">−0.1°</button>
+        <button type="button" class="btn-chip" data-rot="0">0°</button>
+        <button type="button" class="btn-chip" data-rot="0.1">+0.1°</button>
+        <button type="button" class="btn-chip" data-rot="1">+1°</button>
+      </div>
+      <label class="check-row" id="rotFillRow"><input type="checkbox" id="rotFillChk"> Fill the frame (cut the edges)</label>
       <button type="button" class="btn-secondary wide" id="rotReset">Reset rotation &amp; flip</button>
     </div>
   </section>
@@ -821,6 +837,17 @@
     <div class="exit-actions">
       <button type="button" class="btn-secondary" id="mkDelete">Delete</button>
       <button type="button" class="btn-primary" id="mkJump">Jump here</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="confirmModal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="cfTitle">
+    <div class="modal-head"><h2 id="cfTitle">Are you sure?</h2></div>
+    <p class="hint cf-text" id="cfText"></p>
+    <div class="exit-actions">
+      <button type="button" class="btn-secondary" id="cfNo">Cancel</button>
+      <button type="button" class="btn-primary" id="cfYes">OK</button>
     </div>
   </div>
 </div>
@@ -1153,8 +1180,12 @@
       <ul>
         <li>Select a clip and open a tab — the playhead jumps into the clip and you edit <strong>directly in the preview</strong>.</li>
         <li><strong>Crop:</strong> drag the frame or its corners. <em>Use as canvas</em> makes the crop the video format — with <em>Selected clip only</em> you save just that section.</li>
-        <li><strong>Position:</strong> drag the picture (also beyond the edges), use the 3×3 grid or the arrow pad. It snaps to centre and edges — hold <strong>Alt</strong> to move freely.</li>
-        <li><strong>Size:</strong> Fit, Fill or Free — pinch or scroll the mouse wheel over the preview.</li>
+        <li><strong>In every tab</strong> (except Audio) a selected picture can be <strong>dragged in the preview</strong>; a tap next to it deselects it.</li>
+        <li><strong>Phones:</strong> drag (after resting the finger a moment) = move, two fingers = size. <strong>Double-tap</strong> it for <em>Turn</em>: one finger turns around the centre, two fingers turn and size; double-tap again to move.</li>
+        <li><strong>Mouse:</strong> drag = move · <kbd>Shift</kbd> = turn · <kbd>Ctrl</kbd> = size · <kbd>Shift</kbd>+<kbd>Ctrl</kbd> = free size (width and height apart) · <kbd>Shift</kbd>+<kbd>Ctrl</kbd>+<kbd>Alt</kbd> = crop. Turning snaps to 45° steps — hold <kbd>Alt</kbd> for free.</li>
+        <li><strong>Rotate tab:</strong> drag the wheel (0.1° steps, double-click = 0), or the ±0.1°/±1° buttons. <em>Fill the frame</em> zooms in so no empty corners show.</li>
+        <li><strong>Opacity</strong> (Clip tab) for every picture. On the main track Videcutto offers a colour clip underneath.</li>
+        <li>Optional snapping to centre and edges (Position tab) — hold <strong>Alt</strong> to move freely.</li>
         <li>Each drag or slider move is <strong>one undo step</strong>.</li>
       </ul>
     </details>

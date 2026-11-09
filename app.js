@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.12.2';
+  const VERSION = '0.13.0';
   const $ = (id) => document.getElementById(id);
 
   // ---------------------------------------------------------------------------
@@ -1447,6 +1447,125 @@
   window.addEventListener('pointercancel', (e) => { if (mkDrag && e.pointerId === mkDrag.pid) { mkDrag = null; renderTimeline(); } });
   }
 
+  // ---------------------------------------------------------------------------
+  // Opacity of single clips (0–100 %). A see-through clip on the main track
+  // shows the background — or, if wanted, a colour clip on a new main track.
+  // ---------------------------------------------------------------------------
+  const opTargets = () => (multi() ? selFinds() : [findClip(selectedId)].filter(Boolean)).filter((f) => f.clip.kind !== 'audio');
+  function syncOpacityUI() {
+    const list = opTargets();
+    // Texts have their own Opacity slider in the Text tab.
+    $('opRow').hidden = !list.length || list.every((f) => f.clip.kind === 'text');
+    if (!list.length) return;
+    const v = Math.round((list[0].clip.opacity == null ? 1 : list[0].clip.opacity) * 100);
+    if (document.activeElement !== $('opRange')) $('opRange').value = v;
+    $('opVal').textContent = v + '%';
+  }
+  let opBefore = null;
+  $('opRange').addEventListener('input', (e) => {
+    const list = opTargets();
+    if (!list.length) return;
+    if (!opBefore) opBefore = snapshot();
+    const v = clamp(Number(e.target.value) / 100, 0, 1);
+    for (const f of list) { if (v >= 0.999) delete f.clip.opacity; else f.clip.opacity = v; }
+    $('opVal').textContent = Math.round(v * 100) + '%';
+    renderPreview();
+  });
+  $('opRange').addEventListener('change', async () => {
+    if (!opBefore) return;
+    pushUndo(opBefore);
+    opBefore = null;
+    renderClips(); scheduleSave(); updateToolbar();
+    const onMain = opTargets().some((f) => f.tr.main && f.clip.opacity != null && f.clip.opacity < 1);
+    const hasBase = tracks[0].clips.length === 1 && tracks[0].clips[0].kind === 'color' && tracks[0].clips[0].baseColor;
+    if (onMain && !hasBase && !projectFlags.noBaseAsk) {
+      const yes = await askConfirm('See-through on the main track', 'Move all tracks up one and put a colour clip (the canvas background colour, as long as the project) on a new main track? Otherwise the background simply shows through.', 'Yes, add it', 'No');
+      if (yes) addBaseColorTrack(); else { projectFlags.noBaseAsk = true; scheduleSave(); }
+    }
+  });
+  let projectFlags = {};
+  function addBaseColorTrack() {
+    commit(() => {
+      const old = tracks[0];
+      const nm = newTrack(true);
+      if (old.markers) { nm.markers = old.markers; delete old.markers; }
+      old.main = false; // keeps its magnet
+      nm.clips.push({ id: newId(), kind: 'color', srcId: null, in: 0, out: Math.max(0.1, +totalDuration().toFixed(3)), muted: false, color: canvasState.bgColor || DEFAULT_COLOR, size: 'canvas', w: 1920, h: 1080, baseColor: true });
+      setTracks([nm, ...tracks]);
+    });
+    toast('A colour clip now lies under everything — change its colour in its Clip tab.', 3500);
+  }
+  // A small yes/no window (resolves true/false).
+  function askConfirm(title, text, yes = 'OK', no = 'Cancel') {
+    return new Promise((res) => {
+      $('cfTitle').textContent = title;
+      $('cfText').textContent = text;
+      $('cfYes').textContent = yes;
+      $('cfNo').textContent = no;
+      const done = (v) => { closeModal('confirmModal'); $('cfYes').onclick = $('cfNo').onclick = null; res(v); };
+      $('cfYes').onclick = () => done(true);
+      $('cfNo').onclick = () => done(false);
+      openModal('confirmModal');
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Colour fields: a hex code box next to every colour picker (both directions).
+  // ---------------------------------------------------------------------------
+  function addHexFields() {
+    const desc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+    document.querySelectorAll('input[type="color"]').forEach((ci) => {
+      const hx = document.createElement('input');
+      hx.type = 'text'; hx.className = 'hex-in'; hx.maxLength = 7; hx.spellcheck = false; hx.autocomplete = 'off';
+      hx.setAttribute('aria-label', (ci.title || ci.id) + ' (hex)');
+      hx.value = ci.value.toUpperCase();
+      ci.insertAdjacentElement('afterend', hx);
+      // Code that sets the picker's value also updates the box.
+      Object.defineProperty(ci, 'value', {
+        get() { return desc.get.call(this); },
+        set(v) { desc.set.call(this, v); if (document.activeElement !== hx) hx.value = desc.get.call(this).toUpperCase(); },
+      });
+      ci.addEventListener('input', () => { hx.value = ci.value.toUpperCase(); });
+      const apply = () => {
+        let v = hx.value.trim().replace(/^#?/, '#');
+        if (/^#[0-9a-f]{3}$/i.test(v)) v = '#' + v.slice(1).split('').map((ch) => ch + ch).join('');
+        if (!/^#[0-9a-f]{6}$/i.test(v)) { hx.value = ci.value.toUpperCase(); return; }
+        hx.value = v.toUpperCase();
+        if (v.toLowerCase() === ci.value.toLowerCase()) return;
+        desc.set.call(ci, v.toLowerCase());
+        ci.dispatchEvent(new Event('input', { bubbles: true }));
+        ci.dispatchEvent(new Event('change', { bubbles: true }));
+      };
+      hx.addEventListener('change', apply);
+      hx.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); apply(); hx.blur(); } });
+    });
+  }
+  addHexFields();
+
+  // ---------------------------------------------------------------------------
+  // Deleting from the Contents list (one clip, a transition or an index point).
+  // ---------------------------------------------------------------------------
+  async function deleteFromContents(kind, id, trackId) {
+    if (kind === 'marker') { commit(() => { tracks[0].markers = markersOf().filter((m) => m.id !== id); if (!tracks[0].markers.length) delete tracks[0].markers; }); return; }
+    if (kind === 'trans') {
+      const cut = cutAt(trackId, id);
+      if (cut) { commit(() => removeTransition(cut)); if (selTrans) clearSelection(); }
+      return;
+    }
+    const f = findClip(id);
+    if (!f) return;
+    const c = f.clip;
+    const links = [];
+    if (c.group && allClips().some((x) => x !== c && x.group === c.group)) links.push('it belongs to a group (only this clip is deleted)');
+    const i = f.tr.clips.indexOf(c);
+    if (c.tIn && i > 0) links.push('the transition into it is removed');
+    if (f.tr.clips[i + 1] && f.tr.clips[i + 1].tIn) links.push('the transition after it is removed');
+    if (f.tr.main) { const n = allClips().filter((x) => x.attach === c.id).length; if (n) links.push(`${n} attached clip${n === 1 ? ' stays' : 's stay'} where ${n === 1 ? 'it is' : 'they are'}`); }
+    if (links.length && !(await askConfirm('Delete this clip?', 'It is linked: ' + links.join('; ') + '.', 'Delete', 'Cancel'))) return;
+    selectJust(c.id);
+    deleteSelected();
+  }
+
   function deleteSelected() {
     const list = selFinds();
     if (!list.length) { toast('Select a clip first.'); return; }
@@ -1602,8 +1721,9 @@
     const src = srcOf(c);
     panel.hidden = false;
     panel.classList.toggle('multi', multi());
-    if (multi()) { updateMultiPanel(); syncAttachUI(selFinds()); updateTrackPanel(); return; }
+    if (multi()) { updateMultiPanel(); syncAttachUI(selFinds()); syncOpacityUI(); updateTrackPanel(); return; }
     syncAttachUI([findClip(c.id)].filter(Boolean));
+    syncOpacityUI();
     $('cpStartField').hidden = false;
     $('cpKind').textContent = { video: 'Video', image: 'Image', color: 'Color clip', text: 'Text', audio: src && src.kind === 'video' ? 'Audio of video' : 'Audio' }[c.kind] || '';
     $('cpTitle').textContent = src ? src.name : c.kind === 'text' ? `${fontName(textOf(c).font)} · “${textOf(c).content.split('\n')[0].slice(0, 30)}”` : `${(c.color || DEFAULT_COLOR).toUpperCase()} · ${c.size === 'canvas' ? 'canvas size' : `${c.w}×${c.h}`}`;
@@ -2449,7 +2569,7 @@
     return { texts: texts.sort(byStart), colors: colors.sort(byStart), cuts: cuts.sort(byStart) };
   }
   const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
-  function contentRow(kind, thumb, name, meta, data) {
+  function contentRow(kind, thumb, name, meta, data, delTitle) {
     const li = document.createElement('li');
     li.className = 'm-item-' + kind;
     Object.assign(li.dataset, data);
@@ -2463,6 +2583,7 @@
     mt.textContent = meta;
     info.append(nm, mt);
     li.append(thumb, info);
+    if (delTitle) { const d = document.createElement('button'); d.type = 'button'; d.className = 'm-del'; d.textContent = '✕'; d.title = delTitle; d.dataset.act = 'del'; li.append(d); }
     li.title = 'Select it and jump there';
     return li;
   }
@@ -2538,6 +2659,9 @@
           const a = document.createElement('div');
           a.className = 'm-use-a';
           a.textContent = `${k + 1}. ${fmtTime(c.start, false)}–${fmtTime(clipEnd(c), false)} · ${trackLabel(tr)}`;
+          const del = document.createElement('button');
+          del.type = 'button'; del.className = 'm-del'; del.textContent = '✕'; del.title = 'Delete this clip'; del.dataset.act = 'del-clip';
+          row.append(del);
           const b = document.createElement('div');
           b.className = 'm-use-b';
           b.textContent = useTags(tr, c, i).join(' · ');
@@ -2566,7 +2690,7 @@
         const lum = hx.length >= 6 ? (0.299 * parseInt(hx.slice(0, 2), 16) + 0.587 * parseInt(hx.slice(2, 4), 16) + 0.114 * parseInt(hx.slice(4, 6), 16)) : 255;
         if (lum < 90) th.classList.add('light');
         const first = String(t.content || '').split('\n').find((l) => l.trim()) || '(empty)';
-        const row = contentRow('text', th, first, `Text · ${spanOf(c)}`, { clip: c.id });
+        const row = contentRow('text', th, first, `Text · ${spanOf(c)}`, { clip: c.id }, 'Delete this text');
         row.querySelector('.m-name').style.fontFamily = familyCss(t.font);
         groups.push(row);
       }
@@ -2577,7 +2701,7 @@
         const th = document.createElement('div');
         th.className = 'm-thumb';
         th.style.background = c.color || DEFAULT_COLOR;
-        groups.push(contentRow('color', th, String(c.color || DEFAULT_COLOR).toUpperCase(), `Color · ${spanOf(c)}`, { clip: c.id }));
+        groups.push(contentRow('color', th, String(c.color || DEFAULT_COLOR).toUpperCase(), `Color · ${spanOf(c)}`, { clip: c.id }, 'Delete this color clip'));
       }
     }
     if (ci.cuts.length) {
@@ -2587,7 +2711,7 @@
         th.className = 'm-thumb trans-th';
         th.textContent = '⧓';
         const dir = (TRANS_DIRS[c.tIn.type] || []).length ? ` · ${c.tIn.dir}` : '';
-        groups.push(contentRow('trans', th, (TRANS_NAMES[c.tIn.type] || c.tIn.type) + dir, `at ${fmtTime(c.start, false)} · ${c.tIn.dur.toFixed(1)} s${tr.main ? '' : ' · upper track'}`, { cutTrack: tr.id, cutClip: c.id }));
+        groups.push(contentRow('trans', th, (TRANS_NAMES[c.tIn.type] || c.tIn.type) + dir, `at ${fmtTime(c.start, false)} · ${c.tIn.dur.toFixed(1)} s${tr.main ? '' : ' · upper track'}`, { cutTrack: tr.id, cutClip: c.id }, 'Remove this transition'));
       }
     }
     if (markersOf().length) {
@@ -2596,7 +2720,7 @@
         const th = document.createElement('div');
         th.className = 'm-thumb mk-th';
         th.style.setProperty('--mk', m.color || MARKER_COLORS[0]);
-        const row = contentRow('marker', th, m.label || `Index ${k + 1}`, `at ${fmtTime(m.t)}`, { marker: m.id });
+        const row = contentRow('marker', th, m.label || `Index ${k + 1}`, `at ${fmtTime(m.t)}`, { marker: m.id }, 'Delete this index point');
         const ed = document.createElement('button');
         ed.type = 'button'; ed.className = 'm-edit'; ed.textContent = '✎'; ed.title = 'Name, color, delete'; ed.dataset.act = 'marker-edit';
         row.append(ed);
@@ -2643,6 +2767,15 @@
   $('mediaList').addEventListener('click', async (e) => {
     const li = e.target.closest('li');
     if (!li || li.classList.contains('m-group')) return;
+    const del = e.target.closest('[data-act="del"], [data-act="del-clip"]');
+    if (del) {
+      e.stopPropagation();
+      if (del.dataset.act === 'del-clip') deleteFromContents('clip', del.closest('.m-use').dataset.use);
+      else if (li.dataset.marker) deleteFromContents('marker', li.dataset.marker);
+      else if (li.dataset.cutClip) deleteFromContents('trans', li.dataset.cutClip, li.dataset.cutTrack);
+      else if (li.dataset.clip) deleteFromContents('clip', li.dataset.clip);
+      return;
+    }
     if (li.dataset.marker) {
       if (e.target.closest('[data-act="marker-edit"]')) openMarker(li.dataset.marker);
       else { const m = markersOf().find((x) => x.id === li.dataset.marker); if (m) { pause(); seek(m.t); } }
@@ -2939,7 +3072,7 @@
     $('tpOpacityVal').textContent = Math.round(tr.opacity * 100) + '%';
     if (document.activeElement !== $('tpVolume')) $('tpVolume').value = Math.round(tr.volume * 100);
     $('tpVolumeVal').textContent = Math.round(tr.volume * 100) + '%';
-    $('tpMagneticRow').hidden = !tr.main;
+    $('tpMagneticRow').hidden = isAudioTrack(tr);
     $('tpMagnetic').checked = !!tr.magnetic;
     $('tpOpacityRow').hidden = isAudioTrack(tr);
     const fa = firstAudioIndex();
@@ -4732,6 +4865,7 @@
     if (r.wait) return; // keep the last frame while a video is still seeking
     Render.composite(pvCtx, W, H, r.layers, canvasState.bg === 'blur' ? 'blur' : 'bars', bg);
     if (mode === 'move' && r.selLayer) drawMoveOverlay(r.selLayer.clip, r.selLayer.d, W, H, dpr);
+    syncPvMode();
   }
   // Layers of all visible tracks at time t (shared by the preview and the frame snapshot).
   function buildLayers(t, out, mode, sel) {
@@ -4748,9 +4882,11 @@
         if (!d) { if (playableVideo(c) && elOf(c.id)) wait = true; return null; }
         if (sel && c.id === sel.id) selLayer = { clip: c, d };
         // While moving/sizing the selected clip it is shown without its animation.
-        const st = mode === 'move' && sel && c.id === sel.id ? { alpha: 1, fx: null, units: null } : Render.animState(c, t - c.start);
+        // While the selected clip is moved, sized or turned it is shown without its animation.
+        const still = sel && c.id === sel.id && (gesture || cpTab === 'position' || cpTab === 'rotate' || cpTab === 'crop');
+        const st = still ? { alpha: 1, fx: null, units: null } : Render.animState(c, t - c.start);
         const drawable = st.units && c.kind === 'text' ? renderTextCanvas(c, out.w, out.h, st.units).canvas : d.drawable;
-        return { drawable, w: d.w, h: d.h, rot: 0, tf: d.tf || c.tf, opacity: tr.opacity, isMain: ti === 0, isColor: d.isColor, alpha: st.alpha, fx: st.fx };
+        return { drawable, w: d.w, h: d.h, rot: 0, tf: d.tf || c.tf, opacity: tr.opacity, isMain: ti === 0, isColor: d.isColor, alpha: st.alpha * (c.opacity == null ? 1 : c.opacity), fx: st.fx };
       };
       const b = cs[cs.length - 1];
       if (cs.length > 1 && b.tIn) {
@@ -4828,13 +4964,26 @@
   const ACCENT = '#4f8cff';
 
   // The preview is interactive only while a transform tab is open and the selected clip is the visible one.
+  // A selected picture can be moved/sized/turned in the preview from any tab
+  // (except Audio); Crop tab — or Shift+Ctrl+Alt on a desktop — shows the crop frame.
   function editMode() {
     const f = findClip(selectedId);
-    if (!f || cpTab === 'clip' || cpTab === 'audio' || cpTab === 'fade' || playing || f.tr.hidden || f.clip.kind === 'audio') return null;
+    if (!f || cpTab === 'audio' || playing || f.tr.hidden || f.clip.kind === 'audio') return null;
     const c = f.clip;
     const t = viewTime();
     if (t < c.start - 1e-6 || t >= clipEnd(c) - 1e-6) return null;
-    if (cpTab === 'crop') return c.kind === 'color' ? null : 'crop';
+    const wantCrop = cpTab === 'crop' || modKind() === 'crop';
+    if (wantCrop && c.kind !== 'color' && c.kind !== 'text') return 'crop';
+    return 'move';
+  }
+  // Desktop: held keys pick what a drag in the preview does.
+  const heldKeys = { shift: false, ctrl: false, alt: false };
+  function modKind() {
+    const { shift, ctrl, alt } = heldKeys;
+    if (shift && ctrl && alt) return 'crop';
+    if (shift && ctrl) return 'stretch';
+    if (shift) return 'rotate';
+    if (ctrl) return 'scale';
     return 'move';
   }
 
@@ -4932,8 +5081,9 @@
     const pct = Math.round(effectiveScale(c) * 100);
     if (document.activeElement !== $('scaleRange')) $('scaleRange').value = clamp(pct, 10, 400);
     $('scaleVal').textContent = pct + '%';
-    if (document.activeElement !== $('rotRange')) $('rotRange').value = Math.round(t.rot);
-    $('rotVal').textContent = Math.round(t.rot) + '°';
+    syncWheel(t.rot);
+    $('rotFillChk').checked = !!t.rotFill;
+    $('rotFillRow').hidden = c.kind === 'text';
     $('flipHBtn').classList.toggle('on', t.flipH);
     $('flipVBtn').classList.toggle('on', t.flipV);
     $('cropPresets').querySelectorAll('.btn-chip').forEach((b) => b.classList.toggle('active', b.dataset.ratio === (t.cropRatio || 'free')));
@@ -5006,14 +5156,85 @@
   $('rotRightBtn').addEventListener('click', () => { const c = tfRef(); if (!c) return; ensureVisible(); setTf({ rot: normAngle(Render.tfOf(c.tf).rot + 90) }); });
   $('flipHBtn').addEventListener('click', () => { const c = tfRef(); if (!c) return; ensureVisible(); setTf({ flipH: !Render.tfOf(c.tf).flipH }); });
   $('flipVBtn').addEventListener('click', () => { const c = tfRef(); if (!c) return; ensureVisible(); setTf({ flipV: !Render.tfOf(c.tf).flipV }); });
-  $('rotRange').addEventListener('input', (e) => {
+  // Endless wheel: 1 px of drag = 0.1°, a tick every degree; flicks keep turning a little.
+  const PX_PER_DEG = 10;
+  function syncWheel(a) {
+    const x = ($('rotWheel').clientWidth || 300) / 2 - a * PX_PER_DEG;
+    $('rwTape').style.backgroundPositionX = `${(x - 1).toFixed(1)}px, ${(x - 0.5).toFixed(1)}px`;
+    $('rotVal').textContent = (a < 0 ? '−' : '') + Math.abs(a).toFixed(1) + '°';
+    $('rotWheel').setAttribute('aria-valuenow', a.toFixed(1));
+  }
+  function turnTo(a, guide = true) {
+    const c = tfRef();
+    if (!c) return;
     ensureVisible();
-    let a = Number(e.target.value);
-    if (Math.abs(a) < 2) a = 0; // easy to get back to straight
-    liveEdit({ rot: a });
+    rotGuide = guide;
+    liveEdit(rotPatch(c, a));
+  }
+  let wheelDrag = null, wheelFling = 0, rotCommitT = 0;
+  const wheelDone = () => { rotGuide = false; liveCommit(); renderPreview(); };
+  $('rotWheel').addEventListener('pointerdown', (e) => {
+    const c = tfRef();
+    if (!c) return;
+    cancelAnimationFrame(wheelFling);
+    wheelDrag = { x0: e.clientX, a0: Render.tfOf(c.tf).rot, last: e.clientX, lt: performance.now(), v: 0 };
+    $('rotWheel').setPointerCapture(e.pointerId);
+    e.preventDefault();
   });
-  $('rotRange').addEventListener('change', liveCommit);
-  $('rotReset').addEventListener('click', () => { ensureVisible(); setTf({ rot: 0, flipH: false, flipV: false }); });
+  $('rotWheel').addEventListener('pointermove', (e) => {
+    if (!wheelDrag) return;
+    const now = performance.now();
+    wheelDrag.v = (e.clientX - wheelDrag.last) / Math.max(1, now - wheelDrag.lt);
+    wheelDrag.last = e.clientX; wheelDrag.lt = now;
+    let a = wheelDrag.a0 - (e.clientX - wheelDrag.x0) / PX_PER_DEG;
+    if (Math.abs(a) < 0.25) a = 0; // easy to get back to straight
+    turnTo(a);
+  });
+  const wheelUp = () => {
+    if (!wheelDrag) return;
+    let v = wheelDrag.v; // px per ms
+    wheelDrag = null;
+    if (Math.abs(v) < 0.3) { wheelDone(); return; }
+    let prev = performance.now();
+    const step = (now) => {
+      const dt = now - prev; prev = now;
+      v *= Math.pow(0.994, dt);
+      const c = tfRef();
+      if (!c || Math.abs(v) < 0.02) { wheelDone(); return; }
+      turnTo(Render.tfOf(c.tf).rot - (v * dt) / PX_PER_DEG);
+      wheelFling = requestAnimationFrame(step);
+    };
+    wheelFling = requestAnimationFrame(step);
+  };
+  $('rotWheel').addEventListener('pointerup', wheelUp);
+  $('rotWheel').addEventListener('pointercancel', wheelUp);
+  $('rotWheel').addEventListener('dblclick', () => { turnTo(0, false); wheelDone(); });
+  $('rotWheel').addEventListener('wheel', (e) => {
+    const c = tfRef();
+    if (!c) return;
+    e.preventDefault();
+    turnTo(Render.tfOf(c.tf).rot + (e.deltaY > 0 ? 1 : -1) * (e.shiftKey ? 1 : 0.1));
+    clearTimeout(rotCommitT); rotCommitT = setTimeout(wheelDone, 400);
+  }, { passive: false });
+  $('rotWheel').addEventListener('keydown', (e) => {
+    const c = tfRef();
+    if (!c) return;
+    const d = { ArrowLeft: -0.1, ArrowDown: -0.1, ArrowRight: 0.1, ArrowUp: 0.1, PageDown: -1, PageUp: 1 }[e.key];
+    if (d == null && e.key !== 'Home') return;
+    e.preventDefault(); e.stopPropagation();
+    turnTo(e.key === 'Home' ? 0 : Render.tfOf(c.tf).rot + d);
+    clearTimeout(rotCommitT); rotCommitT = setTimeout(wheelDone, 500);
+  });
+  document.querySelector('.rot-fine').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-rot]');
+    const c = tfRef();
+    if (!b || !c) return;
+    const d = Number(b.dataset.rot);
+    ensureVisible();
+    setTf(rotPatch(c, d === 0 ? 0 : Render.tfOf(c.tf).rot + d));
+  });
+  $('rotFillChk').addEventListener('change', (e) => { ensureVisible(); setTf({ rotFill: e.target.checked }); });
+  $('rotReset').addEventListener('click', () => { ensureVisible(); setTf({ rot: 0, flipH: false, flipV: false, sx: 1, sy: 1 }); });
 
   // Crop presets
   const RATIOS = { '16:9': 16 / 9, '9:16': 9 / 16, '1:1': 1, '4:5': 4 / 5, '4:3': 4 / 3 };
@@ -5065,6 +5286,16 @@
     pvCtx.strokeStyle = ACCENT;
     pvCtx.strokeRect(-g.dw / 2, -g.dh / 2, g.dw, g.dh);
     pvCtx.setLineDash([]);
+    if (rotGuide || rotateMode()) {
+      // Straightening grid (thirds strong, ninths faint) inside the frame.
+      for (let k = 1; k < 9; k++) {
+        pvCtx.strokeStyle = k % 3 ? 'rgba(255,255,255,.18)' : 'rgba(255,255,255,.55)';
+        pvCtx.lineWidth = (k % 3 ? 1 : 1.5) * dpr;
+        const x = -g.dw / 2 + g.dw * k / 9, y = -g.dh / 2 + g.dh * k / 9;
+        pvCtx.beginPath(); pvCtx.moveTo(x, -g.dh / 2); pvCtx.lineTo(x, g.dh / 2); pvCtx.stroke();
+        pvCtx.beginPath(); pvCtx.moveTo(-g.dw / 2, y); pvCtx.lineTo(g.dw / 2, y); pvCtx.stroke();
+      }
+    }
     pvCtx.fillStyle = ACCENT;
     pvCtx.beginPath();
     pvCtx.arc(0, 0, 4 * dpr, 0, Math.PI * 2);
@@ -5130,26 +5361,84 @@
   }
 
   // --- Preview gestures -----------------------------------------------------
+  // Touch: drag = move (starts after the finger rested 150 ms, so taps and
+  // double taps don't shift it), two fingers = size; a double tap on the
+  // element switches to turning (one finger turns around the centre, two
+  // fingers turn and size) and back. A tap next to the element deselects it.
+  // Mouse: drag = move, Shift = turn, Ctrl = size, Shift+Ctrl = free size
+  // (width and height apart), Shift+Ctrl+Alt = crop.
   const pointers = new Map();
   let gesture = null;
+  let touchRotateId = null; // clip in "turn" mode (touch)
+  let rotGuide = false;     // grid while turning
+  let tapInfo = null, lastTap = null;
   function pvPoint(e) {
     const r = pv.getBoundingClientRect();
     return { x: (e.clientX - r.left) * pv.width / r.width, y: (e.clientY - r.top) * pv.height / r.height };
   }
   const pdist = () => { const [a, b] = [...pointers.values()]; return Math.hypot(a.x - b.x, a.y - b.y) || 1; };
+  const pangle = () => { const [a, b] = [...pointers.values()]; return Math.atan2(b.y - a.y, b.x - a.x); };
+  const DEG = 180 / Math.PI;
+  // The element's frame in preview pixels, and whether point p is on it.
+  function selGeom() { const c = tfRef(); return c ? layoutFor(c, pv.width, pv.height) : null; }
+  function localPt(g, p) {
+    const dx = p.x - g.cx, dy = p.y - g.cy, a = -g.rad;
+    return { x: dx * Math.cos(a) - dy * Math.sin(a), y: dx * Math.sin(a) + dy * Math.cos(a) };
+  }
+  function onSelection(p) {
+    const g = selGeom();
+    if (!g) return false;
+    const l = localPt(g, p);
+    const pad = 12 * Math.min(2, window.devicePixelRatio || 1);
+    return Math.abs(l.x) <= g.dw / 2 + pad && Math.abs(l.y) <= g.dh / 2 + pad;
+  }
+  const rotateMode = () => touchRotateId && touchRotateId === selectedId;
+  // A new rotation turns on "fill the frame" for videos and images (not for clips already turned the old way).
+  function rotPatch(c, rot) {
+    const p = { rot: Math.round(normAngle(rot) * 10) / 10 };
+    if (!c.tf || c.tf.rotFill === undefined) {
+      const t0 = Render.tfOf(c.tf);
+      p.rotFill = (c.kind === 'video' || c.kind === 'image') && Math.abs(t0.rot % 90) < 0.05;
+    }
+    return p;
+  }
+  const snapAngle = (a, free) => { if (free) return a; const n = Math.round(a / 45) * 45; return Math.abs(a - n) < 1.5 ? n : a; };
+  function syncPvMode() {
+    const el = $('pvMode');
+    const mode = editMode();
+    let txt = '';
+    if (mode && rotateMode()) txt = 'Turn — double-tap to move';
+    else if (mode && !isCoarse) txt = { rotate: 'Turn', scale: 'Size', stretch: 'Free size', crop: 'Crop', move: '' }[modKind()];
+    el.textContent = txt;
+    el.hidden = !txt;
+    pv.style.cursor = !mode ? '' : mode === 'crop' ? 'crosshair' : { rotate: 'grab', scale: 'nwse-resize', stretch: 'ew-resize', move: 'move' }[modKind()] || 'move';
+  }
 
   pv.addEventListener('pointerdown', (e) => {
+    const p = pvPoint(e);
     const mode = editMode();
+    tapInfo = { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now(), inside: !!mode && mode !== 'crop' && onSelection(p), mode };
     if (!mode) return;
     e.preventDefault();
     try { pv.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
-    const p = pvPoint(e);
     pointers.set(e.pointerId, p);
     const c = tfRef();
     const t = Render.tfOf(c.tf);
+    const mouse = e.pointerType === 'mouse';
     if (mode === 'move') {
-      if (pointers.size === 2) gesture = { type: 'pinch', d0: pdist(), s0: effectiveScale(c) };
-      else if (pointers.size === 1) gesture = { type: 'move', start: p, dx0: t.dx, dy0: t.dy };
+      const g = selGeom();
+      if (pointers.size === 2) { gesture = { type: 'pinch', d0: pdist(), a0: pangle(), s0: effectiveScale(c), r0: t.rot, turn: rotateMode() }; rotGuide = rotateMode(); return; }
+      if (pointers.size !== 1) return;
+      if (!tapInfo.inside && !mouse) { gesture = null; return; } // a tap next to it (handled on release)
+      const kind = mouse ? modKind() : rotateMode() ? 'rotate' : 'move';
+      const center = { x: g.cx, y: g.cy };
+      gesture = {
+        type: kind, start: p, center, dx0: t.dx, dy0: t.dy, r0: t.rot, s0: effectiveScale(c), sx0: t.sx || 1, sy0: t.sy || 1,
+        a0: Math.atan2(p.y - center.y, p.x - center.x), d0: Math.hypot(p.x - center.x, p.y - center.y) || 1, l0: localPt(g, p),
+        armAt: mouse ? 0 : performance.now() + 150, armed: mouse,
+      };
+      if (!tapInfo.inside && mouse && kind === 'move') gesture = null; // mouse next to the element: just a click
+      if (gesture && kind === 'rotate') rotGuide = true;
       return;
     }
     // crop
@@ -5160,8 +5449,15 @@
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     const hit = cropHandles(r, !!t.cropRatio).find((h) => Math.abs(h.x - p.x) < 18 * dpr && Math.abs(h.y - p.y) < 18 * dpr);
     const inside = p.x > r.x && p.x < r.x + r.w && p.y > r.y && p.y < r.y + r.h;
-    if (!hit && !inside) return;
-    gesture = { type: 'crop', handle: hit ? hit.k : 'move', start: p, crop0: { ...t.crop }, cg, d, ratio: t.cropRatio ? ratioValue(t.cropRatio) : null };
+    let handle = hit ? hit.k : inside ? 'move' : null;
+    if (!handle && heldKeys.shift && heldKeys.ctrl && heldKeys.alt) {
+      // Desktop crop: the nearest edge follows the mouse.
+      const dl = Math.abs(p.x - r.x), dr = Math.abs(p.x - r.x - r.w), dt = Math.abs(p.y - r.y), db = Math.abs(p.y - r.y - r.h);
+      const m = Math.min(dl, dr, dt, db);
+      handle = m === dl ? 'w' : m === dr ? 'e' : m === dt ? 'n' : 's';
+    }
+    if (!handle) return;
+    gesture = { type: 'crop', handle, start: p, crop0: { ...t.crop }, cg, d, ratio: t.cropRatio ? ratioValue(t.cropRatio) : null };
   });
 
   pv.addEventListener('pointermove', (e) => {
@@ -5173,8 +5469,21 @@
     if (!c) return;
     const W = pv.width, H = pv.height;
     if (gesture.type === 'pinch' && pointers.size === 2) {
-      liveEdit({ fit: 'free', scale: clamp(gesture.s0 * pdist() / gesture.d0, 0.05, 10) });
-    } else if (gesture.type === 'move' && pointers.size === 1) {
+      const patch = { fit: 'free', scale: clamp(gesture.s0 * pdist() / gesture.d0, 0.05, 10) };
+      if (gesture.turn) Object.assign(patch, rotPatch(c, snapAngle(gesture.r0 + (pangle() - gesture.a0) * DEG, e.altKey)));
+      liveEdit(patch);
+      return;
+    }
+    if (pointers.size !== 1 || gesture.type === 'pinch') return;
+    if (!gesture.armed) {
+      // Touch: wait 150 ms before moving, then start from where the finger is now.
+      if (performance.now() < gesture.armAt) return;
+      gesture.armed = true;
+      gesture.start = p;
+      gesture.a0 = Math.atan2(p.y - gesture.center.y, p.x - gesture.center.x);
+      return;
+    }
+    if (gesture.type === 'move') {
       let dx = gesture.dx0 + (p.x - gesture.start.x) / W;
       let dy = gesture.dy0 + (p.y - gesture.start.y) / H;
       snapGuides = null;
@@ -5200,6 +5509,20 @@
         if (guides.x.length || guides.y.length) snapGuides = guides;
       }
       liveEdit({ dx, dy });
+    } else if (gesture.type === 'rotate') {
+      const a = Math.atan2(p.y - gesture.center.y, p.x - gesture.center.x);
+      liveEdit(rotPatch(c, snapAngle(gesture.r0 + (a - gesture.a0) * DEG, e.altKey)));
+    } else if (gesture.type === 'scale') {
+      const d = Math.hypot(p.x - gesture.center.x, p.y - gesture.center.y);
+      liveEdit({ fit: 'free', scale: clamp(gesture.s0 * d / gesture.d0, 0.05, 10) });
+    } else if (gesture.type === 'stretch') {
+      const g = layoutFor(c, W, H);
+      const l = localPt(g, p), l0 = gesture.l0;
+      const patch = { fit: 'free' };
+      if (c.kind !== 'text' && Render.tfOf(c.tf).fit !== 'free') patch.scale = gesture.s0;
+      if (Math.abs(l0.x) > 8) patch.sx = clamp(gesture.sx0 * Math.abs(l.x) / Math.abs(l0.x), 0.05, 20);
+      if (Math.abs(l0.y) > 8) patch.sy = clamp(gesture.sy0 * Math.abs(l.y) / Math.abs(l0.y), 0.05, 20);
+      liveEdit(patch);
     } else if (gesture.type === 'crop') {
       const { cg, crop0, d } = gesture;
       const du = (p.x - gesture.start.x) / cg.fw;
@@ -5234,30 +5557,71 @@
   });
 
   function endGesture(e) {
+    // Taps: next to the element → deselect (or leave turn mode); double tap on it → turn mode.
+    if (tapInfo && tapInfo.id === e.pointerId && e.type === 'pointerup') {
+      const moved = Math.hypot(e.clientX - tapInfo.x, e.clientY - tapInfo.y);
+      const quick = performance.now() - tapInfo.t < 450;
+      if (moved < 8 && quick && pointers.size <= 1) {
+        if (!tapInfo.inside && tapInfo.mode !== 'crop' && selectedId && !playing) {
+          if (rotateMode()) { touchRotateId = null; syncPvMode(); renderPreview(); }
+          else { clearSelection(); }
+          lastTap = null;
+        } else if (tapInfo.inside) {
+          const now = performance.now();
+          if (lastTap && now - lastTap.t < 320 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 30) {
+            touchRotateId = rotateMode() ? null : selectedId;
+            if (touchRotateId && !store.get('turnTip', false)) { store.set('turnTip', true); toast('Turn mode: one finger turns around the centre, two fingers turn and size. Double-tap again to move.', 4000); }
+            lastTap = null;
+            syncPvMode(); renderPreview();
+          } else lastTap = { t: now, x: e.clientX, y: e.clientY };
+        }
+      }
+      tapInfo = null;
+    }
     if (!pointers.has(e.pointerId)) return;
     pointers.delete(e.pointerId);
     if (pointers.size === 1 && gesture && gesture.type === 'pinch') {
-      // Continue as a move with the remaining finger.
+      // Continue with the remaining finger (move, or turn in turn mode).
       const [p] = pointers.values();
-      const t = Render.tfOf((tfRef() || {}).tf);
-      gesture = { type: 'move', start: p, dx0: t.dx, dy0: t.dy };
+      const c = tfRef();
+      const t = Render.tfOf((c || {}).tf);
+      const g = selGeom();
+      const center = g ? { x: g.cx, y: g.cy } : p;
+      gesture = { type: rotateMode() ? 'rotate' : 'move', start: p, center, dx0: t.dx, dy0: t.dy, r0: t.rot, a0: Math.atan2(p.y - center.y, p.x - center.x), armed: true };
       return;
     }
     if (pointers.size) return;
     gesture = null;
     snapGuides = null;
+    rotGuide = false;
     liveCommit();
     renderPreview();
   }
   pv.addEventListener('pointerup', endGesture);
   pv.addEventListener('pointercancel', endGesture);
+  pv.addEventListener('dblclick', (e) => e.preventDefault());
+
+  // Held keys (desktop): show what a drag will do; Shift+Ctrl+Alt shows the crop frame.
+  function setHeld(e, down) {
+    const k = e.key;
+    if (k !== 'Shift' && k !== 'Control' && k !== 'Alt') return;
+    const before = modKind();
+    if (k === 'Shift') heldKeys.shift = down;
+    if (k === 'Control') heldKeys.ctrl = down;
+    if (k === 'Alt') { heldKeys.alt = down; if (editMode()) e.preventDefault(); }
+    if (modKind() !== before) { syncPvMode(); if (before === 'crop' || modKind() === 'crop') renderPreview(); }
+  }
+  window.addEventListener('keydown', (e) => setHeld(e, true));
+  window.addEventListener('keyup', (e) => setHeld(e, false));
+  window.addEventListener('blur', () => { heldKeys.shift = heldKeys.ctrl = heldKeys.alt = false; syncPvMode(); });
 
   let wheelTimer = 0;
   pv.addEventListener('wheel', (e) => {
     if (editMode() !== 'move') return;
     e.preventDefault();
     const c = tfRef();
-    liveEdit({ fit: 'free', scale: clamp(effectiveScale(c) * Math.exp(-e.deltaY * 0.0015), 0.05, 10) });
+    if (e.shiftKey) liveEdit(rotPatch(c, Render.tfOf(c.tf).rot + (e.deltaY > 0 ? 1 : -1) * (e.altKey ? 0.1 : 1)));
+    else liveEdit({ fit: 'free', scale: clamp(effectiveScale(c) * Math.exp(-e.deltaY * 0.0015), 0.05, 10) });
     clearTimeout(wheelTimer);
     wheelTimer = setTimeout(liveCommit, 400);
   }, { passive: false });
@@ -5902,7 +6266,7 @@
     const s = getExportSettings();
     // Clip times are in media time; the export reads the actual (possibly trimmed-copy) file.
     const scopeSelected = exportState.scope === 'selected';
-    const sound = (c) => ({ volume: c.volume == null ? 1 : c.volume, fadeIn: c.fadeIn || 0, fadeOut: c.fadeOut || 0, vFadeIn: c.vFadeIn || 0, vFadeOut: c.vFadeOut || 0, animIn: c.animIn, animOut: c.animOut });
+    const sound = (c) => ({ volume: c.volume == null ? 1 : c.volume, fadeIn: c.fadeIn || 0, fadeOut: c.fadeOut || 0, vFadeIn: c.vFadeIn || 0, vFadeOut: c.vFadeOut || 0, animIn: c.animIn, animOut: c.animOut, opacity: c.opacity });
     const expClip = (c, start, tr) => {
       const e = expClip0(c, start);
       if (tr && c.tIn) e.tIn = { ...c.tIn };
@@ -5915,7 +6279,7 @@
       if (c.kind === 'audio') { const src = srcOf(c); const b = src.base || 0; return { kind: 'audio', source: src, start, in: c.in - b, out: c.out - b, muted: c.muted, ...sound(c) }; }
       const still = stillFor(c, s.width, s.height);
       if (still && c.kind === 'text') still.frameAt = (u) => renderTextCanvas(c, s.width, s.height, u).canvas;
-      return { kind: c.kind, source: srcOf(c) || null, start, in: c.in, out: c.out, muted: true, still, tf: (still && still.tf) || c.tf, vFadeIn: c.vFadeIn || 0, vFadeOut: c.vFadeOut || 0, animIn: c.animIn, animOut: c.animOut };
+      return { kind: c.kind, source: srcOf(c) || null, start, in: c.in, out: c.out, muted: true, still, tf: (still && still.tf) || c.tf, vFadeIn: c.vFadeIn || 0, vFadeOut: c.vFadeOut || 0, animIn: c.animIn, animOut: c.animOut, opacity: c.opacity };
     };
     const sel = selClip();
     const expTracks = scopeSelected && sel
@@ -6389,6 +6753,7 @@
       exportName,
       metaChoice,
       contentsOpen,
+      projectFlags,
       // Undo/redo survive a reload (as many steps as set in Settings).
       undo: undoStack.slice(-settings.undoSteps),
       redo: redoStack.slice(-settings.undoSteps),
@@ -6535,7 +6900,7 @@
 
   function resetState() {
     setTracks([newTrack(true)]);
-    exportName = ''; exportDone = false; metaChoice = defaultMetaChoice();
+    exportName = ''; exportDone = false; metaChoice = defaultMetaChoice(); projectFlags = {};
     openUses.clear(); setMediaFolded(true);
     $('resultBox').hidden = true;
     $('exportModal').hidden = true;
@@ -6688,6 +7053,7 @@
     clipboard = null; selectedId = null; selectedTrackId = null;
     exportName = cleanPattern(p.exportName || '');
     metaChoice = Object.assign(defaultMetaChoice(), p.metaChoice || {});
+    projectFlags = { ...(p.projectFlags || {}) };
     setMediaFolded(!p.contentsOpen);
     muteAll = !!p.muteAll;
     $('muteAllBtn').setAttribute('aria-pressed', String(muteAll));

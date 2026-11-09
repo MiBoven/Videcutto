@@ -1,5 +1,15 @@
 # Changelog
 
+### 0.13.0 — 2026-11-09 — Edit in the preview
+- Selected pictures can be moved in the preview from every tab; a tap next to it deselects
+- Touch: moving starts after a short rest (taps don't shift it), two fingers size; double-tap switches to Turn (one finger turns, two fingers turn and size)
+- Mouse: Shift = turn, Ctrl = size, Shift+Ctrl = free size (width and height apart), Shift+Ctrl+Alt = crop
+- Rotate tab: straightening wheel with 0.1° steps, ±0.1°/±1° buttons, grid while turning, "Fill the frame (cut the edges)"
+- Opacity for every picture; a see-through main-track clip can get a colour clip on a new main track
+- Hex code fields next to all colour pickers
+- Contents: ✕ deletes single clips, texts, colour clips, transitions and index points (with a question when linked)
+- The magnet can be switched for every visual track
+
 ### 0.12.2 — 2026-11-09 — Compact export window, snapping
 - Export window: file name options and metadata in fold-out boxes (▾ / ⓘ) — the box shows where the metadata comes from and lets you switch it
 - Own metadata values stay in the project when you switch sources in between; "Fill from a file" copies a file's values on purpose

@@ -742,3 +742,34 @@ body:not(.editing) .frame-menu { display: none; }
 .info-chip[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
 #nameMoreBtn { flex: none; }
 .x-box .chips .btn-chip.active { background: var(--surface); }
+/* 0.13.0: straighten wheel, preview mode label */
+.rot-head { display: flex; align-items: baseline; justify-content: space-between; margin-top: 4px; }
+.rot-val { font-weight: 700; font-variant-numeric: tabular-nums; font-size: 15px; }
+.rot-wheel { position: relative; height: 46px; margin: 6px 0 8px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--border); overflow: hidden; cursor: ew-resize; touch-action: none; user-select: none; }
+.rot-wheel:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.rw-tape { position: absolute; inset: 0;
+  background-image:
+    linear-gradient(to right, var(--text) 2px, transparent 2px),
+    linear-gradient(to right, var(--text-secondary) 1px, transparent 1px);
+  background-size: 100px 22px, 10px 12px;
+  background-repeat: repeat-x;
+  background-position-y: 12px, 17px;
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 25%, #000 75%, transparent);
+  mask-image: linear-gradient(to right, transparent, #000 25%, #000 75%, transparent);
+}
+.rw-mark { position: absolute; left: 50%; top: 4px; bottom: 4px; width: 3px; margin-left: -1.5px; border-radius: 2px; background: #f2b233; }
+.rot-fine { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; margin-bottom: 6px; }
+.rot-fine .btn-chip { min-width: 52px; }
+.pv-mode { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 4; padding: 4px 10px; border-radius: 999px; background: rgba(0,0,0,.6); color: #fff; font-size: 12px; font-weight: 700; pointer-events: none; white-space: nowrap; }
+/* Hex fields, Contents delete buttons, confirm */
+.hex-in { width: 86px; flex: none; background: var(--surface-2); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 8px; font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; margin-left: 6px; }
+.check-row .hex-in { padding: 5px 6px; width: 78px; }
+#mediaList .m-del { flex: none; width: 30px; height: 30px; margin-left: 6px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text-secondary); cursor: pointer; font-size: 13px; }
+#mediaList .m-del:hover { color: var(--danger, #e5534b); border-color: var(--danger, #e5534b); }
+#mediaList .m-use { display: grid; grid-template-columns: 1fr auto; column-gap: 6px; }
+#mediaList .m-use .m-del { grid-row: 1 / span 2; grid-column: 2; align-self: center; }
+#mediaList .m-edit + .m-del, #mediaList li > .m-del { margin-left: 6px; }
+#mediaList li[data-clip] .m-del, #mediaList li[data-cut-clip] .m-del { margin-left: auto; }
+.cf-text { font-size: 14px; line-height: 1.5; }
+#bgColor + .hex-in { width: 78px; }
+.bg-row { flex-wrap: wrap; row-gap: 6px; }

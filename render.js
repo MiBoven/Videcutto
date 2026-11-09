@@ -122,9 +122,13 @@
   // fit: 'fit' (whole clip visible) | 'fill' (canvas covered) | 'free' (scale × fit size).
   // anchor: which point of the clip sits on the same point of the canvas.
   // dx, dy: extra offset as a fraction of the canvas width/height.
+  // sx, sy: extra stretch of width/height (free size, 1 = none).
+  // rotFill: a rotation that isn't a multiple of 90° zooms in so that no empty
+  //   corners show — the picture keeps its frame and the edges are cut off.
   const DEFAULT_TF = Object.freeze({
     crop: Object.freeze({ x: 0, y: 0, w: 1, h: 1 }), cropRatio: null,
     fit: 'fit', scale: 1, anchor: 'c', dx: 0, dy: 0, rot: 0, flipH: false, flipV: false,
+    sx: 1, sy: 1, rotFill: false,
   });
   const ANCHORS = { tl: [0, 0], t: [0.5, 0], tr: [1, 0], l: [0, 0.5], c: [0.5, 0.5], r: [1, 0.5], bl: [0, 1], b: [0.5, 1], br: [1, 1] };
   const tfOf = (tf) => (tf ? { ...DEFAULT_TF, ...tf, crop: { ...DEFAULT_TF.crop, ...(tf.crop || {}) } } : { ...DEFAULT_TF, crop: { ...DEFAULT_TF.crop } });
@@ -136,19 +140,28 @@
    */
   function clipLayout(cw, ch, W, H, tfIn) {
     const t = tfOf(tfIn);
-    const rad = t.rot * Math.PI / 180;
+    // With rotFill only the 90° part turns the frame; the rest turns the picture inside it.
+    let outer = t.rot, fine = 0;
+    if (t.rotFill) { outer = Math.round(t.rot / 90) * 90; fine = t.rot - outer; }
+    const rad = outer * Math.PI / 180;
     const c = Math.abs(Math.cos(rad)), s = Math.abs(Math.sin(rad));
+    const free = t.fit === 'free' || t.fit === 'abs';
+    const sx = free ? t.sx || 1 : 1, sy = free ? t.sy || 1 : 1;
     const bw0 = cw * c + ch * s, bh0 = cw * s + ch * c;
     const fitS = Math.min(W / bw0, H / bh0);
     const fillS = Math.max(W / bw0, H / bh0);
     // 'abs': the picture already has its size for an output width of absW (text).
     const sc = t.fit === 'abs' ? (W / (t.absW || W)) * t.scale : t.fit === 'fill' ? fillS : t.fit === 'free' ? fitS * t.scale : fitS;
-    const bbW = bw0 * sc, bbH = bh0 * sc;
+    const dw = cw * sc * sx, dh = ch * sc * sy;
+    const bbW = dw * c + dh * s, bbH = dw * s + dh * c;
     const [ax, ay] = ANCHORS[t.anchor] || ANCHORS.c;
+    // Zoom that makes the turned picture cover its (unturned) frame.
+    const fr = fine * Math.PI / 180, fc = Math.abs(Math.cos(fr)), fs = Math.abs(Math.sin(fr));
+    const k = fine ? Math.max((dw * fc + dh * fs) / dw, (dw * fs + dh * fc) / dh) : 1;
     return {
       cx: ax * (W - bbW) + bbW / 2 + t.dx * W,
       cy: ay * (H - bbH) + bbH / 2 + t.dy * H,
-      dw: cw * sc, dh: ch * sc, s: sc, bbW, bbH, fitS, fillS, rad, t,
+      dw, dh, s: sc, sx, sy, bbW, bbH, fitS, fillS, rad, fineRad: fr, k, t,
     };
   }
 
@@ -185,9 +198,11 @@
     ctx.beginPath();
     ctx.rect(-g.dw / 2, -g.dh / 2, g.dw, g.dh);
     ctx.clip();
+    if (g.fineRad) { ctx.rotate(g.fineRad); ctx.scale(g.k, g.k); } // straightened: turn inside the frame
+    if (g.sx !== 1 || g.sy !== 1) ctx.scale(g.sx, g.sy);           // free size: stretch
     // Full (uncropped) picture positioned so that the crop rect fills the clip.
     const fw = sw * g.s, fh = sh * g.s;
-    const x0 = -g.dw / 2 - t.crop.x * fw, y0 = -g.dh / 2 - t.crop.y * fh;
+    const x0 = -g.dw / g.sx / 2 - t.crop.x * fw, y0 = -g.dh / g.sy / 2 - t.crop.y * fh;
     ctx.translate(x0 + fw / 2, y0 + fh / 2);
     ctx.rotate(r * Math.PI / 180);
     ctx.imageSmoothingEnabled = true;
@@ -805,7 +820,7 @@
           const opacity = tr.opacity == null ? 1 : tr.opacity, isMain = ti === 0;
           const layerOf = async (c) => {
             const st = animState(c, t - c.start);
-            const base = { tf: c.tf, opacity, isMain, alpha: st.alpha, fx: st.fx };
+            const base = { tf: c.tf, opacity, isMain, alpha: st.alpha * (c.opacity == null ? 1 : c.opacity), fx: st.fx };
             if (c.kind === 'video') {
               let r = readers.get(c);
               if (!r) { r = new VideoReader(c); readers.set(c, r); }
