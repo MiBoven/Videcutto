@@ -1041,12 +1041,19 @@
    * starts at the keyframe before tIn, so the copy may begin slightly earlier.
    * @returns {Promise<{ base: number, duration: number }>} base = source time of the copy's t=0
    */
-  async function remuxRange(d, tIn, tOut, write, onProgress = () => {}) {
+  // opts.exactEnd: stop right after the last frame before tOut (not at the next keyframe);
+  // opts.meta: metadata for the new file (see readMeta).
+  async function remuxRange(d, tIn, tOut, write, onProgress = () => {}, opts = {}) {
     const v = d.video, a = d.audio;
     const vs = v.samples;
     const k0 = keyframeBefore(v, tIn);
     let k1 = vs.count;
-    for (let i = k0 + 1; i < vs.count; i++) if (vs.sync[i] && vs.pts[i] >= tOut) { k1 = i; break; }
+    if (opts.exactEnd) {
+      // Every frame shown before tOut, plus frames it depends on that come earlier in decode order.
+      let last = k0;
+      for (let i = k0; i < vs.count; i++) { if (vs.pts[i] < tOut - 1e-6) last = i; else if (vs.sync[i] && vs.pts[i] >= tOut) break; }
+      k1 = last + 1;
+    } else for (let i = k0 + 1; i < vs.count; i++) if (vs.sync[i] && vs.pts[i] >= tOut) { k1 = i; break; }
     let base = Infinity, end = 0;
     for (let i = k0; i < k1; i++) { base = Math.min(base, vs.pts[i]); end = Math.max(end, vs.pts[i] + vs.dur[i]); }
 
@@ -1056,7 +1063,9 @@
       audio: a ? (a.codec === 'aac' || a.codec === 'opus'
         ? { codec: a.codec, sampleRate: a.sampleRate, channels: a.channels, description: a.description }
         : { rawEntry: a.rawEntry, sampleRate: a.timescale, channels: a.channels }) : null,
+      meta: opts.meta || null,
     });
+    if (opts.exactEnd) end = Math.min(end, Math.max(tOut, base + 0.04));
     for (let i = k0; i < k1; i++) mux.addLazy('video', vs.sizes[i], vs.pts[i] - base, vs.dur[i], !!vs.sync[i], { t: 'v', i });
     if (a) {
       const as = a.samples;

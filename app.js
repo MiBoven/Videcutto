@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.13.2';
+  const VERSION = '0.14.0';
   const $ = (id) => document.getElementById(id);
 
   // ---------------------------------------------------------------------------
@@ -914,6 +914,233 @@
     onCanvasChange();
   }
   $('emptyCanvasBtn').addEventListener('click', startEmptyCanvas);
+
+  // ---------------------------------------------------------------------------
+  // Just cut it: cut the front and the end (or several parts) of a video without
+  // re-encoding — fast even for very big files. The start can only be on a
+  // keyframe; the end is exact. Metadata is kept.
+  // ---------------------------------------------------------------------------
+  const cut = { src: null, demux: null, file: null, parts: [], active: 0, raf: 0, ctl: null, busy: false };
+  const ciSnapIn = (t) => {
+    const v = cut.demux.video;
+    const k = MP4.keyframeBefore(v, t + 1e-6);
+    return Math.max(cut.src.start, v.samples.pts[k]);
+  };
+  const ciBase = () => cleanFileName(baseName(cut.file.name)) || 'video';
+  const ciName = (k) => (cut.parts.length > 1 || $('ciMulti').checked ? `${ciBase()}_cutit_part${String(k + 1).padStart(2, '0')}` : `${ciBase()}_cutit`) + '.mp4';
+  async function openCutIt(file) {
+    if (!file) {
+      const sel = await pickFiles(false);
+      file = sel[0] && sel[0].file;
+      if (!file) return;
+    }
+    if (!/^video\//.test(file.type) && !/\.(mp4|mov|m4v)$/i.test(file.name)) { toast(`"${file.name}" isn't a video (MP4/MOV).`, 4000); return; }
+    let probed;
+    showBusy('Reading video…', file.name);
+    try { probed = await probe(file); } catch (e) { hideBusy(); toast(`"${file.name}" can't be cut here: ${e && e.message ? e.message : e}`, 6000); return; } finally { hideBusy(); }
+    const v = probed.demux.video;
+    const start = Math.max(0, v.start);
+    cut.src = makeSource({ id: 'cutit', name: file.name, origSize: file.size, origLastModified: file.lastModified, start, duration: v.duration, rangeIn: start, rangeOut: v.duration }, file, probed, 0);
+    cut.demux = probed.demux;
+    cut.file = file;
+    cut.parts = [{ in: start, out: v.duration }];
+    cut.active = 0;
+    $('ciMulti').checked = false;
+    $('ciParts').hidden = true;
+    $('ciProgress').hidden = true;
+    $('ciGo').disabled = false;
+    const video = $('ciVideo');
+    video.src = cut.src.url;
+    video.currentTime = start;
+    const ds = Render.displaySize(cut.src);
+    video.parentElement.style.aspectRatio = `${ds.w} / ${ds.h}`;
+    $('ciInfo').textContent = `${file.name} · ${fmtSize(file.size)} · ${fmtTime(v.duration - start, false)} · ${ds.w}×${ds.h}`;
+    openModal('cutModal');
+    ciUpdate();
+  }
+  function ciUpdate() {
+    if (!cut.src) return;
+    const min = cut.src.start, max = cut.src.duration, full = max - min || 1;
+    const pct = (t) => ((t - min) / full) * 100;
+    const p = cut.parts[cut.active];
+    $('ciStartH').style.left = pct(p.in) + '%';
+    $('ciEndH').style.left = pct(p.out) + '%';
+    $('ciSels').replaceChildren(...cut.parts.map((q, k) => { const d = document.createElement('div'); d.className = 'range-sel' + (k === cut.active ? '' : ' other'); d.style.left = pct(q.in) + '%'; d.style.width = (pct(q.out) - pct(q.in)) + '%'; return d; }));
+    $('ciPos').style.left = pct(clamp($('ciVideo').currentTime, min, max)) + '%';
+    const share = (q) => ((q.out - q.in) / full) * cut.file.size;
+    $('ciLen').innerHTML = `<strong>${fmtTime(p.out - p.in, false)}</strong><br>${fmtTime(p.in, false)} – ${fmtTime(p.out, false)} · ~${fmtSize(share(p))}`;
+    $('ciKeyHint').textContent = p.in > min + 0.01 ? `Starts on the keyframe at ${fmtTime(p.in)} — without re-encoding a cut can only begin on a keyframe. The end is exact.` : 'The start can only be set to a keyframe (no re-encoding); the end is exact.';
+    const multi = $('ciMulti').checked;
+    if (multi) {
+      $('ciPartList').replaceChildren(...cut.parts.map((q, k) => {
+        const li = document.createElement('li');
+        li.className = k === cut.active ? 'on' : '';
+        li.dataset.k = k;
+        const sp = document.createElement('span');
+        sp.textContent = `${k + 1}. ${fmtTime(q.in, false)} – ${fmtTime(q.out, false)} (${fmtTime(q.out - q.in, false)})`;
+        li.append(sp);
+        if (cut.parts.length > 1) { const b = document.createElement('button'); b.type = 'button'; b.innerHTML = TRASH_SVG; b.title = 'Remove this part'; b.dataset.del = k; li.append(b); }
+        return li;
+      }));
+    }
+    $('ciOut').textContent = multi && cut.parts.length > 1
+      ? `→ ${cut.parts.length} files: ${ciName(0)} … ${ciName(cut.parts.length - 1)}${$('ciZip').checked ? ` in ${ciBase()}_cutit.zip` : ''}`
+      : `→ ${ciName(0)} · ~${fmtSize(share(p))}`;
+    $('ciGo').textContent = multi && cut.parts.length > 1 ? `Cut ${cut.parts.length} parts` : 'Cut it';
+  }
+  {
+    const range = $('ciRange'), video = $('ciVideo');
+    const timeFromX = (x) => { const r = range.getBoundingClientRect(); return cut.src.start + clamp((x - r.left) / r.width, 0, 1) * (cut.src.duration - cut.src.start); };
+    const seekTo = (t) => { if (video.fastSeek && Math.abs(video.currentTime - t) > 2) video.fastSeek(t); else video.currentTime = t; };
+    const stop = () => { video.pause(); cancelAnimationFrame(cut.raf); };
+    const MINLEN = 0.3;
+    const setIn = (t) => { const p = cut.parts[cut.active]; p.in = ciSnapIn(clamp(t, cut.src.start, p.out - MINLEN)); return p.in; };
+    const setOut = (t) => { const p = cut.parts[cut.active]; p.out = clamp(t, p.in + MINLEN, cut.src.duration); return p.out; };
+    const drag = (h, isStart) => h.addEventListener('pointerdown', (e) => {
+      if (cut.busy) return;
+      e.preventDefault(); e.stopPropagation();
+      h.setPointerCapture(e.pointerId);
+      stop();
+      const move = (ev) => { seekTo(isStart ? setIn(timeFromX(ev.clientX)) : setOut(timeFromX(ev.clientX))); ciUpdate(); };
+      const up = () => { h.removeEventListener('pointermove', move); h.removeEventListener('pointerup', up); h.removeEventListener('pointercancel', up); };
+      h.addEventListener('pointermove', move); h.addEventListener('pointerup', up); h.addEventListener('pointercancel', up);
+    });
+    drag($('ciStartH'), true);
+    drag($('ciEndH'), false);
+    const key = (isStart) => (e) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      e.preventDefault();
+      const p = cut.parts[cut.active];
+      const d = (e.key === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 10 : 1);
+      if (isStart) {
+        // Jump to the previous/next keyframe.
+        const v = cut.demux.video;
+        let t = p.in;
+        if (d < 0) t = ciSnapIn(p.in - 0.001); else { const k = MP4.keyframeBefore(v, p.in + 1e-6); for (let i = k + 1; i < v.samples.count; i++) if (v.samples.sync[i] && v.samples.pts[i] > p.in + 0.001) { t = v.samples.pts[i]; break; } }
+        seekTo(setIn(t));
+      } else seekTo(setOut(p.out + d));
+      ciUpdate();
+    };
+    $('ciStartH').addEventListener('keydown', key(true));
+    $('ciEndH').addEventListener('keydown', key(false));
+    range.addEventListener('pointerdown', (e) => { if (!cut.src || cut.busy) return; stop(); seekTo(timeFromX(e.clientX)); ciUpdate(); });
+    video.addEventListener('seeked', ciUpdate);
+    const loop = () => {
+      const p = cut.parts[cut.active];
+      if (video.currentTime >= p.out) { video.pause(); video.currentTime = p.out; }
+      ciUpdate();
+      if (!video.paused) cut.raf = requestAnimationFrame(loop);
+    };
+    $('ciPlayBtn').addEventListener('click', () => {
+      if (!video.paused) { stop(); return; }
+      const p = cut.parts[cut.active];
+      if (video.currentTime < p.in || video.currentTime >= p.out - 0.05) video.currentTime = p.in;
+      video.muted = false;
+      video.play().then(() => { cut.raf = requestAnimationFrame(loop); }).catch(() => {});
+    });
+    $('ciSetStart').addEventListener('click', () => { setIn(video.currentTime); ciUpdate(); });
+    $('ciSetEnd').addEventListener('click', () => { setOut(video.currentTime); ciUpdate(); });
+    $('ciMulti').addEventListener('change', (e) => {
+      $('ciParts').hidden = !e.target.checked;
+      if (!e.target.checked) { cut.parts = [cut.parts[cut.active]]; cut.active = 0; }
+      ciUpdate();
+    });
+    $('ciZip').addEventListener('change', ciUpdate);
+    $('ciAddPart').addEventListener('click', () => {
+      const t = video.currentTime;
+      const a = ciSnapIn(t);
+      cut.parts.push({ in: a, out: Math.min(cut.src.duration, Math.max(a + 1, t + 10)) });
+      cut.active = cut.parts.length - 1;
+      ciUpdate();
+    });
+    $('ciPartList').addEventListener('click', (e) => {
+      const del = e.target.closest('[data-del]');
+      if (del) { cut.parts.splice(+del.dataset.del, 1); cut.active = Math.min(cut.active, cut.parts.length - 1); ciUpdate(); return; }
+      const li = e.target.closest('li');
+      if (li) { cut.active = +li.dataset.k; seekTo(cut.parts[cut.active].in); ciUpdate(); }
+    });
+    const close = () => {
+      if (cut.busy) { if (cut.ctl) cut.ctl.abort(); return; }
+      stop();
+      video.removeAttribute('src'); video.load();
+      if (cut.src && cut.src.url) URL.revokeObjectURL(cut.src.url);
+      cut.src = cut.demux = cut.file = null;
+      closeModal('cutModal');
+    };
+    $('ciClose').addEventListener('click', close);
+    $('ciCancel').addEventListener('click', () => { if (cut.ctl) cut.ctl.abort(); });
+    $('ciGo').addEventListener('click', () => runCutIt());
+  }
+  async function runCutIt() {
+    if (cut.busy || !cut.src) return;
+    $('ciVideo').pause();
+    const parts = cut.parts.map((p) => ({ ...p }));
+    const single = parts.length === 1;
+    const zip = !single && $('ciZip').checked;
+    // Desktop, one file: write straight into a file you choose (fine for huge files).
+    let handle = null;
+    if (single && window.showSaveFilePicker) {
+      try { handle = await window.showSaveFilePicker({ suggestedName: ciName(0), types: [{ description: 'MP4 video', accept: { 'video/mp4': ['.mp4'] } }] }); } catch (e) { if (e && e.name === 'AbortError') return; handle = null; }
+    }
+    cut.busy = true;
+    cut.ctl = new AbortController();
+    const signal = cut.ctl.signal;
+    $('ciProgress').hidden = false;
+    $('ciGo').disabled = true;
+    const t0 = performance.now();
+    let lock = null;
+    try { if (navigator.wakeLock) lock = await navigator.wakeLock.request('screen'); } catch (e) { lock = null; }
+    const temps = [];
+    const outputs = [];
+    try {
+      for (let k = 0; k < parts.length; k++) {
+        const p = parts[k];
+        const name = ciName(k);
+        const prog = (f) => {
+          if (signal.aborted) throw new DOMException('Cancelled', 'AbortError');
+          $('ciFill').style.width = (((k + f) / parts.length) * 100).toFixed(1) + '%';
+          $('ciProgLabel').textContent = parts.length > 1 ? `Cutting part ${k + 1} of ${parts.length}… ${Math.floor(f * 100)} %` : `Cutting… ${Math.floor(f * 100)} %`;
+        };
+        const opts = { exactEnd: true, meta: cut.demux.meta || null };
+        if (handle) {
+          const w = await handle.createWritable();
+          try { await MP4.remuxRange(cut.demux, p.in, p.out, (u8) => w.write(u8), prog, opts); await w.close(); } catch (e) { try { await w.abort(); } catch (er) { /* ignore */ } throw e; }
+          const f = await handle.getFile();
+          outputs.push({ name: handle.name, size: f.size, saved: true });
+        } else if (Project.canCopy()) {
+          const tmp = `cutit-${Date.now().toString(36)}-${k}.mp4`;
+          const f = await Project.writeCopy(tmp, (write) => MP4.remuxRange(cut.demux, p.in, p.out, write, prog, opts));
+          temps.push(tmp);
+          outputs.push({ name, blob: f, size: f.size });
+        } else {
+          const chunks = [];
+          await MP4.remuxRange(cut.demux, p.in, p.out, async (u8) => { chunks.push(u8); }, prog, opts);
+          const b = new Blob(chunks, { type: 'video/mp4' });
+          outputs.push({ name, blob: b, size: b.size });
+        }
+      }
+      if (zip) {
+        $('ciProgLabel').textContent = 'Packing the ZIP file…';
+        const z = await Zip.createZip(outputs.map((o) => ({ name: o.name, blob: o.blob })), { signal, onProgress: (f) => { $('ciFill').style.width = (f * 100).toFixed(1) + '%'; } });
+        downloadBlob(z, `${ciBase()}_cutit.zip`);
+      } else for (const o of outputs) if (o.blob) downloadBlob(o.blob, o.name);
+      const secs = ((performance.now() - t0) / 1000).toFixed(1);
+      const total = outputs.reduce((a, o) => a + o.size, 0);
+      toast(`Done in ${secs} s: ${outputs.length === 1 ? outputs[0].name : outputs.length + ' parts'} (${fmtSize(total)})${handle ? ' saved.' : ' — see your downloads.'}`, 5000);
+      $('ciProgLabel').textContent = `Done in ${secs} s · ${fmtSize(total)}`;
+    } catch (e) {
+      if (e && e.name === 'AbortError') toast('Cancelled.', 2000);
+      else { console.error(e); toast('Cutting failed: ' + (e && e.message ? e.message : e), 7000); }
+      $('ciProgress').hidden = true;
+    } finally {
+      cut.busy = false; cut.ctl = null;
+      $('ciGo').disabled = false;
+      if (lock) lock.release().catch(() => {});
+      // Temporary copies go once the downloads have surely started.
+      if (temps.length) setTimeout(() => temps.forEach((t) => Project.removeCopy(t).catch(() => {})), 180000);
+    }
+  }
+  $('cutItBtn').addEventListener('click', () => openCutIt());
 
   // ---------------------------------------------------------------------------
   // Thumbnails
@@ -7764,10 +7991,52 @@
   (async () => {
     try { await Project.migrateLegacy(); } catch (e) { /* ignore */ }
     Project.cleanupOrphans().catch(() => {});
+    if (await receiveShared()) { renderProjectList(); return; }
     const id = hashId();
     if (id) await openProject(id);
     renderProjectList();
   })();
+
+  // ---------------------------------------------------------------------------
+  // Files shared to the installed app (Android "Share" → Videcutto): the service
+  // worker keeps them; here you choose what to do with them.
+  // ---------------------------------------------------------------------------
+  async function receiveShared() {
+    const q = new URLSearchParams(location.search);
+    if (!q.has('shared')) {
+      // Leftovers of an earlier share can go now.
+      try { if (window.caches && (await caches.has('videcutto-share'))) await caches.delete('videcutto-share'); } catch (e) { /* ignore */ }
+      return false;
+    }
+    history.replaceState(history.state, '', location.pathname + location.hash);
+    let files = [];
+    try {
+      const cache = await caches.open('videcutto-share');
+      for (const k of await cache.keys()) {
+        const res = await cache.match(k);
+        if (!res) continue;
+        const name = decodeURIComponent(res.headers.get('X-Name') || 'shared');
+        files.push(new File([await res.blob()], name, { type: res.headers.get('Content-Type') || '', lastModified: Number(res.headers.get('X-Modified')) || Date.now() }));
+      }
+    } catch (e) { files = []; }
+    if (!files.length) { toast('Nothing usable was received.', 3000); return false; }
+    const videos = files.filter((f) => isVideoFile(f));
+    const docs = await Project.listProjects().catch(() => []);
+    const last = docs[0] || null;
+    $('shInfo').textContent = files.length === 1 ? `"${files[0].name}" (${fmtSize(files[0].size)})` : `${files.length} files (${fmtSize(files.reduce((a, f) => a + f.size, 0))})`;
+    $('shAdd').hidden = !last;
+    if (last) $('shAdd').textContent = `Add to "${last.name || 'last project'}"`;
+    $('shCut').hidden = !(files.length === 1 && videos.length === 1);
+    $('shBatch').hidden = !videos.length || (files.length === 1 && false);
+    const done = () => { closeModal('shareModal'); $('shNew').onclick = $('shAdd').onclick = $('shCut').onclick = $('shBatch').onclick = $('shClose').onclick = null; };
+    $('shNew').onclick = () => { done(); handleFiles(files); };
+    $('shAdd').onclick = async () => { done(); await openProject(last.id); showEditor(); handleFiles(files); };
+    $('shCut').onclick = () => { done(); openCutIt(videos[0]); };
+    $('shBatch').onclick = () => { done(); openModal('batchModal'); addBatchFiles(videos); };
+    $('shClose').onclick = done;
+    openModal('shareModal');
+    return true;
+  }
   window.addEventListener('hashchange', () => { const id = hashId(); if (id && id !== projectId) openProject(id); });
 
   // ---------------------------------------------------------------------------

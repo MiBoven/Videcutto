@@ -79,6 +79,9 @@
   <button class="btn-secondary wide" id="emptyCanvasBtn">
     <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M12 9v6M9 12h6"/></svg>Start with an empty canvas
   </button>
+  <button class="btn-secondary wide" id="cutItBtn">
+    <svg viewBox="0 0 24 24"><circle cx="6" cy="7" r="2.5"/><circle cx="6" cy="17" r="2.5"/><path d="M8 8.5l12 7M8 15.5l12-7"/></svg>Just cut it — trim without re-encoding
+  </button>
   <button class="link-btn center import-btn" id="importProjectBtn">Import a project file (.videcutto)…</button>
 
 
@@ -735,6 +738,63 @@
 <footer>Videcutto · v<span id="versionFooter">0.1.0</span></footer>
 
 <!-- ===================== Pre-trim dialog ===================== -->
+<div class="modal-bg" id="cutModal" hidden>
+  <div class="modal trim-modal" role="dialog" aria-modal="true" aria-labelledby="ciTitle">
+    <div class="modal-head">
+      <h2 id="ciTitle">Just cut it</h2>
+      <button class="icon small" id="ciClose" title="Close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <p class="modal-sub" id="ciInfo"></p>
+    <div class="trim-video-wrap">
+      <video id="ciVideo" playsinline preload="auto" muted></video>
+      <button class="tbtn play overlay-play" id="ciPlayBtn" aria-label="Play">
+        <svg viewBox="0 0 24 24"><path class="fill" d="M8 5.5v13l10.5-6.5z"/></svg>
+      </button>
+    </div>
+    <div class="range" id="ciRange">
+      <div class="range-track"></div>
+      <div id="ciSels"></div>
+      <div class="range-pos" id="ciPos"></div>
+      <div class="range-handle" id="ciStartH" role="slider" tabindex="0" aria-label="Start"></div>
+      <div class="range-handle" id="ciEndH" role="slider" tabindex="0" aria-label="End"></div>
+    </div>
+    <div class="trim-times">
+      <button class="btn-chip" id="ciSetStart">⇤ Start here</button>
+      <span class="trim-len" id="ciLen"></span>
+      <button class="btn-chip" id="ciSetEnd">End here ⇥</button>
+    </div>
+    <p class="hint" id="ciKeyHint"></p>
+    <label class="check-row"><input type="checkbox" id="ciMulti"> Several parts (each saved as its own file)</label>
+    <div id="ciParts" hidden>
+      <ul class="ci-parts" id="ciPartList"></ul>
+      <button type="button" class="btn-chip" id="ciAddPart">＋ Add a part at the playhead</button>
+      <label class="check-row"><input type="checkbox" id="ciZip" checked> As one ZIP file</label>
+    </div>
+    <p class="hint" id="ciOut"></p>
+    <div class="progress" id="ciProgress" hidden>
+      <div class="progress-bar"><div class="progress-fill" id="ciFill"></div></div>
+      <div class="progress-row"><span id="ciProgLabel">Cutting…</span><button class="link-btn" id="ciCancel">Cancel</button></div>
+    </div>
+    <button class="btn-primary wide" id="ciGo">Cut it</button>
+  </div>
+</div>
+
+<div class="modal-bg" id="shareModal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="shTitle">
+    <div class="modal-head">
+      <h2 id="shTitle">Received</h2>
+      <button class="icon small" id="shClose" title="Close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <p class="hint" id="shInfo"></p>
+    <div class="share-choices">
+      <button type="button" class="btn-primary wide" id="shNew">New project</button>
+      <button type="button" class="btn-secondary wide" id="shAdd">Add to the last project</button>
+      <button type="button" class="btn-secondary wide" id="shCut">Just cut it</button>
+      <button type="button" class="btn-secondary wide" id="shBatch">Batch convert</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-bg" id="trimModal" hidden>
   <div class="modal trim-modal" role="dialog" aria-modal="true" aria-labelledby="trimTitle">
     <h2 id="trimTitle">Trim before editing</h2>
@@ -1096,6 +1156,8 @@
       <summary>Getting started</summary>
       <ul>
         <li>Choose, drop or paste (Ctrl+V) videos and images on the start screen — each choice starts a <strong>new project</strong>. <em>Start with an empty canvas</em> begins with a color clip.</li>
+        <li><strong>Just cut it</strong> trims a video without re-encoding — in seconds, even huge files; the start snaps to keyframes, several parts are possible.</li>
+        <li>The <strong>installed app</strong> appears in the phone's share menu — share a video to Videcutto to start a project, cut it or convert it.</li>
         <li>Phones: <strong>Gallery</strong> is quick, <strong>Files</strong> keeps the original file names.</li>
         <li>Big videos can be <strong>pre-trimmed</strong> first — only the chosen part goes onto the timeline.</li>
         <li>Projects are <strong>saved automatically</strong>. Tap the logo to get back to the project list.</li>

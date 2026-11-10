@@ -189,6 +189,18 @@ The clip panel has four tabs — **Clip**, **Crop**, **Position**, **Rotate**. O
 - **Whole timeline** (all tracks) or **Selected clip only** — export just one clip without deleting the others (prepared for special exports such as GIF or audio-only later). *Selected clip only* is greyed out while no clip is selected
 - **Create video** starts the export; **Download** the result, or **Share** it directly (e.g. to a messenger) on devices that support sharing files
 
+### Just cut it (start screen)
+- **Trim a video without re-encoding** — the picture and sound are copied as they are, so it takes seconds even for very big files (tens of GB) and the quality stays exactly the same. No project is created
+- Choose a video (MP4, MOV, M4V); drag the start and end handles, use *Start here* / *End here* at the playhead, or the arrow keys (start: previous/next keyframe; end: 1 s, with Shift 10 s). Play the selection with ▶
+- The **start can only lie on a keyframe** (phones write one every 1–2 s): the start handle snaps to them and a note shows where the cut really begins. The **end is exact**
+- **Several parts** (optional): ＋ adds a part at the playhead, tap a part to edit it, the trash can removes it; each part becomes its own file `name_cutit_part01.mp4` …, by default all in **one ZIP** (`name_cutit.zip`)
+- One part is saved as `name_cutit.mp4` — on desktop Chrome/Edge straight into a file you choose (no copy in memory), elsewhere as a download (written to the browser's private storage first, removed again afterwards). All metadata of the original (date, place, camera) is kept
+- Progress and **Cancel**; the screen stays awake
+
+### Share to Videcutto (installed app)
+- The installed app appears in the phone's **share menu**: share videos, images or sound from the gallery or another app to Videcutto. It opens and asks what to do: **New project**, **Add to "last project"**, **Just cut it** (one video) or **Batch convert** (videos)
+- The shared files are kept by the app's service worker until they are used (removed on the next start)
+
 ### Batch convert (Menu → Batch convert…)
 - Shrink or convert **many videos at once** with the same settings — independent of the projects, nothing is added to a timeline
 - Choose videos (or drop them onto the window); each is checked right away (unsupported files show why) and listed with size, length, resolution, the estimated result and the file name it will get; ✕ removes it from the list

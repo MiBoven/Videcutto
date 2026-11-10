@@ -790,3 +790,16 @@ body.picking #pvCanvas { cursor: crosshair !important; }
 #mediaList li.live, #mediaList .m-use.live { border-color: var(--border); box-shadow: inset 3px 0 0 var(--accent); outline: none; background: var(--surface-2); }
 #mediaList li.sel, #mediaList .m-use.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); background: color-mix(in srgb, var(--accent) 16%, var(--surface-2)); outline: none; }
 #mediaList li.live.sel, #mediaList .m-use.live.sel { box-shadow: inset 3px 0 0 var(--accent), 0 0 0 1px var(--accent); }
+/* 0.14.0: Just cut it, share */
+#cutItBtn { margin-top: 10px; }
+#ciSels .range-sel { position: absolute; }
+#ciSels .range-sel.other { opacity: .45; }
+.ci-parts { list-style: none; margin: 6px 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.ci-parts li { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); cursor: pointer; font-size: 13px; font-variant-numeric: tabular-nums; }
+.ci-parts li.on { border-color: var(--accent); }
+.ci-parts li span { flex: 1; }
+.ci-parts li button { flex: none; width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text-secondary); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+.ci-parts li button svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+#ciOut { overflow-wrap: anywhere; }
+.share-choices { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.share-choices [hidden] { display: none; }

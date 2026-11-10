@@ -1,5 +1,10 @@
 # Changelog
 
+### 0.14.0 — 2026-11-10 — Just cut it, share to Videcutto
+- Just cut it (start screen): trim a video without re-encoding — seconds even for huge files, start on a keyframe, exact end, metadata kept; optionally several parts (`_cutit_part01` …) as one ZIP
+- On desktop Chrome/Edge a single cut is written straight into the chosen file
+- Share to Videcutto: the installed app is a share target; shared files can start a new project, be added to the last project, be cut or batch converted
+
 ### 0.13.2 — 2026-11-10 — Fixes
 - Straightening never changes the size anymore (it jumped at 45°); the size only follows the 90° buttons
 - Groups removed (they made things harder to follow); existing groups are simply ignored
