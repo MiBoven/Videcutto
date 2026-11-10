@@ -779,3 +779,14 @@ body:not(.editing) .frame-menu { display: none; }
 .eyedrop.on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft, var(--surface-2)); }
 .check-row .eyedrop { width: 30px; height: 30px; }
 body.picking #pvCanvas { cursor: crosshair !important; }
+/* 0.13.2 */
+.check-row { flex-wrap: nowrap; }
+.name-field .label-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.name-field .input-unit { width: 100%; }
+.name-field #fileNameInput { flex: 1; min-width: 0; width: 100%; }
+#mediaList .m-del { display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+#mediaList .m-del svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+/* Contents: under the playhead = thin accent mark on the left; selected = full frame + tint */
+#mediaList li.live, #mediaList .m-use.live { border-color: var(--border); box-shadow: inset 3px 0 0 var(--accent); outline: none; background: var(--surface-2); }
+#mediaList li.sel, #mediaList .m-use.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); background: color-mix(in srgb, var(--accent) 16%, var(--surface-2)); outline: none; }
+#mediaList li.live.sel, #mediaList .m-use.live.sel { box-shadow: inset 3px 0 0 var(--accent), 0 0 0 1px var(--accent); }

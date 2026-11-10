@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.13.1';
+  const VERSION = '0.13.2';
   const $ = (id) => document.getElementById(id);
 
   // ---------------------------------------------------------------------------
@@ -837,7 +837,7 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Images and colour clips
+  // Images and color clips
   // ---------------------------------------------------------------------------
   const STILL_DURATION = 4;
 
@@ -1251,14 +1251,8 @@
   }
   const multi = () => { syncSel(); return selIds.size > 1; };
   const selFinds = () => { syncSel(); return [...selIds].map(findClip).filter(Boolean); };
-  // Grouped clips are selected together.
-  function groupIds(id) {
-    const f = findClip(id);
-    if (!f || !f.clip.group) return id ? [id] : [];
-    return allClips().filter((c) => c.group === f.clip.group).map((c) => c.id);
-  }
-  const wholeGroupSelected = (id) => { const g = groupIds(id); return g.length > 1 && selIds.size === g.length && g.every((x) => selIds.has(x)); };
-  function selectOnly(id) { selIds.clear(); for (const x of groupIds(id)) selIds.add(x); selectedId = id; selAnchor = id; }
+  const groupIds = (id) => (id ? [id] : []); // groups were removed in 0.13.2
+  function selectOnly(id) { selIds.clear(); if (id) selIds.add(id); selectedId = id; selAnchor = id; }
   function selectJust(id) { selIds.clear(); if (id) selIds.add(id); selectedId = id; selAnchor = id; }
   function selectToggle(id) {
     const g = groupIds(id);
@@ -1311,20 +1305,6 @@
   // audio track moves along with the main-track clip below it).
   // ---------------------------------------------------------------------------
   const isAttachedNow = (c) => !!(c.attach && tracks[0].clips.some((m) => m.id === c.attach));
-  function toggleGroup() {
-    const list = selFinds();
-    if (list.length < 2 && !(list[0] && list[0].clip.group)) return;
-    const grouped = list.some((f) => f.clip.group);
-    const allSame = list.length > 1 && list.every((f) => f.clip.group && f.clip.group === list[0].clip.group);
-    if (grouped && (allSame || list.length === 1)) {
-      commit(() => list.forEach((f) => { delete f.clip.group; }));
-      toast('Ungrouped.', 1500);
-    } else {
-      const gid = 'g' + (++uid);
-      commit(() => list.forEach((f) => { f.clip.group = gid; }));
-      toast(`${list.length} clips grouped — they are selected and moved together.`, 2500);
-    }
-  }
   // The main-track clip under (or just before) time t.
   function mainClipAt(t) {
     const m = tracks[0].clips;
@@ -1349,14 +1329,8 @@
     const one = others.length === 1 ? others[0].clip : null;
     const m = one && isAttachedNow(one) ? tracks[0].clips.find((x) => x.id === one.attach) : null;
     $('attachInfo').textContent = m ? `Moves with the ${m.kind === 'video' || m.kind === 'image' ? (srcOf(m) ? srcOf(m).name : m.kind) : m.kind === 'text' ? 'text' : 'color clip'} at ${fmtTime(m.start, false)} on the main track.` : 'Moves along when the main-track clip below it moves (e.g. when you cut or reorder the main track).';
-    const grouped = list.some((f) => f.clip.group);
-    $('groupBtn').hidden = list.length < 2 && !grouped;
-    const allSame = list.length > 1 && list.every((f) => f.clip.group && f.clip.group === list[0].clip.group);
-    $('groupBtn').querySelector('span').textContent = grouped && (allSame || list.length === 1) ? 'Ungroup' : 'Group';
-    $('groupBtn').classList.toggle('on', grouped && (allSame || list.length === 1));
   }
   $('attachChk').addEventListener('change', (e) => setAttach(e.target.checked));
-  $('groupBtn').addEventListener('click', toggleGroup);
 
   // ---------------------------------------------------------------------------
   // Markers: named points on the timeline. Clips snap to them; tap one in the
@@ -1449,7 +1423,7 @@
 
   // ---------------------------------------------------------------------------
   // Opacity of single clips (0–100 %). A see-through clip on the main track
-  // shows the background — or, if wanted, a colour clip on a new main track.
+  // shows the background — or, if wanted, a color clip on a new main track.
   // ---------------------------------------------------------------------------
   const opTargets = () => (multi() ? selFinds() : [findClip(selectedId)].filter(Boolean)).filter((f) => f.clip.kind !== 'audio');
   function syncOpacityUI() {
@@ -1479,7 +1453,7 @@
     const onMain = opTargets().some((f) => f.tr.main && f.clip.opacity != null && f.clip.opacity < 1);
     const hasBase = tracks[0].clips.length === 1 && tracks[0].clips[0].kind === 'color' && tracks[0].clips[0].baseColor;
     if (onMain && !hasBase && !projectFlags.noBaseAsk) {
-      const yes = await askConfirm('See-through on the main track', 'Move all tracks up one and put a colour clip (the canvas background colour, as long as the project) on a new main track? Otherwise the background simply shows through.', 'Yes, add it', 'No');
+      const yes = await askConfirm('See-through on the main track', 'Move all tracks up one and put a color clip (the canvas background color, as long as the project) on a new main track? Otherwise the background simply shows through.', 'Yes, add it', 'No');
       if (yes) addBaseColorTrack(); else { projectFlags.noBaseAsk = true; scheduleSave(); }
     }
   });
@@ -1493,7 +1467,7 @@
       nm.clips.push({ id: newId(), kind: 'color', srcId: null, in: 0, out: Math.max(0.1, +totalDuration().toFixed(3)), muted: false, color: canvasState.bgColor || DEFAULT_COLOR, size: 'canvas', w: 1920, h: 1080, baseColor: true });
       setTracks([nm, ...tracks]);
     });
-    toast('A colour clip now lies under everything — change its colour in its Clip tab.', 3500);
+    toast('A color clip now lies under everything — change its color in its Clip tab.', 3500);
   }
   // A small yes/no window (resolves true/false).
   function askConfirm(title, text, yes = 'OK', no = 'Cancel') {
@@ -1510,7 +1484,7 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Colour fields: a hex code box next to every colour picker (both directions).
+  // Color fields: a hex code box next to every color picker (both directions).
   // ---------------------------------------------------------------------------
   function addHexFields() {
     const desc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
@@ -1538,15 +1512,15 @@
       };
       hx.addEventListener('change', apply);
       hx.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); apply(); hx.blur(); } });
-      // Eyedropper: pick a colour from the preview.
+      // Eyedropper: pick a color from the preview.
       const ed = document.createElement('button');
-      ed.type = 'button'; ed.className = 'eyedrop'; ed.title = 'Pick a colour from the preview'; ed.setAttribute('aria-label', 'Pick a colour from the preview');
+      ed.type = 'button'; ed.className = 'eyedrop'; ed.title = 'Pick a color from the preview'; ed.setAttribute('aria-label', 'Pick a color from the preview');
       ed.innerHTML = '<svg viewBox="0 0 24 24"><path d="M14.5 4.5l5 5M17 7l-9.5 9.5L5 19l2.5-2.5L17 7z"/><path d="M13 6l5 5"/></svg>';
       hx.insertAdjacentElement('afterend', ed);
       ed.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); startPick(ci, ed); });
     });
   }
-  // Pick mode: the next tap/click on the preview takes the colour under it.
+  // Pick mode: the next tap/click on the preview takes the color under it.
   let pickTarget = null, pickBtn = null;
   function startPick(input, btn) {
     if (pickTarget === input) { stopPick(); return; }
@@ -1556,7 +1530,7 @@
     btn.classList.add('on');
     document.body.classList.add('picking');
     renderPreview(); // without selection frame and guides
-    toast('Tap the preview to pick a colour.', 2500);
+    toast('Tap the preview to pick a color.', 2500);
     if (window.matchMedia('(max-width: 899px)').matches) $('previewWrap').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
   function stopPick() {
@@ -1576,7 +1550,7 @@
     input.value = hex;
     input.dispatchEvent(new Event('input', { bubbles: true }));
     input.dispatchEvent(new Event('change', { bubbles: true }));
-    toast(`Colour ${hex.toUpperCase()} picked.`, 1800);
+    toast(`Color ${hex.toUpperCase()} picked.`, 1800);
     renderPreview();
   }, true);
   }
@@ -1597,7 +1571,6 @@
     if (!f) return;
     const c = f.clip;
     const links = [];
-    if (c.group && allClips().some((x) => x !== c && x.group === c.group)) links.push('it belongs to a group (only this clip is deleted)');
     const i = f.tr.clips.indexOf(c);
     if (c.tIn && i > 0) links.push('the transition into it is removed');
     if (f.tr.clips[i + 1] && f.tr.clips[i + 1].tIn) links.push('the transition after it is removed');
@@ -1724,11 +1697,11 @@
     updateSelected({ out: f.clip.in + d });
   });
   $('cpColor').addEventListener('input', (e) => {
-    // Live preview without creating an undo step for every colour tick.
+    // Live preview without creating an undo step for every color tick.
     const c = selClip();
     if (c && c.kind === 'color') { c.color = e.target.value; renderPreview(); renderClips(); }
   });
-  // The colour picker previews live; the undo step is recorded once on 'change'.
+  // The color picker previews live; the undo step is recorded once on 'change'.
   let clipColorBefore = null;
   const rememberColor = () => { const c = selClip(); clipColorBefore = c ? c.color : null; };
   $('cpColor').addEventListener('focus', rememberColor);
@@ -1736,7 +1709,7 @@
   $('cpColor').addEventListener('change', (e) => {
     const c = selClip();
     if (!c || c.kind !== 'color') return;
-    if (clipColorBefore) c.color = clipColorBefore; // so the undo snapshot holds the old colour
+    if (clipColorBefore) c.color = clipColorBefore; // so the undo snapshot holds the old color
     clipColorBefore = null;
     updateSelected({ color: e.target.value });
   });
@@ -2401,7 +2374,7 @@
   $('txBold').addEventListener('click', () => { const c = selClip(); if (c) liveText({ bold: !textOf(c).bold }, true); });
   $('txItalic').addEventListener('click', () => { const c = selClip(); if (c) liveText({ italic: !textOf(c).italic }, true); });
   $('txAlign').addEventListener('click', (e) => { const b = e.target.closest('[data-align]'); if (b) liveText({ align: b.dataset.align }, true); });
-  // Colour pickers preview live; one undo step when the picker closes.
+  // Color pickers preview live; one undo step when the picker closes.
   [['txColor', 'color'], ['txStrokeColor', 'strokeColor'], ['txShadowColor', 'shadowColor'], ['txBoxColor', 'boxColor']].forEach(([id, prop]) => {
     $(id).addEventListener('input', (e) => liveText({ [prop]: e.target.value }));
     $(id).addEventListener('change', () => { clearTimeout(textTimer); liveClipCommit(); });
@@ -2609,6 +2582,7 @@
     const byStart = (a, b) => a.c.start - b.c.start;
     return { texts: texts.sort(byStart), colors: colors.sort(byStart), cuts: cuts.sort(byStart) };
   }
+  const TRASH_SVG = '<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg>';
   const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
   function contentRow(kind, thumb, name, meta, data, delTitle) {
     const li = document.createElement('li');
@@ -2624,7 +2598,7 @@
     mt.textContent = meta;
     info.append(nm, mt);
     li.append(thumb, info);
-    if (delTitle) { const d = document.createElement('button'); d.type = 'button'; d.className = 'm-del'; d.textContent = '✕'; d.title = delTitle; d.dataset.act = 'del'; li.append(d); }
+    if (delTitle) { const d = document.createElement('button'); d.type = 'button'; d.className = 'm-del'; d.innerHTML = TRASH_SVG; d.title = delTitle; d.dataset.act = 'del'; li.append(d); }
     li.title = 'Select it and jump there';
     return li;
   }
@@ -2701,7 +2675,7 @@
           a.className = 'm-use-a';
           a.textContent = `${k + 1}. ${fmtTime(c.start, false)}–${fmtTime(clipEnd(c), false)} · ${trackLabel(tr)}`;
           const del = document.createElement('button');
-          del.type = 'button'; del.className = 'm-del'; del.textContent = '✕'; del.title = 'Delete this clip'; del.dataset.act = 'del-clip';
+          del.type = 'button'; del.className = 'm-del'; del.innerHTML = TRASH_SVG; del.title = 'Delete this clip'; del.dataset.act = 'del-clip';
           row.append(del);
           const b = document.createElement('div');
           b.className = 'm-use-b';
@@ -3306,7 +3280,7 @@
     const src = srcOf(c);
     const p = pad();
     const el = document.createElement('div');
-    el.className = 'clip' + (c.attach && isAttachedNow(c) ? ' attached' : '') + (c.group ? ' grouped' : '') + (selIds.has(c.id) ? ' selected' : '') + (selIds.size > 1 && c.id === selectedId ? ' primary' : '') + (c.kind === 'color' ? ' color-clip' : '') + (c.kind === 'text' ? ' text-clip' : '') + (c.kind === 'audio' ? ' audio-clip' : tr.main ? '' : ' overlay');
+    el.className = 'clip' + (c.attach && isAttachedNow(c) ? ' attached' : '') + (selIds.has(c.id) ? ' selected' : '') + (selIds.size > 1 && c.id === selectedId ? ' primary' : '') + (c.kind === 'color' ? ' color-clip' : '') + (c.kind === 'text' ? ' text-clip' : '') + (c.kind === 'audio' ? ' audio-clip' : tr.main ? '' : ' overlay');
     if (c.kind === 'color') el.style.background = c.color || DEFAULT_COLOR;
     el.dataset.id = c.id;
     el.dataset.idx = i;
@@ -3411,6 +3385,7 @@
   }
 
   function renderClips() {
+    queueMicrotask(() => markLiveContents());
     if ($('editorScreen').hidden) return;
     syncSel();
     const frag = document.createDocumentFragment();
@@ -3809,11 +3784,7 @@
       if (e.shiftKey && selAnchor && findClip(selAnchor)) selectRange(selAnchor, id, add);
       else if (add || selectMode) selectToggle(id);
       else if (selectedId === id && selIds.size === 1) selectedId = null;
-      else if (wholeGroupSelected(id)) selectJust(id); // tap again: just this clip of the group
-      else {
-        selectOnly(id);
-        if (selIds.size > 1 && !store.get('groupTip', false)) { store.set('groupTip', true); toast('A group is selected — tap the clip again to edit only that one.', 3500); }
-      }
+      else selectOnly(id);
     }
     afterSelect();
   });
@@ -4685,13 +4656,15 @@
       if (c.tIn && i > 0 && t >= c.start - 1e-6 && t < c.start + c.tIn.dur) ids.add('cut:' + c.id);
     });
     for (const m of markersOf()) if (Math.abs(m.t - t) < 0.02) ids.add('mk:' + m.id);
-    const sig = [...ids, ...srcs].sort().join(',');
+    const sig = [...ids, ...srcs].sort().join(',') + '|' + [...selIds].join(',') + '|' + (selTrans ? selTrans.clip || '' : '');
     if (sig === liveSig && !force) return;
     liveSig = sig;
     $('mediaList').querySelectorAll('li, .m-use').forEach((el) => {
       const d = el.dataset;
       const on = d.src ? srcs.has(d.src) : d.clip ? ids.has(d.clip) : d.use ? ids.has(d.use) : d.cutClip ? ids.has('cut:' + d.cutClip) : d.marker ? ids.has('mk:' + d.marker) : false;
+      // Under the playhead: a thin mark; selected: the strong frame (like in the timeline).
       el.classList.toggle('live', on);
+      el.classList.toggle('sel', d.clip ? selIds.has(d.clip) : d.use ? selIds.has(d.use) : d.cutClip ? !!(selTrans && selTrans.clip === d.cutClip) : false);
     });
   }
 
@@ -4842,7 +4815,7 @@
     renderPreview();
   }
 
-  // Colour clips are drawn from a small cached canvas with the clip's shape.
+  // Color clips are drawn from a small cached canvas with the clip's shape.
   const colorCache = new Map();
   function colorCanvas(color, w, h) {
     const k = 64;
@@ -5207,8 +5180,16 @@
 
   // Rotate & flip
   const normAngle = (a) => { a = ((a + 180) % 360 + 360) % 360 - 180; return a === -180 ? 180 : a; };
-  $('rotLeftBtn').addEventListener('click', () => { const c = tfRef(); if (!c) return; ensureVisible(); setTf({ rot: normAngle(Render.tfOf(c.tf).rot - 90) }); });
-  $('rotRightBtn').addEventListener('click', () => { const c = tfRef(); if (!c) return; ensureVisible(); setTf({ rot: normAngle(Render.tfOf(c.tf).rot + 90) }); });
+  const turn90 = (d) => {
+    const c = tfRef();
+    if (!c) return;
+    ensureVisible();
+    const t = Render.tfOf(c.tf);
+    const base = t.rotBase != null ? t.rotBase : Math.round(t.rot / 90) * 90;
+    setTf({ rot: normAngle(t.rot + d), rotBase: normAngle(base + d) });
+  };
+  $('rotLeftBtn').addEventListener('click', () => turn90(-90));
+  $('rotRightBtn').addEventListener('click', () => turn90(90));
   $('flipHBtn').addEventListener('click', () => { const c = tfRef(); if (!c) return; ensureVisible(); setTf({ flipH: !Render.tfOf(c.tf).flipH }); });
   $('flipVBtn').addEventListener('click', () => { const c = tfRef(); if (!c) return; ensureVisible(); setTf({ flipV: !Render.tfOf(c.tf).flipV }); });
   // Endless wheel: 1 px of drag = 0.1°, a tick every degree; flicks keep turning a little.
@@ -5290,7 +5271,7 @@
   });
   $('rotFillChk').addEventListener('change', (e) => { ensureVisible(); setTf({ rotMode: e.target.checked ? 'fit' : 'free', rotFill: false }); });
   $('cropFrameChk').addEventListener('change', (e) => { ensureVisible(); setTf({ rotMode: e.target.checked ? 'frame' : 'free', rotFill: false }); });
-  $('rotReset').addEventListener('click', () => { ensureVisible(); setTf({ rot: 0, flipH: false, flipV: false, sx: 1, sy: 1 }); });
+  $('rotReset').addEventListener('click', () => { ensureVisible(); setTf({ rot: 0, rotBase: 0, flipH: false, flipV: false, sx: 1, sy: 1 }); });
 
   // Crop presets
   const RATIOS = { '16:9': 16 / 9, '9:16': 9 / 16, '1:1': 1, '4:5': 4 / 5, '4:3': 4 / 3 };
@@ -5442,12 +5423,14 @@
   // A new rotation turns on "fill the frame" for videos and images (not for clips already turned the old way).
   function rotPatch(c, rot) {
     const p = { rot: Math.round(normAngle(rot) * 10) / 10 };
+    const t0 = Render.tfOf(c.tf);
     if (!c.tf || !c.tf.rotMode) {
       // New turns keep the size ('free'); clips turned the old way keep their look.
-      const t0 = Render.tfOf(c.tf);
       p.rotMode = t0.rotFill ? 'frame' : Math.abs(t0.rot % 90) < 0.05 ? 'free' : 'fit';
       p.rotFill = false;
     }
+    // The 90° steps (buttons) decide the frame's orientation; straightening never flips it.
+    if (t0.rotBase == null) p.rotBase = Math.round(t0.rot / 90) * 90;
     return p;
   }
   const snapAngle = (a, free) => { if (free) return a; const n = Math.round(a / 45) * 45; return Math.abs(a - n) < 1.5 ? n : a; };
@@ -5700,7 +5683,6 @@
     else if (k === 's' || k === 'c') splitAtPlayhead();
     else if (k === 'm') toggleMuteClip();
     else if (k === 'i') addMarker();
-    else if (k === 'g' && selIds.size > 1) toggleGroup();
     else if (e.key === 'Escape') clearSelection();
     else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSelected(); }
     else if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && selClip()) { e.preventDefault(); nudge((e.key === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 0.01 : 0.1)); }
@@ -5911,10 +5893,8 @@
     const m = exportMeta();
     if (metaChoice.mode === 'none') return 'None — all removed';
     if (!m) return metaChoice.mode === 'custom' ? 'Own values (empty)' : 'None found in the files';
-    const what = [m.utc != null && '📅', m.lat != null && '📍', (m.make || m.model) && '📷', m.title && 'T'].filter(Boolean).join(' ');
-    const from = ms.kind === 'custom' ? 'Own values' : ms.kind === 'auto' ? 'Automatic' : 'From file';
     $('metaSummary').title = ms.src ? ms.src.name : '';
-    return `${from} · ${what}`;
+    return ms.kind === 'custom' ? 'Own values' : `${ms.kind === 'auto' ? 'Automatic' : 'File'} · ${ms.src.name}`;
   }
   function extraText(e) {
     if (e.t !== 1) return '(data)';
@@ -6078,7 +6058,7 @@
   $('metaThere').addEventListener('click', () => { $('metaThereRow').hidden = !$('metaThereRow').hidden; if (!$('metaThereRow').hidden) $('metaThereInput').focus(); });
   const useThere = () => {
     const loc = parseLocation($('metaThereInput').value);
-    if (!loc) { toast('No coordinates found — paste a map link (Google Maps, OpenStreetMap) or e.g. 37.0889, -8.2278.', 4000); return; }
+    if (!loc) { toast('No coordinates in it. Short links (maps.app.goo.gl) don\'t contain any — in Google Maps long-press the spot and copy the numbers shown (e.g. 37.0889, -8.2278).', 7000); return; }
     $('metaLat').value = loc.lat; $('metaLon').value = loc.lon;
     $('metaThereRow').hidden = true; $('metaThereInput').value = '';
     $('metaCustom').dispatchEvent(new Event('change'));

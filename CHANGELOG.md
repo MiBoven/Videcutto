@@ -1,19 +1,27 @@
 # Changelog
 
+### 0.13.2 — 2026-11-10 — Fixes
+- Straightening never changes the size anymore (it jumped at 45°); the size only follows the 90° buttons
+- Groups removed (they made things harder to follow); existing groups are simply ignored
+- Contents: under the playhead = thin mark on the left, selected = full frame; delete buttons are trash cans
+- Export window: file name field under its label, options toggle on the right of the label row; metadata summary without icons
+- "There": clear hint that short Google Maps links contain no coordinates
+- Long checkbox labels wrap next to the box; US spelling ("color") everywhere
+
 ### 0.13.1 — 2026-11-09 — Turning keeps the size, eyedropper
 - Turning keeps the picture's size; parts that turn out of the canvas are cut off (new default)
 - Rotate tab: "Keep inside the canvas" makes it smaller instead; Crop tab: "Straighten inside the frame" zooms in and cuts the corners
 - Turning grid over the whole canvas with two lines each way
-- Eyedropper next to every colour field: pick a colour from the preview
+- Eyedropper next to every color field: pick a color from the preview
 
 ### 0.13.0 — 2026-11-09 — Edit in the preview
 - Selected pictures can be moved in the preview from every tab; a tap next to it deselects
 - Touch: moving starts after a short rest (taps don't shift it), two fingers size; double-tap switches to Turn (one finger turns, two fingers turn and size)
 - Mouse: Shift = turn, Ctrl = size, Shift+Ctrl = free size (width and height apart), Shift+Ctrl+Alt = crop
 - Rotate tab: straightening wheel with 0.1° steps, ±0.1°/±1° buttons, grid while turning, "Fill the frame (cut the edges)"
-- Opacity for every picture; a see-through main-track clip can get a colour clip on a new main track
-- Hex code fields next to all colour pickers
-- Contents: ✕ deletes single clips, texts, colour clips, transitions and index points (with a question when linked)
+- Opacity for every picture; a see-through main-track clip can get a color clip on a new main track
+- Hex code fields next to all color pickers
+- Contents: ✕ deletes single clips, texts, color clips, transitions and index points (with a question when linked)
 - The magnet can be switched for every visual track
 
 ### 0.12.2 — 2026-11-09 — Compact export window, snapping

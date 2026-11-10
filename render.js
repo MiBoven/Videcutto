@@ -131,7 +131,7 @@
   const DEFAULT_TF = Object.freeze({
     crop: Object.freeze({ x: 0, y: 0, w: 1, h: 1 }), cropRatio: null,
     fit: 'fit', scale: 1, anchor: 'c', dx: 0, dy: 0, rot: 0, flipH: false, flipV: false,
-    sx: 1, sy: 1, rotFill: false, rotMode: null,
+    sx: 1, sy: 1, rotFill: false, rotMode: null, rotBase: null,
   });
   const rotModeOf = (t) => t.rotMode || (t.rotFill ? 'frame' : 'fit');
   const ANCHORS = { tl: [0, 0], t: [0.5, 0], tr: [1, 0], l: [0, 0.5], c: [0.5, 0.5], r: [1, 0.5], bl: [0, 1], b: [0.5, 1], br: [1, 1] };
@@ -147,7 +147,7 @@
     // Size and anchoring follow the 90° part only (except 'fit'); 'frame' turns the rest inside the frame.
     const mode = rotModeOf(t);
     let outer = t.rot, fine = 0;
-    if (mode !== 'fit') { outer = Math.round(t.rot / 90) * 90; fine = t.rot - outer; }
+    if (mode !== 'fit') { outer = t.rotBase != null ? t.rotBase : Math.round(t.rot / 90) * 90; fine = t.rot - outer; }
     let rad = outer * Math.PI / 180;
     const c = Math.abs(Math.cos(rad)), s = Math.abs(Math.sin(rad));
     const free = t.fit === 'free' || t.fit === 'abs';
@@ -176,7 +176,7 @@
    * Draw one clip onto the canvas (background first).
    * src: VideoFrame / <video> / ImageBitmap / canvas; rawW/rawH its size;
    * metaRot: rotation stored in the file (clockwise degrees).
-   * bgMode: 'blur' or anything else for the plain colour bg.
+   * bgMode: 'blur' or anything else for the plain color bg.
    */
   function drawClip(ctx, src, rawW, rawH, metaRot, W, H, tfIn, bgMode, bg, fx) {
     const r = ((metaRot || 0) % 360 + 360) % 360;

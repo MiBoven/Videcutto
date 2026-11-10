@@ -310,7 +310,6 @@
       <p class="hint" id="cpMagHint" hidden>On the magnetic main track the order decides where a clip starts. Release the magnet in the main track's settings to place clips freely.</p>
       <div class="cp-actions">
         <button class="tool" id="muteClipBtn" title="Mute clip (M)"><svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg><span>Mute</span></button>
-        <button class="tool" id="groupBtn" title="Group the selected clips — they are selected and moved together (G)" hidden><svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/><path d="M11 7h4a2 2 0 012 2v4M13 17H9a2 2 0 01-2-2v-4"/></svg><span>Group</span></button>
         <button class="tool" id="detachBtn" title="Put the sound on an audio track of its own"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="1.5"/><path d="M4 16.5c1.5-2 2.5 2 4 0s2.5 2 4 0 2.5 2 4 0 2.5 2 4 0"/><path d="M12 11v3"/></svg><span>Detach audio</span></button>
       </div>
       <div class="field" id="cpDurField">
@@ -641,15 +640,10 @@
       <button class="icon small help-link" data-help="export" title="Help: create video" aria-label="Help: create video"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.3a2.5 2.5 0 014.8.9c0 1.7-2.4 2-2.4 3.6"/><path d="M12 17.2v.1"/></svg></button>
       <button class="icon small" id="exportCloseBtn" title="Close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
-    <div class="field">
-      <label for="fileNameInput">File name</label>
-      <div class="field-col">
-        <div class="name-row">
-          <div class="input-unit"><input type="text" id="fileNameInput" autocomplete="off" spellcheck="false" maxlength="160"><span>.mp4</span></div>
-          <button type="button" class="btn-chip info-chip" id="nameMoreBtn" title="Name options: automatic, original, tags to add, placeholders" aria-expanded="false" aria-controls="nameBox">▾</button>
-        </div>
-        <div class="name-preview" id="fileNamePreview" hidden></div>
-      </div>
+    <div class="field stack name-field">
+      <div class="label-row"><label for="fileNameInput">File name</label><button type="button" class="btn-chip info-chip" id="nameMoreBtn" title="Name options: automatic, original, tags to add, placeholders" aria-expanded="false" aria-controls="nameBox">▾</button></div>
+      <div class="input-unit"><input type="text" id="fileNameInput" autocomplete="off" spellcheck="false" maxlength="160"><span>.mp4</span></div>
+      <div class="name-preview" id="fileNamePreview" hidden></div>
     </div>
     <div class="x-box" id="nameBox" hidden>
       <span class="mini-label">Name</span>
@@ -1113,7 +1107,7 @@
       <ul>
         <li>Phones: the <strong>playhead stays in the middle</strong> — scroll the timeline to move through the video. Desktop: <strong>click or drag in the time ruler</strong> (or drag the red line) to set the playhead; scrolling only moves the view.</li>
         <li><strong>Index points:</strong> the flag below the timeline (or <kbd>I</kbd>) adds one at the playhead. Tap it in the ruler to jump there, tap again to name or color it, drag it to move it. Clips snap to index points.</li>
-        <li><strong>📎 Attach</strong> (Clip tab of an upper or audio clip): it moves along when the main-track clip below it moves. <strong>Group</strong> (several selected, or <kbd>G</kbd>): grouped clips are selected and moved together — tap again to pick just one.</li>
+        <li><strong>📎 Attach</strong> (Clip tab of an upper or audio clip): it moves along when the main-track clip below it moves.</li>
         <li>The <strong>camera</strong> in the preview's top left corner copies the current frame to the clipboard or saves it as a picture (in the size of the created video).</li>
         <li><strong>◀▶ next to Play</strong> step one frame; hold them to keep going (forward plays, backward runs back).</li>
         <li>The <strong>pin</strong> in the preview's corner keeps the preview at the top while you scroll through the settings (phones and the classic layout).</li>
@@ -1185,8 +1179,8 @@
         <li><strong>Phones:</strong> drag (after resting the finger a moment) = move, two fingers = size. <strong>Double-tap</strong> it for <em>Turn</em>: one finger turns around the centre, two fingers turn and size; double-tap again to move.</li>
         <li><strong>Mouse:</strong> drag = move · <kbd>Shift</kbd> = turn · <kbd>Ctrl</kbd> = size · <kbd>Shift</kbd>+<kbd>Ctrl</kbd> = free size (width and height apart) · <kbd>Shift</kbd>+<kbd>Ctrl</kbd>+<kbd>Alt</kbd> = crop. Turning snaps to 45° steps — hold <kbd>Alt</kbd> for free.</li>
         <li><strong>Rotate tab:</strong> drag the wheel (0.1° steps, double-click = 0), or the ±0.1°/±1° buttons. The picture keeps its size; <em>Keep inside the canvas</em> shrinks it instead, <em>Straighten inside the frame</em> (Crop tab) zooms in and cuts the corners.</li>
-        <li>Next to every colour: a <strong>hex field</strong> and an <strong>eyedropper</strong> — tap it, then tap the preview.</li>
-        <li><strong>Opacity</strong> (Clip tab) for every picture. On the main track Videcutto offers a colour clip underneath.</li>
+        <li>Next to every color: a <strong>hex field</strong> and a <strong>pipette</strong> — tap it, then tap the spot in the preview.</li>
+        <li><strong>Opacity</strong> (Clip tab) for every picture. On the main track Videcutto offers a color clip underneath.</li>
         <li>Optional snapping to centre and edges (Position tab) — hold <strong>Alt</strong> to move freely.</li>
         <li>Each drag or slider move is <strong>one undo step</strong>.</li>
       </ul>
@@ -1227,7 +1221,6 @@
         <tr><td><kbd>C</kbd> or <kbd>S</kbd></td><td>Cut at playhead</td></tr>
         <tr><td><kbd>M</kbd></td><td>Mute / unmute clip</td></tr>
         <tr><td><kbd>I</kbd></td><td>Add an index point at the playhead</td></tr>
-        <tr><td><kbd>G</kbd></td><td>Group / ungroup the selected clips</td></tr>
         <tr><td><kbd>Del</kbd> / <kbd>Backspace</kbd></td><td>Delete selected clip</td></tr>
         <tr><td><kbd>Esc</kbd></td><td>Deselect clips / close window</td></tr>
         <tr><td><kbd>Ctrl</kbd> + click / <kbd>Shift</kbd> + click</td><td>Add a clip to the selection / select a range</td></tr>
