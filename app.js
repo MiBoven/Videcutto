@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.14.0';
+  const VERSION = '0.14.1';
   const $ = (id) => document.getElementById(id);
 
   // ---------------------------------------------------------------------------
@@ -936,8 +936,16 @@
     }
     if (!/^video\//.test(file.type) && !/\.(mp4|mov|m4v)$/i.test(file.name)) { toast(`"${file.name}" isn't a video (MP4/MOV).`, 4000); return; }
     let probed;
-    showBusy('Reading video…', file.name);
-    try { probed = await probe(file); } catch (e) { hideBusy(); toast(`"${file.name}" can't be cut here: ${e && e.message ? e.message : e}`, 6000); return; } finally { hideBusy(); }
+    // Reading can be cancelled (the result is then simply ignored).
+    const ctl = new AbortController();
+    showBusy('Reading video…', `${file.name} · ${fmtSize(file.size)}`, ctl);
+    try {
+      probed = await Promise.race([probe(file), new Promise((res, rej) => ctl.signal.addEventListener('abort', () => rej(new DOMException('Cancelled', 'AbortError'))))]);
+    } catch (e) {
+      hideBusy();
+      if (!(e && e.name === 'AbortError')) toast(`"${file.name}" can't be cut here: ${e && e.message ? e.message : e}`, 6000);
+      return;
+    } finally { hideBusy(); }
     const v = probed.demux.video;
     const start = Math.max(0, v.start);
     cut.src = makeSource({ id: 'cutit', name: file.name, origSize: file.size, origLastModified: file.lastModified, start, duration: v.duration, rangeIn: start, rangeOut: v.duration }, file, probed, 0);
@@ -1023,7 +1031,17 @@
     };
     $('ciStartH').addEventListener('keydown', key(true));
     $('ciEndH').addEventListener('keydown', key(false));
-    range.addEventListener('pointerdown', (e) => { if (!cut.src || cut.busy) return; stop(); seekTo(timeFromX(e.clientX)); ciUpdate(); });
+    // Tap or drag on the bar (or the red line) moves the playhead.
+    range.addEventListener('pointerdown', (e) => {
+      if (!cut.src || cut.busy) return;
+      e.preventDefault();
+      stop();
+      range.setPointerCapture(e.pointerId);
+      seekTo(timeFromX(e.clientX)); ciUpdate();
+      const move = (ev) => { seekTo(timeFromX(ev.clientX)); $('ciPos').style.left = (((timeFromX(ev.clientX) - cut.src.start) / (cut.src.duration - cut.src.start)) * 100) + '%'; };
+      const up = () => { range.removeEventListener('pointermove', move); range.removeEventListener('pointerup', up); range.removeEventListener('pointercancel', up); ciUpdate(); };
+      range.addEventListener('pointermove', move); range.addEventListener('pointerup', up); range.addEventListener('pointercancel', up);
+    });
     video.addEventListener('seeked', ciUpdate);
     const loop = () => {
       const p = cut.parts[cut.active];
@@ -8025,7 +8043,7 @@
     const last = docs[0] || null;
     $('shInfo').textContent = files.length === 1 ? `"${files[0].name}" (${fmtSize(files[0].size)})` : `${files.length} files (${fmtSize(files.reduce((a, f) => a + f.size, 0))})`;
     $('shAdd').hidden = !last;
-    if (last) $('shAdd').textContent = `Add to "${last.name || 'last project'}"`;
+    if (last) { const n = last.name || 'last project'; $('shAdd').textContent = `Add to "${n.length > 28 ? n.slice(0, 26) + '…' : n}"`; $('shAdd').title = `Add to "${n}"`; }
     $('shCut').hidden = !(files.length === 1 && videos.length === 1);
     $('shBatch').hidden = !videos.length || (files.length === 1 && false);
     const done = () => { closeModal('shareModal'); $('shNew').onclick = $('shAdd').onclick = $('shCut').onclick = $('shBatch').onclick = $('shClose').onclick = null; };

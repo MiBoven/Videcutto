@@ -1,5 +1,11 @@
 # Changelog
 
+### 0.14.1 — 2026-11-10 — Just cut it fixes
+- Just cut it is marked Beta
+- The playhead can be dragged along the bar (not only tapped)
+- Reading a video can be cancelled; the preview loads only what it needs, so big files open faster on phones
+- Share dialog: long project names no longer run over the edge
+
 ### 0.14.0 — 2026-11-10 — Just cut it, share to Videcutto
 - Just cut it (start screen): trim a video without re-encoding — seconds even for huge files, start on a keyframe, exact end, metadata kept; optionally several parts (`_cutit_part01` …) as one ZIP
 - On desktop Chrome/Edge a single cut is written straight into the chosen file

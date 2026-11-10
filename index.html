@@ -80,7 +80,7 @@
     <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M12 9v6M9 12h6"/></svg>Start with an empty canvas
   </button>
   <button class="btn-secondary wide" id="cutItBtn">
-    <svg viewBox="0 0 24 24"><circle cx="6" cy="7" r="2.5"/><circle cx="6" cy="17" r="2.5"/><path d="M8 8.5l12 7M8 15.5l12-7"/></svg>Just cut it — trim without re-encoding
+    <svg viewBox="0 0 24 24"><circle cx="6" cy="7" r="2.5"/><circle cx="6" cy="17" r="2.5"/><path d="M8 8.5l12 7M8 15.5l12-7"/></svg>Just cut it — trim without re-encoding <span class="beta-tag">Beta</span>
   </button>
   <button class="link-btn center import-btn" id="importProjectBtn">Import a project file (.videcutto)…</button>
 
@@ -741,12 +741,12 @@
 <div class="modal-bg" id="cutModal" hidden>
   <div class="modal trim-modal" role="dialog" aria-modal="true" aria-labelledby="ciTitle">
     <div class="modal-head">
-      <h2 id="ciTitle">Just cut it</h2>
+      <h2 id="ciTitle">Just cut it <span class="beta-tag">Beta</span></h2>
       <button class="icon small" id="ciClose" title="Close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
     <p class="modal-sub" id="ciInfo"></p>
     <div class="trim-video-wrap">
-      <video id="ciVideo" playsinline preload="auto" muted></video>
+      <video id="ciVideo" playsinline preload="metadata" muted></video>
       <button class="tbtn play overlay-play" id="ciPlayBtn" aria-label="Play">
         <svg viewBox="0 0 24 24"><path class="fill" d="M8 5.5v13l10.5-6.5z"/></svg>
       </button>

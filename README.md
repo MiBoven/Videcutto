@@ -189,13 +189,14 @@ The clip panel has four tabs — **Clip**, **Crop**, **Position**, **Rotate**. O
 - **Whole timeline** (all tracks) or **Selected clip only** — export just one clip without deleting the others (prepared for special exports such as GIF or audio-only later). *Selected clip only* is greyed out while no clip is selected
 - **Create video** starts the export; **Download** the result, or **Share** it directly (e.g. to a messenger) on devices that support sharing files
 
-### Just cut it (start screen)
+### Just cut it (start screen) — Beta
 - **Trim a video without re-encoding** — the picture and sound are copied as they are, so it takes seconds even for very big files (tens of GB) and the quality stays exactly the same. No project is created
 - Choose a video (MP4, MOV, M4V); drag the start and end handles, use *Start here* / *End here* at the playhead, or the arrow keys (start: previous/next keyframe; end: 1 s, with Shift 10 s). Play the selection with ▶
 - The **start can only lie on a keyframe** (phones write one every 1–2 s): the start handle snaps to them and a note shows where the cut really begins. The **end is exact**
 - **Several parts** (optional): ＋ adds a part at the playhead, tap a part to edit it, the trash can removes it; each part becomes its own file `name_cutit_part01.mp4` …, by default all in **one ZIP** (`name_cutit.zip`)
 - One part is saved as `name_cutit.mp4` — on desktop Chrome/Edge straight into a file you choose (no copy in memory), elsewhere as a download (written to the browser's private storage first, removed again afterwards). All metadata of the original (date, place, camera) is kept
-- Progress and **Cancel**; the screen stays awake
+- Progress and **Cancel**; the screen stays awake. Reading a big video can be cancelled too; the preview only loads what it needs
+- Tap **or drag** on the bar to move the playhead (red line)
 
 ### Share to Videcutto (installed app)
 - The installed app appears in the phone's **share menu**: share videos, images or sound from the gallery or another app to Videcutto. It opens and asks what to do: **New project**, **Add to "last project"**, **Just cut it** (one video) or **Batch convert** (videos)

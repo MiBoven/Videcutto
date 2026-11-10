@@ -803,3 +803,9 @@ body.picking #pvCanvas { cursor: crosshair !important; }
 #ciOut { overflow-wrap: anywhere; }
 .share-choices { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
 .share-choices [hidden] { display: none; }
+/* 0.14.1 */
+.beta-tag { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 6px; font-size: 11px; font-weight: 700; letter-spacing: .03em; color: #f2b233; border: 1px solid #f2b233; vertical-align: middle; }
+.share-choices button { display: block; width: 100%; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#shareModal .modal { max-width: 100%; }
+#shInfo { overflow-wrap: anywhere; }
+#ciRange { touch-action: none; }
