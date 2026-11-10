@@ -809,3 +809,4 @@ body.picking #pvCanvas { cursor: crosshair !important; }
 #shareModal .modal { max-width: 100%; }
 #shInfo { overflow-wrap: anywhere; }
 #ciRange { touch-action: none; }
+#ciInfo, .trim-modal .modal-sub { overflow-wrap: anywhere; }

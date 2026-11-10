@@ -1,5 +1,5 @@
 /* Videcutto service worker — offline support (stale-while-revalidate). */
-const CACHE = 'videcutto-v0.14.1';
+const CACHE = 'videcutto-v0.14.2';
 // Fonts are loaded when first used and kept across app updates.
 const FONT_CACHE = 'videcutto-fonts-1';
 const ASSETS = [
@@ -29,33 +29,33 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k.startsWith('videcutto-') && k !== CACHE && k !== FONT_CACHE && k !== SHARE_CACHE).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => k.startsWith('videcutto-') && k !== CACHE && k !== FONT_CACHE).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
 
-// "Share to Videcutto" (installed app): keep the shared files for the page, then open it.
-const SHARE_CACHE = 'videcutto-share';
+// "Share to Videcutto" (installed app): the shared files are handed to the page
+// as they are (no copy — big videos would take ages to copy), then it opens.
+let shared = null, delivered = null;
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'get-shared') {
+    event.source.postMessage({ type: 'shared', files: shared || [] });
+    shared = null;
+    if (delivered) { delivered(); delivered = null; }
+  }
+});
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method === 'POST' && new URL(req.url).pathname === '/share-target') {
     event.respondWith((async () => {
-      let n = 0;
       try {
         const form = await req.formData();
-        const files = form.getAll('media').filter((f) => f && typeof f === 'object' && f.size);
-        const cache = await caches.open(SHARE_CACHE);
-        for (const k of await cache.keys()) await cache.delete(k);
-        for (const f of files) {
-          await cache.put(`/__shared/${n++}`, new Response(f, { headers: {
-            'Content-Type': f.type || 'application/octet-stream',
-            'X-Name': encodeURIComponent(f.name || `shared-${n}`),
-            'X-Modified': String(f.lastModified || Date.now()),
-          } }));
-        }
-      } catch (e) { /* nothing received */ }
-      return Response.redirect(`/?shared=${n}`, 303);
+        shared = form.getAll('media').filter((f) => f && typeof f === 'object' && f.size);
+      } catch (e) { shared = []; }
+      return Response.redirect(`/?shared=${shared.length}`, 303);
     })());
+    // Stay awake until the page has picked the files up (at most a minute).
+    event.waitUntil(new Promise((res) => { delivered = res; setTimeout(res, 60000); }));
     return;
   }
   if (req.method !== 'GET' || new URL(req.url).origin !== self.location.origin) return;

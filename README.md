@@ -200,7 +200,7 @@ The clip panel has four tabs — **Clip**, **Crop**, **Position**, **Rotate**. O
 
 ### Share to Videcutto (installed app)
 - The installed app appears in the phone's **share menu**: share videos, images or sound from the gallery or another app to Videcutto. It opens and asks what to do: **New project**, **Add to "last project"**, **Just cut it** (one video) or **Batch convert** (videos)
-- The shared files are kept by the app's service worker until they are used (removed on the next start)
+- The shared files are handed from the app's service worker to the page as they are — no copy is made, so even multi-GB videos arrive at once
 
 ### Batch convert (Menu → Batch convert…)
 - Shrink or convert **many videos at once** with the same settings — independent of the projects, nothing is added to a timeline

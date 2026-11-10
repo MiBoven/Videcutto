@@ -1,5 +1,9 @@
 # Changelog
 
+### 0.14.2 — 2026-11-10 — Sharing big files
+- Shared files are handed over without copying them first (big videos took very long or never arrived)
+- Just cut it: long file names wrap instead of running over the edge
+
 ### 0.14.1 — 2026-11-10 — Just cut it fixes
 - Just cut it is marked Beta
 - The playhead can be dragged along the bar (not only tapped)

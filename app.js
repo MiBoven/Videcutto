@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.14.1';
+  const VERSION = '0.14.2';
   const $ = (id) => document.getElementById(id);
 
   // ---------------------------------------------------------------------------
@@ -8022,20 +8022,26 @@
   async function receiveShared() {
     const q = new URLSearchParams(location.search);
     if (!q.has('shared')) {
-      // Leftovers of an earlier share can go now.
+      // Leftovers of the 0.14.0 way of sharing can go.
       try { if (window.caches && (await caches.has('videcutto-share'))) await caches.delete('videcutto-share'); } catch (e) { /* ignore */ }
       return false;
     }
     history.replaceState(history.state, '', location.pathname + location.hash);
+    // Ask the service worker for the files (handed over without copying).
     let files = [];
     try {
-      const cache = await caches.open('videcutto-share');
-      for (const k of await cache.keys()) {
-        const res = await cache.match(k);
-        if (!res) continue;
-        const name = decodeURIComponent(res.headers.get('X-Name') || 'shared');
-        files.push(new File([await res.blob()], name, { type: res.headers.get('Content-Type') || '', lastModified: Number(res.headers.get('X-Modified')) || Date.now() }));
-      }
+      const reg = await navigator.serviceWorker.ready;
+      const sw = navigator.serviceWorker.controller || reg.active;
+      files = await new Promise((resolve) => {
+        const t = setTimeout(() => resolve([]), 15000);
+        navigator.serviceWorker.addEventListener('message', function on(ev) {
+          if (!ev.data || ev.data.type !== 'shared') return;
+          navigator.serviceWorker.removeEventListener('message', on);
+          clearTimeout(t);
+          resolve(ev.data.files || []);
+        });
+        sw.postMessage({ type: 'get-shared' });
+      });
     } catch (e) { files = []; }
     if (!files.length) { toast('Nothing usable was received.', 3000); return false; }
     const videos = files.filter((f) => isVideoFile(f));
